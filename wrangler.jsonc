@@ -12,8 +12,7 @@
     {
       "binding": "DB",
       "database_name": "memory-db",
-      // Replace with your real D1 database id after `wrangler d1 create memory-db`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "bb82e22b-e71f-4eef-9116-88d28b219349",
       "migrations_dir": "migrations"
     }
   ],
