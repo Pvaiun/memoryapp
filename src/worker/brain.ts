@@ -172,6 +172,23 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
     builtBubbles.push({ name: b.name, prominence: b.prominence, items: memberIds.length });
   }
 
+  // Deterministic safety net: anything dated today that the Brain left out
+  // gets its own bubble. The model curates; it cannot drop today.
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const missed = items.filter((i) => !surfacedIds.has(i.id) && isTodayRelevant(i, now, tz));
+  if (missed.length) {
+    const bubbleId = newId();
+    await db
+      .prepare('INSERT INTO bubbles (id, day, name, kind, prominence, reason, created_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(bubbleId, day, 'Also today', 'situation', 0.8, summarizeItems(missed, now).slice(0, 300), nowIso())
+      .run();
+    for (const item of missed) {
+      await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, item.id).run();
+      surfacedIds.add(item.id);
+    }
+    builtBubbles.push({ name: 'Also today', prominence: 0.8, items: missed.length });
+  }
+
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
   const ts = nowIso();
   for (const id of surfacedIds) {
@@ -184,6 +201,28 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
   return getMap(env, day);
+}
+
+// Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
+// or happening today must reach the map no matter what the Brain decides.
+// Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
+export function isTodayRelevant(
+  i: { status: string; deadline: string | null; eventAt: string | null; eventEnd: string | null },
+  now: Date,
+  tzOffsetMinutes: number,
+): boolean {
+  if (i.status !== 'active') return false;
+  const DAY = 86_400_000;
+  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
+  const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
+  const dayEndUtc = dayStartUtc + DAY;
+  if (i.deadline && new Date(i.deadline).getTime() < dayEndUtc) return true; // due today or overdue
+  if (i.eventAt) {
+    const at = new Date(i.eventAt).getTime();
+    const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
+    if (at < dayEndUtc && end >= dayStartUtc) return true; // spans some part of today
+  }
+  return false;
 }
 
 // The item view exactly as the Brain's prompt receives it — shared between the
@@ -304,7 +343,11 @@ ORGANIZING PRINCIPLE: a bubble is a SITUATION or context — the moment the user
 
 PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "do taxes" outranks "call grandma" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A visitor four weeks out → a small persistent dot (~0.1–0.2).
 
-KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate. If there are no such KNOWs, omit it.
+NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item due today (daysUntilDeadline ≤ 0) or happening today (daysUntilEvent ≤ 0 and not past) MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
+
+The user profile is advisory colour for naming, grouping, and emphasis ONLY. It must never veto: never exclude or demote a dated item because the profile suggests the user might not care about that kind of thing.
+
+KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured (recapturedTimes > 0), and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
 
 NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("Sarah & Deidra's visit", not "Before Sarah & Deidra arrive").
 
@@ -407,9 +450,11 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       itemIds: important.map((i) => i.id),
     });
   }
-  // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen KNOWs.
+  // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen
+  // KNOWs. Reference facts (low priority, never recaptured) stay out — they
+  // exist for search, not rehearsal.
   const knows = items
-    .filter((i) => i.type === 'KNOW')
+    .filter((i) => i.type === 'KNOW' && (i.effectivePriority >= 0.35 || i.rawTexts.length > 1))
     .sort((a, b) => {
       const aSeen = a.lastSurfacedAt ?? '1970';
       const bSeen = b.lastSurfacedAt ?? '1970';
