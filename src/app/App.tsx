@@ -408,13 +408,6 @@ export default function App() {
           <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
             ⚙
           </button>
-          <button
-            className={`icon-btn${pushOn ? ' active' : ''}`}
-            title={pushOn ? 'Alerts on' : 'Enable alerts'}
-            onClick={pushOn ? undefined : enablePush}
-          >
-            {pushOn ? '🔔' : '🔕'}
-          </button>
         </div>
       </header>
 
