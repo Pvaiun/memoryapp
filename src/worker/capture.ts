@@ -1,6 +1,6 @@
 import type { CaptureResponse, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
 import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
-import { resolveDatePhrase } from '../shared/dates';
+import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
 import { heuristicParse } from '../shared/heuristicParse';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -98,8 +98,20 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
     }
 
     // Deterministic date resolution (§12): the model only extracted phrases.
-    const deadline = p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, ref, tz) : null;
-    const eventAt = p.eventAtPhrase ? resolveDatePhrase(p.eventAtPhrase, ref, tz) : null;
+    // refineWithSourceTime recovers clock times the extraction dropped.
+    const sourceText = parsed.items.length > 1 ? p.title : req.text;
+    const deadline = refineWithSourceTime(
+      p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, ref, tz) : null,
+      sourceText,
+      ref,
+      tz,
+    );
+    const eventAt = refineWithSourceTime(
+      p.eventAtPhrase ? resolveDatePhrase(p.eventAtPhrase, ref, tz) : null,
+      sourceText,
+      ref,
+      tz,
+    );
 
     const itemEmbedding = await embed(env, p.title);
     const id = await insertItem(db, {
@@ -222,7 +234,7 @@ SEGMENTATION — the unit is an INTENTION, not a verb. The large majority of cap
 FOR EACH ITEM emit:
 - "type": "DO" | "KNOW" | "HAPPEN"
 - "title": a clean short imperative/declarative restatement (keep the user's vocabulary; do not embellish). Emphasis/urgency phrasing ("no excuses", "really important", "asap") feeds "priority" — NEVER leave it in the title. Date/time phrases belong in deadlinePhrase/eventAtPhrase, not the title.
-- "deadlinePhrase": for a DO with a due date, the date/time phrase from the text, else null. Date phrases (here and in eventAtPhrase) are handed to a deterministic parser, so make them parser-readable while staying faithful: keep relative phrases VERBATIM ("tomorrow", "next Tuesday", "in 3 weeks" — do NOT compute dates yourself), but expand elliptical day ordinals with their month using today's date ("the 20th" → "July 20"; "the 20th to the 25th" → "July 20 to July 25"). Ranges are allowed.
+- "deadlinePhrase": for a DO with a due date, the date/time phrase from the text, else null. Date phrases (here and in eventAtPhrase) are handed to a deterministic parser, so make them parser-readable while staying faithful: keep relative phrases VERBATIM ("tomorrow", "next Tuesday", "in 3 weeks" — do NOT compute dates yourself), but expand elliptical day ordinals with their month using today's date ("the 20th" → "July 20"; "the 20th to the 25th" → "July 20 to July 25"). Ranges are allowed. NEVER drop a time of day: "before 3:00 p.m." → "3:00 p.m."; "tomorrow by noon" → "tomorrow at noon". A bare clock time is a valid phrase (the parser anchors it to the coming occurrence) — never replace it with just "today".
 - "deadlineHardness": "hard" | "soft" | null. A plainly-stated date defaults to "hard"; explicit low-pressure phrasing ("ideally", "sometime", "no rush") makes it "soft".
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null.
 - "optionality": "must" | "nice" — must-do vs nice-to-do, inferred from phrasing ("maybe", "if I get to it" → "nice"). Orthogonal to priority.

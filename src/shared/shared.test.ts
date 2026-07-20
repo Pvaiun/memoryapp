@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { isNeglected, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { expandBareOrdinals, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -180,6 +180,26 @@ describe('deterministic dates (§12)', () => {
     expect(r.iso).toBe('2026-07-28T12:00:00.000Z');
     const r2 = resolveDatePhrase('next Tuesday', new Date('2026-07-20T15:47:00Z'), -300)!;
     expect(r2.iso).toBe('2026-07-28T17:00:00.000Z'); // noon at UTC-5
+  });
+  it('refineWithSourceTime recovers a clock time the phrase extraction dropped', () => {
+    // Captured 12:34 local (UTC-4): phrase came back as "today" (noon anchor),
+    // but the raw text says "before 3:00 p.m." — recover 15:00 local.
+    const ref = new Date('2026-07-20T16:34:00Z');
+    const dateOnly = resolveDatePhrase('today', ref, -240)!;
+    expect(dateOnly.hasTime).toBe(false);
+    const refined = refineWithSourceTime(dateOnly, 'put laundry away before 3:00 p.m.', ref, -240)!;
+    expect(refined.hasTime).toBe(true);
+    expect(refined.iso).toBe('2026-07-20T19:00:00.000Z'); // 3pm at UTC-4
+  });
+  it('refineWithSourceTime leaves timed results and cross-day source times alone', () => {
+    const ref = new Date('2026-07-20T16:34:00Z');
+    const timed = resolveDatePhrase('3pm', ref, -240)!;
+    expect(refineWithSourceTime(timed, 'whatever 9am', ref, -240)!.iso).toBe(timed.iso);
+    // Phrase resolved to NEXT Friday; source's "3pm" is today — different local
+    // day, so no hijack.
+    const friday = resolveDatePhrase('Friday', ref, -240)!;
+    const out = refineWithSourceTime(friday, 'do it by 3pm on some other note', ref, -240)!;
+    expect(out.iso).toBe(friday.iso);
   });
   it('expandBareOrdinals leaves month-bearing and relative phrases alone', () => {
     const ref = new Date('2026-07-19T15:00:00Z');
