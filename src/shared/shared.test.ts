@@ -116,13 +116,14 @@ describe('deterministic dates (§12)', () => {
     expect(r!.iso.startsWith('2026-07-28')).toBe(true);
   });
   it('respects the client timezone offset', () => {
-    // 23:30 UTC on the 20th is already the 21st at UTC+2, so "tomorrow at 9am"
-    // lands on different calendar days (and instants) per timezone.
+    // 23:30 UTC on the 20th is 01:30 on the 21st at UTC+2 — different local
+    // days, so the same instant resolves differently per timezone. (At UTC+2
+    // it's also pre-cutoff: 01:30's "tomorrow at 9am" is the coming morning.)
     const lateNight = new Date('2026-07-20T23:30:00Z');
     const utc = resolveDatePhrase('tomorrow at 9am', lateNight, 0)!;
     const plus2 = resolveDatePhrase('tomorrow at 9am', lateNight, 120)!;
-    expect(utc.iso).toBe('2026-07-21T09:00:00.000Z');
-    expect(plus2.iso).toBe('2026-07-22T07:00:00.000Z');
+    expect(utc.iso).toBe('2026-07-21T09:00:00.000Z'); // 23:30 local → next day 9am
+    expect(plus2.iso).toBe('2026-07-21T07:00:00.000Z'); // 01:30 local → 9am that same morning
   });
   it('captures explicit times', () => {
     const r = resolveDatePhrase('tomorrow at 3pm', ref, 0)!;
@@ -157,6 +158,28 @@ describe('deterministic dates (§12)', () => {
   it('resolves explicit ranges with end dates', () => {
     const r = resolveDatePhrase('July 20 to July 25', new Date('2026-07-19T15:00:00Z'), 0);
     expect(r?.endIso?.startsWith('2026-07-25')).toBe(true);
+  });
+  it('night-owl rule: before 5am, "tomorrow" means the coming morning', () => {
+    // 12:31am on July 20 (UTC): "tomorrow" is July 20's morning, not July 21.
+    const r = resolveDatePhrase('tomorrow', new Date('2026-07-20T00:31:00Z'), 0)!;
+    expect(r.iso).toBe('2026-07-20T12:00:00.000Z');
+    // Same wall-clock moment at UTC+2 (00:31 local on the 20th).
+    const r2 = resolveDatePhrase('tomorrow', new Date('2026-07-19T22:31:00Z'), 120)!;
+    expect(r2.iso).toBe('2026-07-20T10:00:00.000Z'); // July 20 noon local
+    // After the cutoff, "tomorrow" is the next calendar day again.
+    const r3 = resolveDatePhrase('tomorrow', new Date('2026-07-20T06:00:00Z'), 0)!;
+    expect(r3.iso).toBe('2026-07-21T12:00:00.000Z');
+  });
+  it('night-owl rule keeps explicit times: "tomorrow at 9am" at 12:31am = 9am today', () => {
+    const r = resolveDatePhrase('tomorrow at 9am', new Date('2026-07-20T00:31:00Z'), 0)!;
+    expect(r.iso).toBe('2026-07-20T09:00:00.000Z');
+    expect(r.hasTime).toBe(true);
+  });
+  it('date-only phrases anchor to noon local, not capture time', () => {
+    const r = resolveDatePhrase('next Tuesday', new Date('2026-07-20T15:47:00Z'), 0)!;
+    expect(r.iso).toBe('2026-07-28T12:00:00.000Z');
+    const r2 = resolveDatePhrase('next Tuesday', new Date('2026-07-20T15:47:00Z'), -300)!;
+    expect(r2.iso).toBe('2026-07-28T17:00:00.000Z'); // noon at UTC-5
   });
   it('expandBareOrdinals leaves month-bearing and relative phrases alone', () => {
     const ref = new Date('2026-07-19T15:00:00Z');

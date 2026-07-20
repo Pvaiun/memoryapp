@@ -215,13 +215,15 @@ PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap o
 
 KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate. If there are no such KNOWs, omit it.
 
-NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short and concrete.
+NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("Sarah & Deidra's visit", not "Before Sarah & Deidra arrive").
 
 PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a grouping only if it is still apt today. Compose fresh from the items; do NOT treat yesterday's map as a default to preserve.
 
 Do not force every item into the map — the browse view holds everything; you curate. Items may appear in more than one bubble only when genuinely central to both; prefer one home. Every bubble needs at least one item.
 
-OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":"one short line why this bubble, for the user","itemIds":[ids]}]}`;
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[ids]}]}
+
+"reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + status, e.g. "Dentist Tue 3pm — taxes due Aug 15 need a start" or "6 address updates pending, none scheduled yet". Never repeat the bubble name, never explain the grouping ("these belong together because..."), never meta-commentary. Mention dates when items have them; for a single-item bubble say what the item needs next.`;
 
   const user = JSON.stringify({
     today: day,
@@ -267,6 +269,24 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
 
 // ---------- Deterministic fallback map (no LLM configured) ----------
 
+// Compact card-face summary: first titles with their dates, "+N more".
+function summarizeItems(items: ItemView[], now: Date): string {
+  const short = (iso: string): string => {
+    const days = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+    if (days < 0) return `${-days}d overdue`;
+    if (days === 0) return 'today';
+    if (days === 1) return 'tomorrow';
+    if (days < 7) return new Date(iso).toLocaleDateString('en', { weekday: 'short' });
+    return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+  };
+  const parts = items.slice(0, 2).map((i) => {
+    const when = i.deadline ?? i.eventAt;
+    return when ? `${i.title} (${short(when)})` : i.title;
+  });
+  const extra = items.length - parts.length;
+  return parts.join(' · ') + (extra > 0 ? ` · +${extra} more` : '');
+}
+
 function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
   const bubbles: ProposedBubble[] = [];
   const dueSoon = items.filter(
@@ -278,7 +298,7 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       name: 'Due soon',
       kind: 'situation',
       prominence: soonest < 86_400_000 ? 0.95 : 0.7,
-      reason: 'Deadlines in the next week',
+      reason: summarizeItems(dueSoon, now),
       itemIds: dueSoon.map((i) => i.id),
     });
   }
@@ -288,7 +308,7 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       name: 'Rhythms to pick back up',
       kind: 'situation',
       prominence: 0.5,
-      reason: 'Recurring things that have slipped past their rhythm',
+      reason: summarizeItems(neglected, now),
       itemIds: neglected.map((i) => i.id),
     });
   }
@@ -301,7 +321,7 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       name: 'Coming up',
       kind: 'situation',
       prominence: 0.55,
-      reason: 'Events in the next two weeks',
+      reason: summarizeItems(upcoming, now),
       itemIds: upcoming.map((i) => i.id),
     });
   }
@@ -313,7 +333,7 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       name: 'Important',
       kind: 'situation',
       prominence: 0.45,
-      reason: 'High-priority items without a pressing date',
+      reason: summarizeItems(important, now),
       itemIds: important.map((i) => i.id),
     });
   }
@@ -332,7 +352,7 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       name: 'Keep in mind',
       kind: 'rotation',
       prominence: 0.12,
-      reason: 'A quiet rotation of things worth keeping warm',
+      reason: summarizeItems(knows, now),
       itemIds: knows.map((i) => i.id),
     });
   }
