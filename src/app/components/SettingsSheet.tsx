@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import type { NowView } from '../views/MapView';
 
 interface Status {
   items: number;
@@ -17,6 +18,8 @@ interface Status {
 
 export default function SettingsSheet({
   pushOn,
+  nowView,
+  onSetNowView,
   onEnablePush,
   onRebuild,
   onExport,
@@ -24,6 +27,8 @@ export default function SettingsSheet({
   onClose,
 }: {
   pushOn: boolean | null;
+  nowView: NowView;
+  onSetNowView: (v: NowView) => void;
   onEnablePush: () => void;
   onRebuild: () => void;
   onExport: () => void;
@@ -78,6 +83,21 @@ export default function SettingsSheet({
             </div>
           </div>
         )}
+
+        <div className="field">
+          <label>Now view</label>
+          <div className="seg">
+            <button className={nowView === 'descent' ? 'on' : ''} onClick={() => onSetNowView('descent')}>
+              Descent
+            </button>
+            <button className={nowView === 'tiles' ? 'on' : ''} onClick={() => onSetNowView('tiles')}>
+              Tiles (classic)
+            </button>
+          </div>
+          <small className="settings-hint">
+            Descent is the new depth instrument — experimental. Tiles is the previous mosaic.
+          </small>
+        </div>
 
         <div className="settings-actions">
           <button

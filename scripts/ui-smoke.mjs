@@ -17,10 +17,12 @@ await page.waitForSelector('.tab-bar', { timeout: 30000 });
 await page.waitForTimeout(1200);
 await page.screenshot({ path: `${out}/1-map.png` });
 
-// Open a bubble
-const bubble = page.locator('.bubble').first();
-if (await bubble.count()) {
-  await bubble.click();
+// Open a bubble — descent view (engaged card) or classic tiles
+const card = page.locator('.dsc-card, .bubble').first();
+if (await card.count()) {
+  await card.click();
+  await page.waitForTimeout(400);
+  await card.click(); // descent: first tap may only snap focus; second opens
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${out}/2-bubble-open.png` });
   await page.mouse.click(20, 100); // close sheet

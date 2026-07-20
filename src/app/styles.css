@@ -983,3 +983,421 @@ textarea:focus {
   padding: 6px 16px;
   margin-top: 10px;
 }
+
+/* ---------- Descent "Instrument" (Now view) ---------- */
+/* Cards hang in a fully black depth space; all chrome lives on the gauge.
+   Per-frame transforms/opacity/filter are written imperatively from a rAF
+   loop — only compositor-friendly properties move, nothing here animates
+   on its own. */
+.view-descent {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.descent-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.descent-wrap .captured-today {
+  margin: 8px 16px 4px;
+}
+.dsc-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg); /* flat — the indigo glow stays outside (§1) */
+}
+.dsc-scroller {
+  position: absolute;
+  inset: 0;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.dsc-scroller::-webkit-scrollbar {
+  display: none;
+}
+.dsc-spacer {
+  position: relative;
+}
+.dsc-snap {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  scroll-snap-align: start;
+}
+.dsc-stage {
+  position: sticky;
+  top: 0;
+  overflow: hidden;
+}
+
+/* ----- cards ----- */
+.dsc-card {
+  position: absolute;
+  top: 50%;
+  text-align: left;
+  padding: 0;
+  opacity: 0; /* first frame fills in real values */
+  transform: translate(-50%, -50%);
+  will-change: transform, opacity;
+  contain: layout style;
+}
+.dsc-base {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--card);
+  padding: 12px 14px;
+  will-change: opacity, filter;
+}
+.dsc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+.dsc-ghost {
+  visibility: hidden; /* reserves the chip's slot; the live chip is pigment */
+}
+.dsc-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.dsc-name {
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.dsc-desc {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* status pigment layer (§1): full saturation at any depth, floor 0.85 */
+.dsc-pigment {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: opacity;
+}
+.dsc-pigment .dsc-chip {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+}
+.dsc-fardot {
+  position: absolute;
+  top: 40px;
+  left: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+.dsc-fardot.tone-red {
+  width: 8px;
+  height: 8px;
+  left: 6px;
+  top: 39px;
+  box-shadow: 0 0 6px 2px rgba(240, 112, 140, 0.35); /* far red halo (§1) */
+}
+.dsc-fardot.tone-settled {
+  border-color: var(--good);
+}
+.dsc-card.rotation .dsc-base {
+  border-style: dashed;
+  background: transparent;
+}
+.dsc-card.rotation .dsc-name {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.dsc-card.settled .dsc-name {
+  color: var(--text-dim);
+}
+
+/* ----- screen-space lines at the ends (§6) ----- */
+.dsc-header,
+.dsc-footer {
+  position: absolute;
+  left: 16px;
+  right: 40px;
+  text-align: center;
+  color: var(--text-faint);
+  pointer-events: none;
+  opacity: 0;
+}
+.dsc-header {
+  top: 18px;
+  font-size: 11px;
+}
+.dsc-footer {
+  bottom: 16%;
+  font-size: 10px;
+}
+
+/* ----- the gauge (§4) ----- */
+.dsc-gauge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+  z-index: 13; /* above the ledger dim — the instrument never dims (§5) */
+}
+.dsc-gauge::before {
+  /* legibility strip behind the widened instrument */
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  background: linear-gradient(to left, rgba(11, 14, 23, 0.92) 40%, transparent);
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+}
+.gauge-active .dsc-gauge::before {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+.dsc-scale {
+  position: absolute;
+  right: 12px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.dsc-cap {
+  position: absolute;
+  right: 9px;
+  width: 7px;
+  height: 2px;
+  background: var(--line-strong);
+}
+.dsc-tick {
+  position: absolute;
+  right: 13px;
+  width: 3px;
+  height: 1px;
+  background: var(--line);
+}
+.dsc-tick.major {
+  width: 7px;
+  background: var(--line-strong);
+}
+.dsc-glabel {
+  position: absolute;
+  right: 24px;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+}
+.gauge-active .dsc-glabel {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+.dsc-gdot {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.9;
+  border: 1px solid transparent;
+  transition: background-color 300ms ease, border-color 300ms ease, opacity 150ms ease;
+}
+.dsc-gdot.passed {
+  opacity: 0.45; /* the instrument records history (§4) */
+}
+.dsc-gdot.settled {
+  background: transparent !important;
+}
+.dsc-gdot.red {
+  box-shadow: 0 0 5px 1px rgba(240, 112, 140, 0.4);
+}
+.dsc-ghair {
+  position: absolute;
+  height: 1px;
+  background: var(--line);
+}
+.dsc-puck {
+  position: absolute;
+  top: -1.5px;
+  right: 5px;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  will-change: transform;
+}
+.dsc-readout {
+  position: absolute;
+  top: 0;
+  right: 34px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+  will-change: transform;
+}
+.gauge-active .dsc-readout {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+.dsc-leader {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+.dsc-leader line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+.gauge-active .dsc-leader line {
+  opacity: 0.5;
+  transition-duration: 120ms;
+}
+/* single expanding ring on a data delta (§4a) */
+.dsc-ripple {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px -6px 0 0;
+  transform: translateX(50%);
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  pointer-events: none;
+  animation: dsc-ripple 360ms ease-out forwards;
+}
+@keyframes dsc-ripple {
+  from {
+    transform: translateX(50%) scale(0.3);
+    opacity: 0.9;
+  }
+  to {
+    transform: translateX(50%) scale(2);
+    opacity: 0;
+  }
+}
+
+/* ----- ledger (§5) ----- */
+.dsc-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8); /* depth view dims to 20% */
+  z-index: 11;
+  animation: dsc-fade 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes dsc-fade {
+  from {
+    opacity: 0;
+  }
+}
+.dsc-ledger {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 12;
+  pointer-events: none;
+  animation: dsc-ledger-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes dsc-ledger-in {
+  from {
+    transform: translateX(30px);
+    opacity: 0;
+  }
+}
+.dsc-ledger-ties {
+  position: absolute;
+  inset: 0;
+}
+.dsc-ledger-ties line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.dsc-ledger-row {
+  position: absolute;
+  right: 32px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 86px;
+  padding: 3px 0;
+  pointer-events: auto;
+  font-size: 10px;
+}
+.dsc-ledger-word {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 8.5px;
+  white-space: nowrap;
+}
+.dsc-ledger-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ----- reduced motion (§8) ----- */
+@media (prefers-reduced-motion: reduce) {
+  .dsc-gauge::before,
+  .dsc-glabel,
+  .dsc-readout,
+  .dsc-leader line {
+    transition-duration: 150ms;
+  }
+  .dsc-dim,
+  .dsc-ledger {
+    animation-duration: 150ms;
+  }
+  .dsc-gdot {
+    transition-duration: 150ms;
+  }
+  .dsc-ripple {
+    animation: none;
+    opacity: 0;
+  }
+}
+.settings-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  line-height: 1.4;
+}
