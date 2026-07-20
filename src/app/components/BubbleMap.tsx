@@ -154,20 +154,6 @@ export default function BubbleMap({
               const doneCount = bubble.itemIds.filter((id) => items[id]?.status === 'completed').length;
               const total = bubble.itemIds.length;
               const allDone = total > 0 && doneCount === total;
-              // Live, deterministic status: the most urgent remaining DO.
-              // Recomputed on every render, so completing an item updates the
-              // card face instantly — the Brain's line above stays durable.
-              const nextItem = bubble.itemIds
-                .map((id) => items[id])
-                .filter((it) => it && it.status === 'active' && it.type === 'DO')
-                .sort((a, b) => {
-                  const aDate = a.deadline ?? a.eventAt;
-                  const bDate = b.deadline ?? b.eventAt;
-                  if (!!aDate !== !!bDate) return aDate ? -1 : 1;
-                  if (aDate && bDate && aDate !== bDate) return aDate < bDate ? -1 : 1;
-                  return b.effectivePriority - a.effectivePriority;
-                })[0];
-              const showNext = nextItem && total > 1;
               const fontSize = Math.max(13, Math.min(19, 12 + bubble.prominence * 8));
               // Urgency glow: reserved for genuinely loud bubbles (§9.2's
               // "large, loud" end of the prominence range).
@@ -197,11 +183,6 @@ export default function BubbleMap({
                     {bubble.name}
                   </span>
                   {bubble.reason && !allDone && <span className="tile-desc">{bubble.reason}</span>}
-                  {showNext && !allDone && (
-                    <span className="tile-next">
-                      next: {nextItem.title.length > 40 ? `${nextItem.title.slice(0, 39)}…` : nextItem.title}
-                    </span>
-                  )}
                 </button>
               );
             })}

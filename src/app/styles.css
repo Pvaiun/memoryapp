@@ -432,17 +432,6 @@ textarea:focus {
   line-height: 1;
 }
 /* urgency glow: the loud thing of the day, ringed in its own status colour */
-/* live 'next:' pointer — deterministic, updates instantly on completion */
-.tile-next {
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--good);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-/* urgency glow: the loud thing of the day, ringed in its own status colour */
 .tile.hot {
   border-color: color-mix(in srgb, var(--tile-accent) 55%, transparent);
   box-shadow:
