@@ -327,6 +327,31 @@ export default function App() {
     }
   }, [toast]);
 
+  // Brain workshop loop: copy the exact Brain input + current map as one small
+  // JSON, ready to paste into a tuning conversation.
+  const copyBrainSnapshot = useCallback(async () => {
+    try {
+      const snap = await api.brainSnapshot();
+      const text = JSON.stringify(snap);
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Brain snapshot copied — paste it anywhere.');
+      } catch {
+        // Clipboard blocked (permissions): fall back to a file download.
+        const blob = new Blob([text], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `brain-snapshot-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('Clipboard blocked — downloaded as a file instead.');
+      }
+    } catch (err) {
+      toast(`Snapshot failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }, [toast]);
+
   const exportAll = useCallback(async () => {
     try {
       const data = await api.exportAll();
@@ -481,6 +506,7 @@ export default function App() {
           onEnablePush={enablePush}
           onRebuild={organizeNow}
           onExport={exportAll}
+          onCopyBrainSnapshot={copyBrainSnapshot}
           onClose={() => setSettingsOpen(false)}
         />
       )}

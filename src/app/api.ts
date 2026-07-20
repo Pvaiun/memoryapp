@@ -75,6 +75,8 @@ export const api = {
 
   exportAll: () => req<Record<string, unknown>>('/api/export'),
 
+  brainSnapshot: () => req<Record<string, unknown>>('/api/debug/brain'),
+
   items: () => req<{ items: ItemView[] }>('/api/items'),
 
   editItem: (id: string, edits: Record<string, unknown>) =>

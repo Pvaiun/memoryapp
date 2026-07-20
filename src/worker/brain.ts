@@ -186,6 +186,98 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   return getMap(env, day);
 }
 
+// The item view exactly as the Brain's prompt receives it — shared between the
+// live call and the debug snapshot so the snapshot never lies.
+function brainItemPayload(i: ItemView, now: Date) {
+  return {
+    id: i.id,
+    type: i.type,
+    title: i.title,
+    flavour: i.flavour,
+    priority: Math.round(i.effectivePriority * 100) / 100,
+    deadline: i.deadline,
+    deadlineHardness: i.deadlineHardness,
+    daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
+    cadence: i.cadence ? describeCadence(i.cadence) : null,
+    neglected: i.neglected,
+    neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
+    optionality: i.optionality,
+    effort: i.effort,
+    eventAt: i.eventAt,
+    daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
+    themes: i.themes.map((t) => t.name),
+    daysSinceLastSurfaced: i.lastSurfacedAt
+      ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
+      : null,
+    recapturedTimes: Math.max(0, i.rawTexts.length - 1),
+  };
+}
+
+// Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
+// input the Brain would see right now, paired with the current map output.
+// Compact by construction — no raw log, no embeddings, no captures.
+export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
+  const db = env.DB;
+  const now = new Date();
+  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
+
+  const nameRows = await db
+    .prepare('SELECT DISTINCT name FROM bubbles ORDER BY created_at DESC LIMIT 40')
+    .all<{ name: string }>();
+
+  const prevDay = await db
+    .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
+    .bind(day)
+    .first<{ day: string }>();
+  let previouslyShown: { name: string; itemTitles: string[] }[] = [];
+  if (prevDay) {
+    const rows = await db
+      .prepare(
+        `SELECT b.name, i.title FROM bubbles b
+         JOIN bubble_items bi ON bi.bubble_id = b.id
+         JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
+      )
+      .bind(prevDay.day)
+      .all<{ name: string; title: string }>();
+    const byName = new Map<string, string[]>();
+    for (const r of rows.results) byName.set(r.name, [...(byName.get(r.name) ?? []), r.title]);
+    previouslyShown = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
+  }
+
+  const bubbleRows = await db
+    .prepare('SELECT id, name, kind, prominence, reason FROM bubbles WHERE day = ? ORDER BY prominence DESC')
+    .bind(day)
+    .all<{ id: string; name: string; kind: string; prominence: number; reason: string }>();
+  const memberRows = await db
+    .prepare(
+      `SELECT bi.bubble_id, i.title FROM bubble_items bi
+       JOIN bubbles b ON b.id = bi.bubble_id JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
+    )
+    .bind(day)
+    .all<{ bubble_id: string; title: string }>();
+  const members = new Map<string, string[]>();
+  for (const m of memberRows.results) members.set(m.bubble_id, [...(members.get(m.bubble_id) ?? []), m.title]);
+
+  return {
+    kind: 'memory-brain-snapshot',
+    day,
+    builtAt: await getState(db, 'map_built_at'),
+    input: {
+      items: items.map((i) => brainItemPayload(i, now)),
+      userProfile: await getState(db, 'profile_text'),
+      recentNameVocabulary: nameRows.results.map((r) => r.name),
+      previouslyShown_reuseOnlyIfStillApt: previouslyShown,
+    },
+    output: bubbleRows.results.map((b) => ({
+      name: b.name,
+      kind: b.kind,
+      prominence: b.prominence,
+      reason: b.reason,
+      items: members.get(b.id) ?? [],
+    })),
+  };
+}
+
 interface ProposedBubble {
   name: string;
   kind: 'situation' | 'rotation';
@@ -227,28 +319,7 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
   const user = JSON.stringify({
     today: day,
     weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: items.map((i) => ({
-      id: i.id,
-      type: i.type,
-      title: i.title,
-      flavour: i.flavour,
-      priority: Math.round(i.effectivePriority * 100) / 100,
-      deadline: i.deadline,
-      deadlineHardness: i.deadlineHardness,
-      daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
-      cadence: i.cadence ? describeCadence(i.cadence) : null,
-      neglected: i.neglected,
-      neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
-      optionality: i.optionality,
-      effort: i.effort,
-      eventAt: i.eventAt,
-      daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
-      themes: i.themes.map((t) => t.name),
-      daysSinceLastSurfaced: i.lastSurfacedAt
-        ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
-        : null,
-      recapturedTimes: Math.max(0, i.rawTexts.length - 1),
-    })),
+    items: items.map((i) => brainItemPayload(i, now)),
     userProfile: profileText,
     recentNameVocabulary: nameVocabulary,
     previouslyShown_reuseOnlyIfStillApt: previous,
