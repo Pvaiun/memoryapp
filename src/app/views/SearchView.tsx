@@ -40,14 +40,14 @@ export default function SearchView({
       <div className="search-bar">
         <input
           autoFocus
-          placeholder="Find anything… (“Sarah's food thing”)"
+          placeholder="Find anything…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
       {!q.trim() && (
         <div className="hint">
-          Search matches exact words and gist — you usually remember the shape of a thing, not its words.
+          Search matches exact words and gist.
         </div>
       )}
       {results && q.trim() && (
