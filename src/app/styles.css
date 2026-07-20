@@ -317,6 +317,7 @@ textarea:focus {
 }
 .tile {
   position: relative;
+  container-type: inline-size;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--card);
@@ -330,15 +331,6 @@ textarea:focus {
   text-align: left;
   overflow: hidden;
   transition: transform 0.08s, border-color 0.15s;
-}
-.tile::before {
-  /* theme accent: a soft colour wash from the left edge */
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, var(--tile-accent) 0%, transparent 55%);
-  opacity: 0.16;
-  pointer-events: none;
 }
 .tile::after {
   /* theme accent: left edge bar */
@@ -377,26 +369,99 @@ textarea:focus {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-faint);
+  white-space: nowrap;
 }
-/* urgency glow: the loud thing of the day */
+/* status chip: the tone's time word, from the same live computation as the
+   colour — the legend ships on every tile */
+.tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+/* narrow tiles: the chip's word wins, the count yields */
+@container (max-width: 160px) {
+  .tile-top .tile-count {
+    display: none;
+  }
+}
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--tile-accent);
+  background: color-mix(in srgb, var(--tile-accent) 13%, transparent);
+}
+.status-chip::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+/* red is the only filled chip — "now" stays unmissable */
+.status-chip.filled {
+  color: #22070e;
+  background: var(--tile-accent);
+}
+.status-chip.filled::before {
+  background: #22070e;
+}
+.status-chip.done {
+  color: var(--good);
+  background: rgba(111, 208, 140, 0.12);
+}
+.status-chip.done::before {
+  content: '✓';
+  width: auto;
+  height: auto;
+  background: none;
+  font-size: 9px;
+  line-height: 1;
+}
+/* urgency glow: the loud thing of the day, ringed in its own status colour */
 .tile.hot {
-  border-color: rgba(232, 194, 106, 0.55);
-  box-shadow: 0 0 0 1px rgba(232, 194, 106, 0.25), 0 6px 30px rgba(232, 194, 106, 0.12);
+  border-color: color-mix(in srgb, var(--tile-accent) 55%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--tile-accent) 25%, transparent),
+    0 6px 30px color-mix(in srgb, var(--tile-accent) 12%, transparent);
 }
 .tile.hot .tile-count {
-  color: var(--warn);
+  color: var(--tile-accent);
+}
+/* settled: all items done — full opacity, quiet weight, clearly finished */
+.tile.settled::after {
+  display: none;
+}
+.tile.settled .tile-name {
+  color: var(--text-dim);
 }
 .tile.rotation {
   border-style: dashed;
   background: transparent;
 }
-.tile.rotation::before,
 .tile.rotation::after {
   display: none;
 }
 .tile.rotation .tile-name {
   font-weight: 600;
   color: var(--text-dim);
+}
+.tile.rotation .status-chip {
+  color: hsl(260 40% 72%);
+  background: hsl(260 30% 55% / 0.16);
 }
 
 .map-empty {
