@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Bubble, ItemView, MapPayload } from '../../shared/types';
 import BubbleMap from '../components/BubbleMap';
 import ItemRow from '../components/ItemRow';
@@ -12,25 +12,14 @@ export default function MapView({
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
 }) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
   const [openBubble, setOpenBubble] = useState<Bubble | null>(null);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-    ro.observe(el);
-    setWidth(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
 
   const capturedItems = map.capturedToday.map((id) => map.items[id]).filter(Boolean);
   // Keep the open bubble's view fresh as items complete.
   const openBubbleLive = openBubble ? map.bubbles.find((b) => b.id === openBubble.id) ?? openBubble : null;
 
   return (
-    <div ref={wrapRef}>
+    <div>
       {capturedItems.length > 0 && (
         <div className="captured-today">
           <h3>Captured today</h3>
@@ -49,11 +38,7 @@ export default function MapView({
           </p>
         </div>
       ) : (
-        width > 0 && (
-          <div className="bubble-map-wrap">
-            <BubbleMap bubbles={map.bubbles} items={map.items} width={width} onOpen={setOpenBubble} />
-          </div>
-        )
+        <BubbleMap bubbles={map.bubbles} items={map.items} onOpen={setOpenBubble} />
       )}
 
       {openBubbleLive && (

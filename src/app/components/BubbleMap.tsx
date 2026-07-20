@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
 import type { Bubble, ItemView } from '../../shared/types';
-import { layoutBubbles } from '../bubbleLayout';
 import { themeColor } from '../api';
 
-// The bubble map (§6): size = prominence, colour = theme. Two channels, nothing else.
+// The map (§6) as a packed mosaic: rounded tiles stuck together, sized by
+// prominence (area = the one scarce resource, §9.2), coloured by theme.
+// Deterministic for identical input — the map never jiggles.
 
 function bubbleColor(bubble: Bubble, items: Record<string, ItemView>): string {
-  if (bubble.kind === 'rotation') return 'hsl(260 30% 60%)';
-  // Dominant theme across member items.
+  if (bubble.kind === 'rotation') return 'hsl(260 25% 40%)';
   const counts = new Map<string, number>();
   for (const id of bubble.itemIds) {
     for (const t of items[id]?.themes ?? []) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
@@ -23,86 +23,86 @@ function bubbleColor(bubble: Bubble, items: Record<string, ItemView>): string {
   return best ? themeColor(best) : 'hsl(220 15% 55%)';
 }
 
-function wrapName(name: string, r: number): string[] {
-  const maxChars = Math.max(6, Math.floor(r / 4.2));
-  const words = name.split(' ');
-  const lines: string[] = [];
-  let cur = '';
-  for (const w of words) {
-    if ((cur + ' ' + w).trim().length > maxChars && cur) {
-      lines.push(cur);
-      cur = w;
-    } else {
-      cur = (cur + ' ' + w).trim();
+// Greedy row packing: highest prominence first; a dominant bubble gets its own
+// full-width row, smaller ones share a row (max 3) like bar segments.
+function packRows(bubbles: Bubble[]): Bubble[][] {
+  const sorted = [...bubbles].sort((a, b) => b.prominence - a.prominence);
+  const rows: Bubble[][] = [];
+  let cur: Bubble[] = [];
+  let weight = 0;
+  const flush = () => {
+    if (cur.length) rows.push(cur);
+    cur = [];
+    weight = 0;
+  };
+  for (const b of sorted) {
+    if (b.prominence >= 0.75) {
+      flush();
+      rows.push([b]);
+      continue;
     }
+    if (cur.length >= 3 || weight + b.prominence > 1.05) flush();
+    cur.push(b);
+    weight += b.prominence;
   }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 3);
+  flush();
+  return rows;
 }
 
 export default function BubbleMap({
   bubbles,
   items,
-  width,
   onOpen,
 }: {
   bubbles: Bubble[];
   items: Record<string, ItemView>;
-  width: number;
+  width?: number; // kept for call-site compatibility; layout is now fluid
   onOpen: (bubble: Bubble) => void;
 }) {
-  const { placed, height } = useMemo(
-    () => layoutBubbles(bubbles.map((b) => ({ id: b.id, prominence: b.prominence })), width),
-    [bubbles, width],
-  );
-  const byId = useMemo(() => new Map(bubbles.map((b) => [b.id, b])), [bubbles]);
-
+  const rows = useMemo(() => packRows(bubbles), [bubbles]);
   if (!bubbles.length) return null;
 
   return (
-    <svg className="bubble-map" width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-      {placed.map((p) => {
-        const bubble = byId.get(p.id)!;
-        const color = bubbleColor(bubble, items);
-        const doneCount = bubble.itemIds.filter((id) => items[id]?.status === 'completed').length;
-        const total = bubble.itemIds.length;
-        const allDone = total > 0 && doneCount === total;
-        const lines = wrapName(bubble.name, p.r);
-        const fontSize = Math.max(11, Math.min(17, p.r / 3.6));
+    <div className="tile-map">
+      {rows.map((row, ri) => {
+        const rowWeight = row.reduce((s, b) => s + b.prominence, 0);
+        const maxP = Math.max(...row.map((b) => b.prominence));
+        // Height scales with the row's biggest tile: small dots stay compact,
+        // today's loud thing is unmissable.
+        const height = Math.round(58 + maxP * 96);
         return (
-          <g
-            key={p.id}
-            className="bubble"
-            opacity={allDone ? 0.35 : 1}
-            onClick={() => onOpen(bubble)}
-          >
-            <circle cx={p.x} cy={p.y} r={p.r} fill={color} opacity={0.88} />
-            <circle cx={p.x} cy={p.y} r={p.r} fill="none" stroke={color} strokeOpacity={0.5} strokeWidth={1.5} />
-            {lines.map((line, i) => (
-              <text
-                key={i}
-                x={p.x}
-                y={p.y + (i - (lines.length - 1) / 2) * (fontSize + 2)}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={fontSize}
-              >
-                {line}
-              </text>
-            ))}
-            <text
-              x={p.x}
-              y={p.y + (lines.length / 2) * (fontSize + 2) + fontSize * 0.9}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontSize={Math.max(10, fontSize - 4)}
-              opacity={0.75}
-            >
-              {doneCount > 0 ? `${doneCount}/${total} done` : `${total} item${total === 1 ? '' : 's'}`}
-            </text>
-          </g>
+          <div key={ri} className="tile-row" style={{ height }}>
+            {row.map((bubble) => {
+              const color = bubbleColor(bubble, items);
+              const doneCount = bubble.itemIds.filter((id) => items[id]?.status === 'completed').length;
+              const total = bubble.itemIds.length;
+              const allDone = total > 0 && doneCount === total;
+              const fontSize = Math.max(13, Math.min(19, 12 + bubble.prominence * 8));
+              return (
+                <button
+                  key={bubble.id}
+                  className={`tile bubble${bubble.kind === 'rotation' ? ' rotation' : ''}`}
+                  style={{
+                    flexGrow: bubble.prominence / rowWeight,
+                    flexBasis: 0,
+                    background: bubble.kind === 'rotation' ? 'transparent' : color,
+                    borderColor: color,
+                    opacity: allDone ? 0.35 : 1,
+                  }}
+                  onClick={() => onOpen(bubble)}
+                >
+                  <span className="tile-name" style={{ fontSize }}>
+                    {bubble.name}
+                  </span>
+                  <span className="tile-count">
+                    {doneCount > 0 ? `${doneCount}/${total} done` : `${total} item${total === 1 ? '' : 's'}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         );
       })}
-    </svg>
+    </div>
   );
 }
