@@ -138,7 +138,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         ? 'low-confidence'
         : null;
 
-  return { captureId, created, boosted, nudge };
+  return { captureId, rawText: req.text, created, boosted, nudge };
 }
 
 // Undo a recapture-merge (§10.3): revert the boost AND split the appended
