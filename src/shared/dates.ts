@@ -84,6 +84,26 @@ function localNoonIso(d: Date, tzOffsetMinutes: number): string {
   return new Date(noonLocal - tzOffsetMinutes * 60_000).toISOString();
 }
 
+// Recovery net for dropped clock times: when the extracted phrase resolved
+// date-only (noon anchor) but the item's own raw text carries a time on the
+// SAME local day ("put laundry away before 3:00 p.m." → phrase "today"),
+// take the time from the source. Same-day guard keeps unrelated dates in
+// multi-intent text from hijacking it.
+export function refineWithSourceTime(
+  resolved: ResolvedDate | null,
+  sourceText: string,
+  ref: Date,
+  tzOffsetMinutes?: number,
+): ResolvedDate | null {
+  if (!resolved || resolved.hasTime) return resolved;
+  const fromSource = resolveDatePhrase(sourceText, ref, tzOffsetMinutes);
+  if (!fromSource?.hasTime) return resolved;
+  const tz = tzOffsetMinutes ?? 0;
+  const localDay = (iso: string) => Math.floor((new Date(iso).getTime() + tz * 60_000) / 86_400_000);
+  if (localDay(fromSource.iso) !== localDay(resolved.iso)) return resolved;
+  return { ...resolved, iso: fromSource.iso, hasTime: true };
+}
+
 // Soft-deadline cue words (§3.1): a plainly-stated date defaults to *hard*;
 // explicit low-pressure phrasing softens it.
 const SOFT_CUES = /\b(ideally|sometime|some time|no rush|eventually|at some point|when i can|if i can|would be nice|hopefully|loosely|roughly|-ish)\b/i;
