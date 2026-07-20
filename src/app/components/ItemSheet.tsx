@@ -44,6 +44,7 @@ export default function ItemSheet({
   const [optionality, setOptionality] = useState(item.optionality);
   const [effort, setEffort] = useState(item.effort);
   const [eventAt, setEventAt] = useState(toLocalInput(item.eventAt));
+  const [eventEnd, setEventEnd] = useState(toLocalInput(item.eventEnd));
   const [priority, setPriority] = useState(Math.round(item.effectivePriority * 100));
   const [priorityTouched, setPriorityTouched] = useState(false);
   const [flavourOverride, setFlavourOverride] = useState<Flavour | ''>(item.flavourOverride ?? '');
@@ -62,6 +63,7 @@ export default function ItemSheet({
         optionality,
         effort,
         eventAt: type === 'HAPPEN' ? fromLocalInput(eventAt) : null,
+        eventEnd: type === 'HAPPEN' ? fromLocalInput(eventEnd) : null,
         priority: priorityTouched ? priority / 100 : undefined,
         flavourOverride: flavourOverride || null,
         themes: themes
@@ -167,9 +169,15 @@ export default function ItemSheet({
         )}
 
         {type === 'HAPPEN' && (
-          <div className="field">
-            <label>When</label>
-            <input type="datetime-local" value={eventAt} onChange={(e) => setEventAt(e.target.value)} />
+          <div className="field-row">
+            <div className="field">
+              <label>When</label>
+              <input type="datetime-local" value={eventAt} onChange={(e) => setEventAt(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Until (optional)</label>
+              <input type="datetime-local" value={eventEnd} onChange={(e) => setEventEnd(e.target.value)} />
+            </div>
           </div>
         )}
 

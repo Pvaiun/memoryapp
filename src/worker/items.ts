@@ -84,6 +84,7 @@ export interface ItemEdits {
   pingNatured?: boolean;
   eventAt?: string | null;
   eventAtPhrase?: string | null;
+  eventEnd?: string | null;
   alertLeadMinutes?: number | null;
   priority?: number | null; // user edit; null clears the override
   flavourOverride?: Flavour | null;
@@ -124,6 +125,7 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   } else if (edits.eventAt !== undefined) {
     set('event_at', 'eventAt', edits.eventAt);
   }
+  if (edits.eventEnd !== undefined) set('event_end', 'eventEnd', edits.eventEnd);
   if (edits.alertLeadMinutes !== undefined) set('alert_lead_minutes', 'alertLeadMinutes', edits.alertLeadMinutes);
   if (edits.priority !== undefined) set('user_priority', 'userPriority', edits.priority);
   // Flavour override is presentation-only (§4): stored, wins over derived,
