@@ -38,27 +38,50 @@ export function expandBareOrdinals(phrase: string, ref: Date, tzOffsetMinutes = 
 // tzOffsetMinutes: the client's UTC offset in minutes (Date#getTimezoneOffset
 // sign-flipped, i.e. UTC+2 → 120). The server runs in UTC, so "tomorrow" and
 // "next Tuesday" must be resolved against the *user's* calendar, not the server's.
+// Before this hour (user-local), relative dates resolve against the previous
+// day: at 12:31am, "tomorrow" means the morning a few hours away — the same
+// calendar day — not the day after it. 5am is the sleep-cycle boundary.
+export const EARLY_MORNING_CUTOFF_MINUTES = 5 * 60;
+
 export function resolveDatePhrase(phrase: string, ref: Date, tzOffsetMinutes?: number): ResolvedDate | null {
-  const reference = tzOffsetMinutes === undefined ? ref : { instant: ref, timezone: tzOffsetMinutes };
+  const tz = tzOffsetMinutes ?? 0;
+
+  // Night-owl rule: before the 5am cutoff, shift the reference to 11pm of the
+  // previous local day so "tomorrow"/"tonight" follow the sleep cycle, not the
+  // calendar. forwardDate keeps already-past results from resolving backwards.
+  let effRef = ref;
+  const local = new Date(ref.getTime() + tz * 60_000);
+  const minutesIntoDay = local.getUTCHours() * 60 + local.getUTCMinutes();
+  if (minutesIntoDay < EARLY_MORNING_CUTOFF_MINUTES) {
+    effRef = new Date(ref.getTime() - (minutesIntoDay + 60) * 60_000);
+  }
+
+  const reference = tzOffsetMinutes === undefined ? effRef : { instant: effRef, timezone: tz };
   let results = chrono.parse(phrase, reference, { forwardDate: true });
   if (!results.length) {
     // Fallback: expand bare day ordinals ("the 20th to the 25th") that chrono
     // cannot read without a month, then retry. Still fully deterministic.
-    const expanded = expandBareOrdinals(phrase, ref, tzOffsetMinutes ?? 0);
+    const expanded = expandBareOrdinals(phrase, effRef, tz);
     if (expanded === phrase) return null;
     results = chrono.parse(expanded, reference, { forwardDate: true });
     if (!results.length) return null;
   }
   const r = results[0];
-  const date = r.start.date();
-  // When no time is given, chrono implies 12:00 in the reference timezone —
-  // a safe canonical anchor for date-only deadlines.
   const hasTime = r.start.isCertain('hour');
-  return {
-    iso: date.toISOString(),
-    hasTime,
-    ...(r.end ? { endIso: r.end.date().toISOString() } : {}),
-  };
+  // Date-only phrases anchor to NOON local — "tomorrow" captured at 1:48am
+  // must not produce a 1:48am deadline.
+  const iso = hasTime ? r.start.date().toISOString() : localNoonIso(r.start.date(), tz);
+  let endIso: string | undefined;
+  if (r.end) {
+    endIso = r.end.isCertain('hour') ? r.end.date().toISOString() : localNoonIso(r.end.date(), tz);
+  }
+  return { iso, hasTime, ...(endIso ? { endIso } : {}) };
+}
+
+function localNoonIso(d: Date, tzOffsetMinutes: number): string {
+  const local = new Date(d.getTime() + tzOffsetMinutes * 60_000);
+  const noonLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 12, 0, 0);
+  return new Date(noonLocal - tzOffsetMinutes * 60_000).toISOString();
 }
 
 // Soft-deadline cue words (§3.1): a plainly-stated date defaults to *hard*;
