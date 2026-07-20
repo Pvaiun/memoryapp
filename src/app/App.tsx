@@ -51,10 +51,9 @@ export default function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   // Text that was in the box when dictation started; speech appends after it.
   const dictationBaseRef = useRef('');
-  // Finals accumulated across recognizer restarts (Chrome auto-ends on
+  // Finals accumulated across utterances/restarts (Chrome auto-ends on
   // silence; we restart until the user explicitly taps stop).
   const dictationFinalsRef = useRef('');
-  const sessionFinalRef = useRef('');
   const stopRequestedRef = useRef(false);
   const fatalErrorRef = useRef(false);
   const speechSupported = getSpeechRecognition() !== null;
@@ -226,26 +225,38 @@ export default function App() {
     if (!Ctor) return false;
     const rec = new Ctor();
     rec.lang = navigator.language || 'en-US';
-    rec.continuous = true;
+    // Deliberately NOT continuous: Android Chrome reports continuous-mode
+    // results cumulatively (each entry repeats the whole utterance so far),
+    // which duplicated text when concatenated. One utterance per session +
+    // our onend auto-restart keeps listening just as well, on every platform.
+    rec.continuous = false;
     rec.interimResults = true;
-    sessionFinalRef.current = '';
+
+    const render = (interim: string) => {
+      const joined = [dictationBaseRef.current, dictationFinalsRef.current, interim.trim()]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ');
+      setCaptureText(joined);
+    };
 
     rec.onresult = (e) => {
-      let finalText = '';
-      let interim = '';
-      for (let i = 0; i < e.results.length; i++) {
-        const chunk = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += chunk;
-        else interim += chunk;
+      // Read ONLY the latest result: on Android earlier entries are cumulative
+      // repeats, and in non-continuous mode the last entry is the utterance.
+      const res = e.results[e.results.length - 1];
+      if (!res) return;
+      const chunk = res[0].transcript.trim();
+      if (!chunk) return;
+      if (res.isFinal) {
+        // Fold each finished utterance into the accumulated text exactly once
+        // (guard against the same final being delivered twice).
+        if (!dictationFinalsRef.current.endsWith(chunk)) {
+          dictationFinalsRef.current = `${dictationFinalsRef.current} ${chunk}`.replace(/\s+/g, ' ').trim();
+        }
+        render('');
+      } else {
+        render(chunk);
       }
-      sessionFinalRef.current = finalText;
-      const joined = [
-        dictationBaseRef.current,
-        (dictationFinalsRef.current + finalText + interim).replace(/\s+/g, ' ').trim(),
-      ]
-        .filter(Boolean)
-        .join(' ');
-      setCaptureText(joined);
     };
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -260,9 +271,8 @@ export default function App() {
       }
     };
     rec.onend = () => {
-      // Carry this session's finals over before any restart.
-      dictationFinalsRef.current = (dictationFinalsRef.current + sessionFinalRef.current).replace(/\s+/g, ' ');
-      sessionFinalRef.current = '';
+      // Drop any dangling interim text; finals are already folded in onresult.
+      render('');
       if (!stopRequestedRef.current && !fatalErrorRef.current) {
         // Auto-ended on silence — keep listening until the user says done.
         try {
