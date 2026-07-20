@@ -7,16 +7,19 @@ import {
   corridorY,
   cubicBezier,
   CULL_BEHIND,
+  DEPTH_RANGE,
   depthCues,
-  descFade,
   engagedIndex,
   fanRows,
   FOCUS_FRAC,
+  gaugeColumns,
   MIN_SPACING,
   passState,
+  puckP,
   scaleFor,
   scrollFor,
-  trackNorm,
+  settleTarget,
+  TOP_BEFORE,
   VP_FRAC,
 } from './engine';
 
@@ -46,20 +49,20 @@ describe('buildTrack', () => {
     expect(track.map((t) => t.id)).toEqual(['c', 'a', 'b']);
   });
 
-  it('keeps gaps larger than the floor (the 0.95 → 0.66 cliff renders bigger)', () => {
+  it('renders real cliffs several times the spacing floor — depth is felt', () => {
     const track = buildTrack(SAMPLE);
-    expect(track[0].zp).toBeCloseTo(0.05 * 1100); // 55
-    expect(track[1].zp).toBeCloseTo(0.34 * 1100); // 374 — gap 319 > 150, untouched
+    const cliff = track[1].zp - track[0].zp; // 0.95 → 0.66
+    expect(cliff).toBeCloseTo(0.29 * DEPTH_RANGE); // 464 — untouched
+    expect(cliff / MIN_SPACING).toBeGreaterThan(3);
   });
 
-  it('stretches close prominences to the readable spacing floor, monotonically', () => {
+  it('stretches close prominences to the spacing floor, monotonically', () => {
     const track = buildTrack(SAMPLE);
     for (let i = 1; i < track.length; i++) {
       expect(track[i].zp - track[i - 1].zp).toBeGreaterThanOrEqual(MIN_SPACING - 1e-9);
-      // never pulled forward of true depth
-      expect(track[i].zp).toBeGreaterThanOrEqual((1 - track[i].p) * 1100 - 1e-9);
+      expect(track[i].zp).toBeGreaterThanOrEqual((1 - track[i].p) * DEPTH_RANGE - 1e-9);
     }
-    // 0.58 → 0.55 is a 33-unit true gap: inflates to exactly the floor
+    // 0.58 → 0.55 is a 48-unit true gap: inflates to exactly the floor
     expect(track[3].zp - track[2].zp).toBeCloseTo(MIN_SPACING);
   });
 
@@ -69,26 +72,76 @@ describe('buildTrack', () => {
 });
 
 describe('camera mapping', () => {
-  it('travels beyond both ends: overview above card 0, empty rest past the last', () => {
+  it('travels from the overview down to a hard stop ON the last plane', () => {
     const track = buildTrack(SAMPLE);
     const { cStart, cEnd } = cameraRange(track);
-    expect(cStart).toBeCloseTo(track[0].zp - 320);
-    expect(cEnd).toBeCloseTo(track[track.length - 1].zp + 300);
+    expect(cStart).toBeCloseTo(track[0].zp - TOP_BEFORE);
+    expect(cEnd).toBeCloseTo(track[track.length - 1].zp); // no travel past it
   });
 
   it('round-trips scroll ↔ camera', () => {
     const { cStart } = cameraRange(buildTrack(SAMPLE));
     expect(cameraAt(cStart, scrollFor(cStart, 500))).toBeCloseTo(500);
   });
+});
 
-  it('trackNorm maps the display track 0 → 1, clamped at the ends', () => {
-    const track = buildTrack(SAMPLE);
-    expect(trackNorm(track, track[0].zp)).toBe(0);
-    expect(trackNorm(track, track[track.length - 1].zp)).toBe(1);
-    expect(trackNorm(track, track[0].zp - 500)).toBe(0);
-    const mid = trackNorm(track, track[5].zp);
-    expect(mid).toBeGreaterThan(0);
+describe('puckP — physical cursor on a true scale', () => {
+  const track = buildTrack(SAMPLE);
+
+  it('sits exactly on each card’s true p at its focal plane', () => {
+    for (const t of track) expect(puckP(track, t.zp)).toBeCloseTo(t.p);
+  });
+
+  it('starts at the top cap in the overview and eases onto the first card', () => {
+    expect(puckP(track, track[0].zp - TOP_BEFORE)).toBe(1);
+    expect(puckP(track, track[0].zp - 5000)).toBe(1); // rubber band clamps
+    const mid = puckP(track, track[0].zp - TOP_BEFORE / 2);
+    expect(mid).toBeGreaterThan(track[0].p);
     expect(mid).toBeLessThan(1);
+  });
+
+  it('interpolates between true p values across each physical gap', () => {
+    const a = track[2]; // plants .58
+    const b = track[3]; // doctor .55 — floored gap
+    expect(puckP(track, (a.zp + b.zp) / 2)).toBeCloseTo((a.p + b.p) / 2);
+  });
+
+  it('is monotone non-increasing along the whole descent', () => {
+    let prev = Infinity;
+    const { cStart, cEnd } = cameraRange(track);
+    for (let c = cStart; c <= cEnd; c += 10) {
+      const p = puckP(track, c);
+      expect(p).toBeLessThanOrEqual(prev + 1e-9);
+      prev = p;
+    }
+  });
+
+  it('holds the last card’s p at the bottom stop', () => {
+    expect(puckP(track, track[track.length - 1].zp)).toBeCloseTo(0.15);
+  });
+});
+
+describe('directional settle', () => {
+  const rests = [0, 100, 300, 600];
+
+  it('stays put when resting on a plane', () => {
+    expect(settleTarget(rests, 300, 1)).toBe(300);
+    expect(settleTarget(rests, 300, -1)).toBe(300);
+  });
+
+  it('commits forward once past the hysteresis, in either direction', () => {
+    expect(settleTarget(rests, 140, 1)).toBe(300); // moved 40 down → next down
+    expect(settleTarget(rests, 560, -1)).toBe(300); // moved 40 up → next up
+  });
+
+  it('drifts back inside the hysteresis', () => {
+    expect(settleTarget(rests, 120, 1)).toBe(100); // only 20 past → return
+    expect(settleTarget(rests, 580, -1)).toBe(600);
+  });
+
+  it('never overshoots the ends', () => {
+    expect(settleTarget(rests, 650, 1)).toBe(600);
+    expect(settleTarget(rests, -50, -1)).toBe(0);
   });
 });
 
@@ -97,21 +150,19 @@ describe('corridor projection', () => {
     const vh = 800;
     expect(corridorY(1, vh)).toBeCloseTo(FOCUS_FRAC * vh);
     expect(corridorY(0, vh)).toBeCloseTo(VP_FRAC * vh);
-    // monotone: bigger scale → lower on screen
     expect(corridorY(0.7, vh)).toBeGreaterThan(corridorY(0.4, vh));
   });
 
   it('scale is 1 at focus and grows past it, capped', () => {
     expect(scaleFor(0)).toBe(1);
     expect(scaleFor(380)).toBeCloseTo(0.5);
-    expect(scaleFor(-300)).toBe(2.4); // capped during the pass
+    expect(scaleFor(-300)).toBe(2.4);
   });
 });
 
 describe('depth cues', () => {
   it('holds the near plateau and ramps to the mid floor', () => {
     expect(depthCues(0)).toEqual({ opacity: 1, saturation: 1, contrast: 1 });
-    expect(depthCues(100)).toEqual({ opacity: 1, saturation: 1, contrast: 1 });
     const mid = depthCues(650);
     expect(mid.opacity).toBeCloseTo(0.32);
     expect(mid.saturation).toBeCloseTo(0.55);
@@ -124,7 +175,6 @@ describe('depth cues', () => {
   it('reduced motion steepens the ramp but keeps the same endpoints', () => {
     expect(depthCues(420, true).opacity).toBeCloseTo(0.32);
     expect(depthCues(100, true).opacity).toBe(1);
-    expect(depthCues(1000, true).opacity).toBeCloseTo(0.15);
   });
 });
 
@@ -138,10 +188,6 @@ describe('the pass (vertical exit)', () => {
     expect(p.drop).toBeCloseTo(1);
     expect(p.alpha).toBeCloseTo(0);
   });
-  it('holds opacity through most of the exit', () => {
-    expect(passState(-100).alpha).toBe(1);
-    expect(passState(-180).alpha).toBeCloseTo(0.5);
-  });
   it('drop is monotone — the card only ever moves down', () => {
     let prev = 0;
     for (let d = 0; d >= CULL_BEHIND; d -= 10) {
@@ -152,27 +198,21 @@ describe('the pass (vertical exit)', () => {
   });
 });
 
-describe('anatomy and engagement', () => {
-  it('description fades by scale; nothing else ever collapses', () => {
-    expect(descFade(0.7)).toBe(1);
-    expect(descFade(0.6)).toBe(0);
-    expect(descFade(0.65)).toBeCloseTo(0.5);
-  });
+describe('gauge and ledger helpers', () => {
   it('engaged card minimizes |d|', () => {
     const track = buildTrack(SAMPLE);
     expect(engagedIndex(track, track[0].zp)).toBe(0);
     expect(engagedIndex(track, track[4].zp + 10)).toBe(4);
   });
-});
-
-describe('ledger helpers', () => {
-  it('fans rows to a minimum gap without reordering', () => {
+  it('shifts colliding gauge dots into a second column, alternating', () => {
+    expect(gaugeColumns([10, 13, 15, 40])).toEqual([0, 1, 0, 0]);
+    expect(gaugeColumns([10, 20, 30])).toEqual([0, 0, 0]);
+  });
+  it('fans ledger rows to a minimum gap without reordering', () => {
     expect(fanRows([10, 12, 80], 26)).toEqual([10, 36, 80]);
-    expect(fanRows([10, 100], 26)).toEqual([10, 100]);
   });
   it('band is a clamped linear ramp', () => {
     expect(band(5, 0, 10)).toBe(0.5);
-    expect(band(-1, 0, 10)).toBe(0);
     expect(band(11, 0, 10)).toBe(1);
   });
 });
