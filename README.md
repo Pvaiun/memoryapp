@@ -49,6 +49,7 @@ npm run check        # typecheck
 npx wrangler d1 create memory-db        # put the returned id into wrangler.jsonc
 npm run db:migrate:remote
 npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put SECRET_PASSWORD   # access gate (see below)
 
 # Web Push (optional but recommended):
 node scripts/generate-vapid-keys.mjs
@@ -61,7 +62,7 @@ npm run deploy
 
 Then open the deployed URL, "Add to Home Screen", and tap the bell to enable alerts.
 
-**Note:** the app is single-user by design (one DB = one person's memory). Put it behind Cloudflare Access (zero-trust) or deploy per-user; there is no auth layer in v1.
+**Access gate:** set a `SECRET_PASSWORD` secret on the Worker and every API route requires it. The app shows a one-time unlock screen per device (stored in localStorage). Without the secret set (e.g. plain local dev), the gate is off. The app is single-user by design (one DB = one person's memory); for stronger protection put it behind Cloudflare Access.
 
 ## Repo layout
 

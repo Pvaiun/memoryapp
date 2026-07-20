@@ -9,11 +9,31 @@ export function tzOffsetMinutes(): number {
   return -new Date().getTimezoneOffset();
 }
 
+// One-time-per-device access gate: the password lives in localStorage after
+// the unlock screen and rides along on every API call.
+const AUTH_KEY = 'memory-auth';
+
+export class AuthError extends Error {
+  constructor() {
+    super('unauthorized');
+  }
+}
+
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_KEY, token);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem(AUTH_KEY);
+  return token ? { 'x-memory-auth': token } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
-    headers: { 'content-type': 'application/json' },
     ...init,
+    headers: { 'content-type': 'application/json', ...authHeaders(), ...(init?.headers as Record<string, string>) },
   });
+  if (res.status === 401) throw new AuthError();
   if (!res.ok) {
     let msg = `${res.status}`;
     try {

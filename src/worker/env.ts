@@ -3,6 +3,7 @@ export interface Env {
   AI?: Ai; // Workers AI, for embeddings; optional so local dev degrades gracefully
   ASSETS: Fetcher;
   ANTHROPIC_API_KEY?: string;
+  SECRET_PASSWORD?: string; // gates all /api routes when set
   CAPTURE_MODEL: string;
   BRAIN_MODEL: string;
   VAPID_PUBLIC_KEY?: string;
