@@ -791,14 +791,6 @@ textarea:focus {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.theme-chips {
-  padding-top: 0;
-}
-.theme-chips .chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
 .theme-section {
   margin-bottom: 12px;
   background: var(--card);

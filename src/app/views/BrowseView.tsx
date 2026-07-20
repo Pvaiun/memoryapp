@@ -17,7 +17,6 @@ export default function BrowseView({
 }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.browse>> | null>(null);
   const [flavour, setFlavour] = useState<Flavour | 'All'>('All');
-  const [themeId, setThemeId] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
 
   useEffect(() => {
@@ -49,7 +48,7 @@ export default function BrowseView({
 
   const sections = data.themes
     .map((t) => ({ ...t, itemIds: orderIds(t.itemIds.filter(visible)) }))
-    .filter((t) => t.itemIds.length && (themeId === null || t.id === themeId));
+    .filter((t) => t.itemIds.length);
 
   return (
     <div>
@@ -62,23 +61,6 @@ export default function BrowseView({
         <button className={`chip${showDone ? ' on' : ''}`} onClick={() => setShowDone(!showDone)}>
           {showDone ? 'Hiding nothing' : 'Show done'}
         </button>
-      </div>
-      <div className="flavour-chips theme-chips">
-        <button className={`chip${themeId === null ? ' on' : ''}`} onClick={() => setThemeId(null)}>
-          All themes
-        </button>
-        {data.themes
-          .filter((t) => t.itemIds.some(visible))
-          .map((t) => (
-            <button
-              key={t.id}
-              className={`chip${themeId === t.id ? ' on' : ''}`}
-              onClick={() => setThemeId(themeId === t.id ? null : t.id)}
-            >
-              <span className="theme-dot" style={{ background: themeColor(t.name), color: themeColor(t.name) }} />
-              {t.name} {t.itemIds.filter(visible).length}
-            </button>
-          ))}
       </div>
       {sections.length === 0 && <div className="hint">Nothing filed here yet.</div>}
       {sections.map((t) => (
