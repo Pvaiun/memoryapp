@@ -52,7 +52,7 @@ export default function BrowseView({
       {sections.map((t) => (
         <div key={t.id} className="theme-section">
           <h3>
-            <span className="theme-dot" style={{ background: themeColor(t.name) }} />
+            <span className="theme-dot" style={{ background: themeColor(t.name), color: themeColor(t.name) }} />
             {t.name} <span className="count">{t.itemIds.length}</span>
           </h3>
           {t.itemIds.map((id) => (
