@@ -1,8 +1,11 @@
 import type { CaptureResponse, Flavour, ItemView, MapPayload } from '../shared/types';
-import { dayKey } from '../shared/dates';
+import { dayKey, EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 
+// The app's "day" rolls over at the 5am sleep-cycle cutoff, not midnight —
+// opening at 12:30am is still last night, so the Brain doesn't rebuild the map
+// out from under a late session (same boundary the date parser uses).
 export function localDay(): string {
-  return dayKey(new Date());
+  return dayKey(new Date(Date.now() - EARLY_MORNING_CUTOFF_MINUTES * 60_000));
 }
 
 export function tzOffsetMinutes(): number {
