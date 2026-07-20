@@ -13,6 +13,26 @@ app.onError((err, c) => {
   return c.json({ error: err instanceof Error ? err.message : 'unknown error' }, 500);
 });
 
+// Access gate: when SECRET_PASSWORD is set, every API call must present it.
+// The client stores it once per device (unlock screen) and sends it as a header.
+app.use('/api/*', async (c, next) => {
+  const expected = c.env.SECRET_PASSWORD;
+  if (expected && !constantTimeEqual(c.req.header('x-memory-auth') ?? '', expected)) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  await next();
+});
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ab = enc.encode(a);
+  const bb = enc.encode(b);
+  let diff = ab.length ^ bb.length;
+  const len = Math.max(ab.length, bb.length);
+  for (let i = 0; i < len; i++) diff |= (ab[i % Math.max(1, ab.length)] ?? 0) ^ (bb[i % Math.max(1, bb.length)] ?? 0);
+  return diff === 0;
+}
+
 // ---------- Capture (§10) ----------
 
 app.post('/api/capture', async (c) => {

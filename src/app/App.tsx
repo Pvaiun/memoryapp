@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ItemView, MapPayload } from '../shared/types';
-import { api } from './api';
+import { api, AuthError } from './api';
+import PasswordGate from './components/PasswordGate';
 import MapView from './views/MapView';
 import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
@@ -27,6 +28,7 @@ export default function App() {
   const [captureText, setCaptureText] = useState('');
   const [capturing, setCapturing] = useState(false);
   const [pushOn, setPushOn] = useState<boolean | null>(null);
+  const [locked, setLocked] = useState(false);
   const captureRef = useRef<HTMLTextAreaElement>(null);
 
   const toast = useCallback((msg: string, action?: Toast['action'], ttl = 6000) => {
@@ -50,6 +52,10 @@ export default function App() {
       }
     } catch (err) {
       setBuilding(false);
+      if (err instanceof AuthError) {
+        setLocked(true);
+        return;
+      }
       toast(`Couldn't load the map: ${err instanceof Error ? err.message : err}`);
     }
   }, [toast]);
@@ -199,6 +205,19 @@ export default function App() {
       toast(`Couldn't enable alerts: ${err instanceof Error ? err.message : err}`);
     }
   }, [toast]);
+
+  if (locked) {
+    return (
+      <div className="app">
+        <PasswordGate
+          onUnlock={() => {
+            setLocked(false);
+            loadMap();
+          }}
+        />
+      </div>
+    );
+  }
 
   if (building || (!map && !toasts.length)) {
     return (
