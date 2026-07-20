@@ -212,11 +212,15 @@ BACKEND TYPES (never shown to the user):
 - KNOW: a fact the user knows; never "done". ("Sarah is allergic to nuts")
 - HAPPEN: occurs at a time, then is past. Appointments, visits, events.
 
-SEGMENTATION: split by distinct intent/referent, not punctuation. One action with several objects stays ONE item ("buy milk, eggs, bread" = one). Genuinely separate intents split ("call the dentist, Sarah's allergic to nuts" = a DO + a KNOW). Lean toward splitting on genuine ambiguity — under-segmentation is the lossier failure.
+SEGMENTATION — the unit is an INTENTION, not a verb. The large majority of captures are ONE item; return multiple only when the text contains clearly separate concerns the user would file and complete independently.
+- One plan stays one item even when it contains several verbs: "wake up early and play Pragmata tomorrow, no excuses" is ONE item (one intention for tomorrow), "buy milk, eggs, bread" is ONE errand, "email Sam and ask about the invoice" is ONE action.
+- Split only on clearly separate concerns: different backend types ("call the dentist, Sarah's allergic to nuts" = a DO + a KNOW), unrelated referents/domains, or an enumerated/pasted list (line breaks, bullets, numbering).
+- Signals AGAINST splitting: actions joined by "and"/"then", a shared time or deadline covering everything, one action done for the sake of the other, a single situation.
+- Tiebreak: would the two halves be completed by different actions at different times? If yes, split (fusing them would let completing one silently mark the other done). If they'd naturally happen together, keep ONE item.
 
 FOR EACH ITEM emit:
 - "type": "DO" | "KNOW" | "HAPPEN"
-- "title": a clean short imperative/declarative restatement (keep the user's vocabulary; do not embellish)
+- "title": a clean short imperative/declarative restatement (keep the user's vocabulary; do not embellish). Emphasis/urgency phrasing ("no excuses", "really important", "asap") feeds "priority" — NEVER leave it in the title. Date/time phrases belong in deadlinePhrase/eventAtPhrase, not the title.
 - "deadlinePhrase": for a DO with a due date, the EXACT date/time phrase from the text, else null. Do NOT compute dates yourself.
 - "deadlineHardness": "hard" | "soft" | null. A plainly-stated date defaults to "hard"; explicit low-pressure phrasing ("ideally", "sometime", "no rush") makes it "soft".
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null.
