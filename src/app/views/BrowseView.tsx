@@ -32,8 +32,22 @@ export default function BrowseView({
     return flavour === 'All' || item.flavour === flavour;
   };
 
+  // Within a section: active before done, dated before undated (soonest
+  // first), then priority — so each theme reads as its own mini to-do list.
+  const orderIds = (ids: string[]) =>
+    [...ids].sort((a, b) => {
+      const A = data.items[a];
+      const B = data.items[b];
+      if ((A.status === 'completed') !== (B.status === 'completed')) return A.status === 'completed' ? 1 : -1;
+      const aDate = A.deadline ?? A.eventAt;
+      const bDate = B.deadline ?? B.eventAt;
+      if (!!aDate !== !!bDate) return aDate ? -1 : 1;
+      if (aDate && bDate && aDate !== bDate) return aDate < bDate ? -1 : 1;
+      return B.effectivePriority - A.effectivePriority;
+    });
+
   const sections = data.themes
-    .map((t) => ({ ...t, itemIds: t.itemIds.filter(visible) }))
+    .map((t) => ({ ...t, itemIds: orderIds(t.itemIds.filter(visible)) }))
     .filter((t) => t.itemIds.length);
 
   return (
