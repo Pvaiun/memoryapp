@@ -476,6 +476,96 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
 
 // ---------- Tier-2 profile recompute (§7.3) ----------
 
+// Compress administrative churn before the profile builder sees the log:
+// rapid capture→edit→reject cycles are the user operating the app, not living
+// their life, and profiling them poisons surfacing (a real incident: the
+// profile branded a kind of item "usually rejected" and the Brain dropped a
+// same-day task). Pure and unit-tested.
+export function compactEventLines(
+  events: { ts: string; actor: string; type: string; item_id: string | null; payload: string }[],
+  titleById: Map<string, string>,
+): string[] {
+  const parse = (s: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(s) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const fmt = (ts: string, actor: string, type: string, detail: string) =>
+    `${ts.slice(5, 16).replace('T', ' ')} ${actor} ${type}${detail ? ` — ${detail}` : ''}`;
+
+  // Draft churn: created and rejected within 30 minutes → one line, no blow-by-blow.
+  const createdAt = new Map<string, number>();
+  const rejectedAt = new Map<string, number>();
+  for (const e of events) {
+    if (!e.item_id) continue;
+    if (e.type === 'created') createdAt.set(e.item_id, new Date(e.ts).getTime());
+    if (e.type === 'rejected') rejectedAt.set(e.item_id, new Date(e.ts).getTime());
+  }
+  const draftIds = new Set<string>();
+  for (const [id, c] of createdAt) {
+    const r = rejectedAt.get(id);
+    if (r !== undefined && r - c < 30 * 60_000) draftIds.add(id);
+  }
+
+  const lines: string[] = [];
+  const bursts = new Map<string, { idx: number; ts: number; count: number }>();
+  const lastCapture = { text: '', ts: 0, idx: -1, count: 1 };
+
+  for (const e of events) {
+    const p = parse(e.payload);
+    const title = (e.item_id ? titleById.get(e.item_id) : undefined) ?? (typeof p.title === 'string' ? p.title : '');
+    const t = new Date(e.ts).getTime();
+
+    if (e.item_id && draftIds.has(e.item_id)) {
+      if (e.type === 'created') lines.push(fmt(e.ts, 'user', 'draft_discarded', title));
+      continue;
+    }
+
+    if (e.type === 'captured' && typeof p.text === 'string') {
+      const norm = p.text.trim().toLowerCase();
+      if (norm === lastCapture.text && t - lastCapture.ts < 10 * 60_000 && lastCapture.idx >= 0) {
+        lastCapture.count += 1;
+        lastCapture.ts = t;
+        lines[lastCapture.idx] = lines[lastCapture.idx].replace(/( \(x\d+\))?$/, ` (x${lastCapture.count})`);
+        continue;
+      }
+      Object.assign(lastCapture, { text: norm, ts: t, idx: lines.length, count: 1 });
+      lines.push(fmt(e.ts, e.actor, e.type, p.text.slice(0, 80)));
+      continue;
+    }
+
+    if ((e.type === 'edited' || e.type === 're_themed') && e.item_id) {
+      let detail = title;
+      if (e.type === 'edited' && p.after && typeof p.after === 'object')
+        detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
+      if (e.type === 're_themed' && Array.isArray(p.before) && Array.isArray(p.after))
+        detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
+      const key = `${e.item_id}:${e.type}`;
+      const b = bursts.get(key);
+      if (b && t - b.ts < 15 * 60_000) {
+        b.count += 1;
+        b.ts = t;
+        lines[b.idx] = `${fmt(e.ts, e.actor, e.type, detail)} (x${b.count})`;
+        continue;
+      }
+      bursts.set(key, { idx: lines.length, ts: t, count: 1 });
+      lines.push(fmt(e.ts, e.actor, e.type, detail));
+      continue;
+    }
+
+    let detail = title;
+    if (e.type === 'recaptured' && typeof p.appendedText === 'string')
+      detail = `${title} +"${(p.appendedText as string).slice(0, 60)}"`;
+    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
+      detail = `${String(p.from ?? '')}→${String(p.into ?? p.to ?? '')}`;
+    else if (e.type === 'map_rebuilt') detail = '';
+    lines.push(fmt(e.ts, e.actor, e.type, detail));
+  }
+  return lines;
+}
+
 async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   const db = env.DB;
   if (!llmAvailable(env)) return getState(db, 'profile_text');
@@ -487,31 +577,23 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ ts: string; actor: string; type: string; item_id: string | null; payload: string }>();
   if (!events.results.length) return getState(db, 'profile_text');
 
+  // Titles for all items incl. deleted — draft churn references them.
   const itemTitles = await db
-    .prepare("SELECT id, title, type FROM items WHERE status != 'deleted'")
+    .prepare('SELECT id, title, type FROM items')
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) about the USER'S LIFE PATTERNS, for two readers.
 
-  // One compact line per event — the builder needs "what happened when",
-  // not full field diffs. Keeps a month of history to a few thousand tokens.
-  const lines = events.results.map((e) => {
-    const p = safeParse(e.payload) as Record<string, unknown>;
-    const title = e.item_id ? titleById.get(e.item_id) ?? '' : '';
-    let detail = title;
-    if (e.type === 'captured' && typeof p?.text === 'string') detail = p.text.slice(0, 80);
-    else if (e.type === 'edited' && p?.after && typeof p.after === 'object')
-      detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
-    else if (e.type === 're_themed' && Array.isArray(p?.before) && Array.isArray(p?.after))
-      detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
-    else if (e.type === 'recaptured' && typeof p?.appendedText === 'string')
-      detail = `${title} +"${p.appendedText.slice(0, 60)}"`;
-    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
-      detail = `${p?.from ?? ''}→${p?.into ?? p?.to ?? ''}`;
-    else if (e.type === 'map_rebuilt') detail = '';
-    return `${e.ts.slice(5, 16).replace('T', ' ')} ${e.actor} ${e.type}${detail ? ` — ${detail}` : ''}`;
-  });
+For the Brain (surfacing): when they check in and complete things; which themes or kinds of items get done promptly, which linger or get quietly ignored; what activity spikes before events; situation names they respond to.
+For Smart Capture (parsing): filing direction (which themes they consolidate toward when re-theming), priority adjustments they repeatedly make, splitting corrections, how they phrase dates and times.
+
+DO NOT profile app-administration mechanics. Rapid capture→edit→reject cycles, setup sessions, and repeated tweaking while getting an item right are the user OPERATING the app, not living their life — lines marked draft_discarded or (xN) are exactly that churn, pre-collapsed; at most read a filing preference from them, never a verdict on the content. NEVER conclude that a kind of item is a draft, unwanted, or likely to be rejected — wantedness is not yours to judge, and the Brain is forbidden from acting on such claims.
+
+Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+
+  // Deterministically compressed: one line per event, churn collapsed.
+  const lines = compactEventLines(events.results, titleById);
 
   const user = JSON.stringify({ today: day, events: lines });
 
@@ -583,14 +665,6 @@ async function librarianPass(env: Env): Promise<void> {
       await db.prepare('INSERT INTO theme_notes (id, ts, note) VALUES (?,?,?)').bind(newId(), nowIso(), op.note || `Renamed ${t.name} to ${op.newName}`).run();
       await logEvent(db, 'ai', 'theme_renamed', { payload: { from: t.name, to: op.newName, note: op.note } });
     }
-  }
-}
-
-function safeParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return s;
   }
 }
 

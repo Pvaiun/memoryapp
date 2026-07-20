@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
-import { isTodayRelevant } from './brain';
+import { compactEventLines, isTodayRelevant } from './brain';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
 import { cosine } from './db';
@@ -94,6 +94,73 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
   it('respects the timezone: 23:30 local today vs already-tomorrow UTC', () => {
     // 03:30Z July 21 is 23:30 July 20 at UTC-4 — still today locally.
     expect(isTodayRelevant({ ...base, deadline: '2026-07-21T03:30:00Z' }, now, tz)).toBe(true);
+  });
+});
+
+describe('compactEventLines — churn compression for the profile builder', () => {
+  const ev = (ts: string, actor: string, type: string, item_id: string | null, payload: object = {}) => ({
+    ts,
+    actor,
+    type,
+    item_id,
+    payload: JSON.stringify(payload),
+  });
+  const titles = new Map([
+    ['a', 'Play Pragmata (DO)'],
+    ['b', 'Make my will (DO)'],
+  ]);
+
+  it('collapses a created→edited→rejected cycle into one draft_discarded line', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata' }),
+        ev('2026-07-20T03:12:00Z', 'user', 'edited', 'a', { before: {}, after: { deadline: 'x' } }),
+        ev('2026-07-20T03:14:00Z', 'user', 'edited', 'a', { before: {}, after: { priority: 1 } }),
+        ev('2026-07-20T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('draft_discarded');
+    expect(lines[0]).toContain('Play Pragmata');
+  });
+
+  it('collapses same-item edit bursts with a count, keeps kept items visible', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
+        ev('2026-07-20T09:02:00Z', 'user', 'edited', 'b', { after: { deadline: 'x' } }),
+        ev('2026-07-20T09:05:00Z', 'user', 'edited', 'b', { after: { priority: 1 } }),
+        ev('2026-07-20T09:09:00Z', 'user', 'edited', 'b', { after: { title: 'y' } }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2); // created + one collapsed edit line
+    expect(lines[1]).toContain('(x3)');
+  });
+
+  it('collapses identical rapid re-captures', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:00:00Z', 'user', 'captured', null, { text: 'make my will' }),
+        ev('2026-07-20T03:01:00Z', 'user', 'captured', null, { text: 'Make my will ' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('(x2)');
+  });
+
+  it('slow-burn rejections are NOT draft churn', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
+        ev('2026-07-20T09:00:00Z', 'user', 'rejected', 'b', { title: 'Make my will' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('rejected');
   });
 });
 
