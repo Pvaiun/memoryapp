@@ -6,6 +6,7 @@ import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
 import SettingsSheet from './components/SettingsSheet';
 import MapView from './views/MapView';
+import type { NowView } from './views/MapView';
 import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
 import SearchView from './views/SearchView';
@@ -41,6 +42,23 @@ let toastSeq = 1;
 export default function App() {
   const [tab, setTab] = useState<Tab>('map');
   const [map, setMap] = useState<MapPayload | null>(null);
+  // Now-view renderer: the experimental Descent instrument is the default;
+  // the classic tile mosaic stays reachable from Settings.
+  const [nowView, setNowViewState] = useState<NowView>(() => {
+    try {
+      return localStorage.getItem('memory.nowView') === 'tiles' ? 'tiles' : 'descent';
+    } catch {
+      return 'descent';
+    }
+  });
+  const setNowView = useCallback((v: NowView) => {
+    setNowViewState(v);
+    try {
+      localStorage.setItem('memory.nowView', v);
+    } catch {
+      /* private mode — the choice just won't persist */
+    }
+  }, []);
   const [building, setBuilding] = useState(false);
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
@@ -436,9 +454,17 @@ export default function App() {
         </div>
       </header>
 
-      <main className="view">
+      <main
+        className={`view${tab === 'map' && nowView === 'descent' && map && map.bubbles.length > 0 ? ' view-descent' : ''}`}
+      >
         {tab === 'map' && map && (
-          <MapView map={map} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} onOrganizeNow={organizeNow} />
+          <MapView
+            map={map}
+            nowView={nowView}
+            onOpenItem={setOpenItem}
+            onToggleComplete={toggleComplete}
+            onOrganizeNow={organizeNow}
+          />
         )}
         {tab === 'browse' && (
           <BrowseView refreshKey={refreshKey} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
@@ -503,6 +529,8 @@ export default function App() {
       {settingsOpen && (
         <SettingsSheet
           pushOn={pushOn}
+          nowView={nowView}
+          onSetNowView={setNowView}
           onEnablePush={enablePush}
           onRebuild={organizeNow}
           onExport={exportAll}
