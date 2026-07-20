@@ -1,15 +1,27 @@
-// Descent "Instrument" — pure render math (spec §0, §1, §2, §3, §6).
+// Descent "Instrument" — pure render math, v2 (vertical corridor).
 // Everything here is a deterministic function of (bubbles, scrollTop):
 // same data in → same pixels out. The React/DOM layer consumes these
 // per frame; nothing in this module touches the DOM.
+//
+// v2 model (product feedback 2026-07-20): cards are horizontally centered
+// in a tilt-shift corridor. Depth recedes upward — deep cards sit small
+// near a vanishing line in the upper third, descend and grow as they
+// approach, reach focus in the lower-middle, then sweep down off the
+// bottom edge as they pass. No lateral weave, no side exits.
 
-export const F = 260; // perspective focal constant (§0 step 6)
-export const DEPTH_RANGE = 1100; // p 0..1 → z 0..1100 (§0 step 2)
-export const MIN_SPACING = 56; // pushdown floor between focal planes (§3a)
-export const SCROLL_FACTOR = 1.02; // scrollTop → camera units (§0 step 4)
-export const PARK_BEFORE = 140; // camera parks this far before card 0 (§6)
-export const BOTTOM_AFTER = 80; // hard stop past the last focal plane (§6)
-export const GAUGE_INSET = 12; // scale line sits at W − 12 (§4)
+export const F = 380; // perspective focal constant — gentler falloff for readability
+export const DEPTH_RANGE = 1100; // p 0..1 → z 0..1100
+export const MIN_SPACING = 150; // pushdown floor between focal planes —
+// similar prominences stretch into an even, readable rhythm; real cliffs
+// still render proportionally bigger
+export const SCROLL_FACTOR = 1.02; // scrollTop → camera units
+export const TOP_BEFORE = 320; // travel above card 0: the pulled-back overview
+export const BOTTOM_AFTER = 300; // travel past the last card: the empty "end of today" rest
+export const GAUGE_INSET = 12; // scale line sits at W − 12
+
+// Corridor geometry, as fractions of viewport height.
+export const VP_FRAC = 0.24; // vanishing line
+export const FOCUS_FRAC = 0.62; // focal plane — card center at focus
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 // 0 at lo, 1 at hi, linear between.
@@ -17,15 +29,13 @@ export const band = (v: number, lo: number, hi: number) => clamp((v - lo) / (hi 
 
 export interface TrackCard {
   id: string;
-  i: number; // prominence rank, 0 = loudest — drives weave (§0a)
-  p: number; // true prominence; the gauge plots this, never z′ (§4)
-  zp: number; // z′ — pushed-down depth, the only depth used visually (§0 step 3)
-  side: -1 | 1; // weave side (§0a)
-  vy: number; // deterministic vertical offset, screen px (§0a)
+  i: number; // prominence rank, 0 = loudest
+  p: number; // true prominence (kept for the rebuild story / data)
+  zp: number; // z′ — pushed-down depth, the only depth used visually
 }
 
-// §0 steps 1–3: sort by p desc (ties by id — stable, deterministic),
-// raw depth, then monotonic pushdown to the 56-unit floor.
+// Sort by p desc (ties by id — stable, deterministic), raw depth, then
+// monotonic pushdown to the spacing floor.
 export function buildTrack(bubbles: { id: string; prominence: number }[]): TrackCard[] {
   const sorted = [...bubbles].sort(
     (a, b) => b.prominence - a.prominence || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -36,20 +46,13 @@ export function buildTrack(bubbles: { id: string; prominence: number }[]): Track
     const z = (1 - b.prominence) * DEPTH_RANGE;
     const zp = i === 0 ? z : Math.max(z, prev + MIN_SPACING);
     prev = zp;
-    out.push({
-      id: b.id,
-      i,
-      p: b.prominence,
-      zp,
-      side: i % 2 === 0 ? -1 : 1,
-      vy: (i % 2 === 0 ? -1 : 1) * (14 + (i % 3) * 4),
-    });
+    out.push({ id: b.id, i, p: b.prominence, zp });
   });
   return out;
 }
 
-// Camera ↔ scroll mapping. scrollTop 0 is the parked position (§6);
-// the far end hard-stops past the last focal plane.
+// Camera ↔ scroll mapping. scrollTop 0 is the pulled-back overview; the
+// far end rests past the last focal plane (the day fully descended).
 export interface CameraRange {
   cStart: number;
   cEnd: number;
@@ -57,21 +60,37 @@ export interface CameraRange {
 }
 
 export function cameraRange(track: TrackCard[]): CameraRange {
-  const cStart = track.length ? track[0].zp - PARK_BEFORE : 0;
+  const cStart = track.length ? track[0].zp - TOP_BEFORE : 0;
   const cEnd = track.length ? track[track.length - 1].zp + BOTTOM_AFTER : 0;
   return { cStart, cEnd, maxScroll: Math.max(0, (cEnd - cStart) / SCROLL_FACTOR) };
 }
 
 export const cameraAt = (cStart: number, scrollTop: number) => cStart + scrollTop * SCROLL_FACTOR;
 export const scrollFor = (cStart: number, c: number) => (c - cStart) / SCROLL_FACTOR;
-// The gauge plots camera position in true-p space (§4).
-export const pCam = (c: number) => clamp(1 - c / DEPTH_RANGE, 0, 1);
 
-// §0 step 6, with the pass cap from §6.
-export const scaleFor = (d: number) => Math.min(F / (F + d), 1.35);
+// The gauge plots the display track: 0 at the loudest card, 1 at the
+// quietest, so dots match the travel between cards exactly.
+export function trackNorm(track: TrackCard[], zp: number): number {
+  if (track.length < 2) return 0;
+  const lo = track[0].zp;
+  const hi = track[track.length - 1].zp;
+  return clamp((zp - lo) / (hi - lo), 0, 1);
+}
 
-// §1 depth-cue table. Reduced motion steepens the gradients so cards
-// resolve over shorter travel (§8).
+// Perspective scale. Grows past focus (the card sweeping under the
+// camera); capped so the exit never explodes.
+export const scaleFor = (d: number) => Math.min(F / (F + d), 2.4);
+
+// Corridor projection: screen-y of a card's center for scale s, in px,
+// given the viewport height. Pure ground-plane perspective — position and
+// scale stay physically coupled.
+export function corridorY(s: number, vh: number): number {
+  const vp = VP_FRAC * vh;
+  return vp + (FOCUS_FRAC * vh - vp) * s;
+}
+
+// Depth-cue table (opacity / desaturation / contrast by distance ahead).
+// Reduced motion steepens the gradients so cards resolve over shorter travel.
 export interface DepthCues {
   opacity: number;
   saturation: number;
@@ -79,57 +98,57 @@ export interface DepthCues {
 }
 
 export function depthCues(d: number, reduced = false): DepthCues {
-  const rampEnd = reduced ? 420 : 700;
+  const rampStart = 100;
+  const rampEnd = reduced ? 420 : 650;
   const floorAt = reduced ? 620 : 1000;
   let opacity: number;
-  if (d <= 140) opacity = 1;
-  else if (d <= rampEnd) opacity = 1 - band(d, 140, rampEnd) * 0.7; // → 0.30
-  else opacity = 0.3 - band(d, rampEnd, floorAt) * 0.16; // → floor 0.14, held
-  const t = band(d, 140, rampEnd);
+  if (d <= rampStart) opacity = 1;
+  else if (d <= rampEnd) opacity = 1 - band(d, rampStart, rampEnd) * 0.68; // → 0.32
+  else opacity = 0.32 - band(d, rampEnd, floorAt) * 0.17; // → floor 0.15, held
+  const t = band(d, rampStart, rampEnd);
   return { opacity, saturation: 1 - t * 0.45, contrast: 1 - t * 0.2 };
 }
 
-// §0a lateral weave: 44px near, spreading to 80px deep, screen space.
-export const latMag = (d: number) => 44 + 36 * clamp(d / 900, 0, 1);
-
-// §6 the pass: mechanical exit as d runs 40 → −160. Pure function of d,
-// so scrolling up replays it exactly in reverse. The ramp is quadratic:
-// a linear ramp over the spec's window would already displace the card
-// ±48px / 1° at focus (d = 0); squaring keeps the engaged card visually
-// clean (±9.6px absorbed into the weave) while the exit stays decisive.
+// The pass: mechanical exit straight down as d runs 0 → −220. Pure
+// function of d, so scrolling up replays it exactly in reverse.
+// `drop` is 0..1 of the extra downward travel (the view scales it to px);
+// opacity holds until the final stretch.
 export interface PassState {
-  tx: number;
-  rot: number;
+  drop: number;
   alpha: number;
 }
 
-export function passState(d: number, side: number): PassState {
-  if (d >= 40) return { tx: 0, rot: 0, alpha: 1 };
-  const t = clamp((40 - d) / 200, 0, 1);
-  const e = t * t;
+export function passState(d: number): PassState {
+  if (d >= 0) return { drop: 0, alpha: 1 };
+  const t = band(-d, 0, 200);
   return {
-    tx: side * 240 * e,
-    rot: side * 5 * e,
-    alpha: d >= -100 ? 1 : band(d, -160, -100), // fade over the final 60 units
+    drop: Math.pow(t, 1.35),
+    alpha: 1 - band(-d, 140, 220),
   };
 }
 
-export const CULL_BEHIND = -160; // pass complete → card culled (§0 step 6)
+export const CULL_BEHIND = -220; // pass complete → card culled
 
-// §2 tier crossfades, each over a 0.04-wide s band centred on the boundary.
-export interface TierFades {
-  desc: number; // 1 at Focus, 0 below
-  chip: number; // 1 at Focus/Mid (full chip), 0 at Far (dot instead)
+// Card anatomy never collapses (at-a-glance rule: chip, name, count are
+// always present); only the description fades out with distance.
+export const descFade = (s: number) => band(s, 0.6, 0.7);
+
+// Ledger fanning: rows closer than the gap push down, monotonic.
+export function fanRows(ys: number[], minGap = 26, maxY = Infinity): number[] {
+  const out: number[] = [];
+  let prev = -Infinity;
+  for (const y of ys) {
+    const fy = Math.max(y, prev + minGap);
+    prev = fy;
+    out.push(fy);
+  }
+  // If the fan ran past the bottom, shift everything up uniformly.
+  const over = out.length ? out[out.length - 1] - maxY : 0;
+  if (over > 0) for (let i = 0; i < out.length; i++) out[i] -= over;
+  return out;
 }
 
-export const tierFades = (s: number): TierFades => ({
-  desc: band(s, 0.7, 0.74),
-  chip: band(s, 0.43, 0.47),
-});
-
-export const FAR_TIER_S = 0.45; // below this: not tappable (§2)
-
-// §0 step 7: the engaged card minimizes |d|.
+// The engaged card minimizes |d|.
 export function engagedIndex(track: TrackCard[], c: number): number {
   let best = -1;
   let bestDist = Infinity;
@@ -143,37 +162,8 @@ export function engagedIndex(track: TrackCard[], c: number): number {
   return best;
 }
 
-// Gauge-side dot collision (§3b): dots closer than 6px on the scale shift
-// into a second column 5px left, tied to true position by a hairline.
-// Input ys must be in track order (p desc → y ascending).
-export function gaugeColumns(ys: number[]): number[] {
-  const cols: number[] = [];
-  for (let i = 0; i < ys.length; i++) {
-    const prevClose = i > 0 && ys[i] - ys[i - 1] < 6;
-    cols.push(prevClose && cols[i - 1] === 0 ? 1 : 0);
-  }
-  return cols;
-}
-
-// Ledger fanning (§5): rows closer than 22px push down, keeping a hairline
-// tie to their true-p y. Same monotonic pushdown shape as §3a.
-export function fanRows(ys: number[], minGap = 22, maxY = Infinity): number[] {
-  const out: number[] = [];
-  let prev = -Infinity;
-  for (const y of ys) {
-    const fy = Math.max(y, prev + minGap);
-    prev = fy;
-    out.push(fy);
-  }
-  // If the fan ran past the bottom, shift everything up uniformly (12 rows
-  // × 22px = 264px, far under any real viewport, so this is a safety net).
-  const over = out.length ? out[out.length - 1] - maxY : 0;
-  if (over > 0) for (let i = 0; i < out.length; i++) out[i] -= over;
-  return out;
-}
-
-// cubic-bezier(x1, y1, x2, y2) evaluator for the spec's easing curves,
-// used by the JS-driven snap/dolly animations. Newton + bisection fallback.
+// cubic-bezier(x1, y1, x2, y2) evaluator for the JS-driven snap/dolly
+// animations. Newton + bisection fallback.
 export function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
   const cx = 3 * x1;
   const bx = 3 * (x2 - x1) - cx;
@@ -207,5 +197,5 @@ export function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
   };
 }
 
-export const easeSnap = cubicBezier(0.2, 0.8, 0.2, 1); // snap assist / ledger (§8)
-export const easeDolly = cubicBezier(0.45, 0, 0.15, 1); // gauge-tap dolly (§8)
+export const easeSnap = cubicBezier(0.2, 0.8, 0.2, 1); // snap assist / ledger
+export const easeDolly = cubicBezier(0.45, 0, 0.15, 1); // gauge-tap dolly
