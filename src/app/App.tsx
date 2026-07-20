@@ -10,6 +10,23 @@ import ItemSheet from './components/ItemSheet';
 
 type Tab = 'map' | 'browse' | 'calendar' | 'search';
 
+// Web Speech API (not yet in TS's DOM lib) — present on Android/desktop Chrome.
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((e: { resultIndex: number; results: { length: number; [i: number]: { isFinal: boolean; 0: { transcript: string } } } }) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+}
+
+function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
+  const w = window as unknown as Record<string, unknown>;
+  return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as (new () => SpeechRecognitionLike) | null;
+}
+
 interface Toast {
   id: number;
   msg: string;
@@ -29,7 +46,18 @@ export default function App() {
   const [capturing, setCapturing] = useState(false);
   const [pushOn, setPushOn] = useState<boolean | null>(null);
   const [locked, setLocked] = useState(false);
+  const [listening, setListening] = useState(false);
   const captureRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  // Text that was in the box when dictation started; speech appends after it.
+  const dictationBaseRef = useRef('');
+  // Finals accumulated across recognizer restarts (Chrome auto-ends on
+  // silence; we restart until the user explicitly taps stop).
+  const dictationFinalsRef = useRef('');
+  const sessionFinalRef = useRef('');
+  const stopRequestedRef = useRef(false);
+  const fatalErrorRef = useRef(false);
+  const speechSupported = getSpeechRecognition() !== null;
 
   const toast = useCallback((msg: string, action?: Toast['action'], ttl = 6000) => {
     const id = toastSeq++;
@@ -125,6 +153,11 @@ export default function App() {
   const capture = useCallback(async () => {
     const text = captureText.trim();
     if (!text || capturing) return;
+    // Stop dictation so late speech results can't refill the cleared box.
+    stopRequestedRef.current = true;
+    recognitionRef.current?.stop();
+    dictationBaseRef.current = '';
+    dictationFinalsRef.current = '';
     setCapturing(true);
     setCaptureText('');
     try {
@@ -183,6 +216,115 @@ export default function App() {
       captureRef.current?.focus();
     }
   }, [captureText, capturing, toast, loadMap]);
+
+  // Dictation: transcribe into the capture box, editable before sending.
+  // Listening continues through pauses — the recognizer is restarted whenever
+  // it auto-ends on silence — and stops ONLY when the user taps the stop
+  // button (or sends). Fatal mic errors break the restart loop.
+  const startRecognizer = useCallback(() => {
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return false;
+    const rec = new Ctor();
+    rec.lang = navigator.language || 'en-US';
+    rec.continuous = true;
+    rec.interimResults = true;
+    sessionFinalRef.current = '';
+
+    rec.onresult = (e) => {
+      let finalText = '';
+      let interim = '';
+      for (let i = 0; i < e.results.length; i++) {
+        const chunk = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += chunk;
+        else interim += chunk;
+      }
+      sessionFinalRef.current = finalText;
+      const joined = [
+        dictationBaseRef.current,
+        (dictationFinalsRef.current + finalText + interim).replace(/\s+/g, ' ').trim(),
+      ]
+        .filter(Boolean)
+        .join(' ');
+      setCaptureText(joined);
+    };
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        fatalErrorRef.current = true;
+        toast('Microphone access was blocked — allow it in your browser settings.');
+      } else if (e.error === 'audio-capture') {
+        fatalErrorRef.current = true;
+        toast('No microphone found on this device.');
+      } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+        // Transient (e.g. network): keep the session; the restart loop handles it.
+        console.warn('dictation error', e.error);
+      }
+    };
+    rec.onend = () => {
+      // Carry this session's finals over before any restart.
+      dictationFinalsRef.current = (dictationFinalsRef.current + sessionFinalRef.current).replace(/\s+/g, ' ');
+      sessionFinalRef.current = '';
+      if (!stopRequestedRef.current && !fatalErrorRef.current) {
+        // Auto-ended on silence — keep listening until the user says done.
+        try {
+          startRecognizer();
+          return;
+        } catch {
+          /* fall through to a real stop */
+        }
+      }
+      setListening(false);
+      recognitionRef.current = null;
+      captureRef.current?.focus();
+    };
+    recognitionRef.current = rec;
+    rec.start();
+    return true;
+  }, [toast]);
+
+  const toggleMic = useCallback(() => {
+    if (listening) {
+      stopRequestedRef.current = true;
+      recognitionRef.current?.stop();
+      return;
+    }
+    stopRequestedRef.current = false;
+    fatalErrorRef.current = false;
+    dictationBaseRef.current = captureRef.current?.value.trim() ?? '';
+    dictationFinalsRef.current = '';
+    try {
+      if (startRecognizer()) setListening(true);
+    } catch {
+      toast("Couldn't start the microphone.");
+    }
+  }, [listening, startRecognizer, toast]);
+
+  // User-initiated re-run for bulk-import days: fold Captured Today into real
+  // bubbles now instead of waiting for tomorrow's first open.
+  const organizeNow = useCallback(async () => {
+    setBuilding(true);
+    try {
+      setMap(await api.rebuildMap(true));
+    } catch (err) {
+      toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setBuilding(false);
+    }
+  }, [toast]);
+
+  const exportAll = useCallback(async () => {
+    try {
+      const data = await api.exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `memory-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(`Export failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }, [toast]);
 
   const enablePush = useCallback(async () => {
     try {
@@ -247,6 +389,9 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
+          <button className="icon-btn" title="Download a full backup" onClick={exportAll}>
+            ⤓
+          </button>
           <button
             className={`icon-btn${pushOn ? ' active' : ''}`}
             title={pushOn ? 'Alerts on' : 'Enable alerts'}
@@ -259,7 +404,7 @@ export default function App() {
 
       <main className="view">
         {tab === 'map' && map && (
-          <MapView map={map} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
+          <MapView map={map} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} onOrganizeNow={organizeNow} />
         )}
         {tab === 'browse' && (
           <BrowseView refreshKey={refreshKey} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
@@ -274,9 +419,16 @@ export default function App() {
         <textarea
           ref={captureRef}
           rows={1}
-          placeholder="Capture anything…"
+          placeholder={listening ? 'Listening…' : 'Capture anything…'}
           value={captureText}
-          onChange={(e) => setCaptureText(e.target.value)}
+          onChange={(e) => {
+            setCaptureText(e.target.value);
+            // Manual edits mid-dictation become the new base text.
+            if (listening) {
+              dictationBaseRef.current = e.target.value;
+              dictationFinalsRef.current = '';
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -284,6 +436,15 @@ export default function App() {
             }
           }}
         />
+        {speechSupported && (
+          <button
+            className={`mic-btn${listening ? ' listening' : ''}`}
+            onClick={toggleMic}
+            aria-label={listening ? 'Done dictating' : 'Dictate'}
+          >
+            {listening ? '⏹' : '🎙'}
+          </button>
+        )}
         <button disabled={!captureText.trim() || capturing} onClick={capture} aria-label="Capture">
           {capturing ? '…' : '↑'}
         </button>

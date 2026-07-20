@@ -59,13 +59,43 @@ app.get('/api/map', async (c) => {
 });
 
 // First-open-of-day rebuild; the client shows a loading screen while this runs.
+// force=true is the user-initiated "Organize now" re-run (bulk-import days).
 app.post('/api/map/rebuild', async (c) => {
-  const { day, tzOffsetMinutes } = await c.req.json<{ day: string; tzOffsetMinutes?: number }>();
+  const { day, tzOffsetMinutes, force } = await c.req.json<{ day: string; tzOffsetMinutes?: number; force?: boolean }>();
   if (!day) return c.json({ error: 'day required' }, 400);
   if (typeof tzOffsetMinutes === 'number') {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
-  return c.json(await rebuildMap(c.env, day));
+  return c.json(await rebuildMap(c.env, day, !!force));
+});
+
+// Full backup: everything, as one JSON document. Behind the access gate.
+app.get('/api/export', async (c) => {
+  const db = c.env.DB;
+  const [items, captures, themes, itemThemes, events, bubbles, bubbleItems, profiles, themeNotes] = await Promise.all([
+    db.prepare('SELECT id,type,title,raw_texts,status,deadline,deadline_hardness,cadence,optionality,effort,ping_natured,event_at,event_end,alert_lead_minutes,priority_base,priority_boost,boost_updated_at,user_priority,flavour_override,created_at,updated_at,last_touched_at,last_completed_at,completion_count,streak,last_surfaced_at,parse_confidence,capture_id FROM items').all(),
+    db.prepare('SELECT * FROM captures').all(),
+    db.prepare('SELECT * FROM themes').all(),
+    db.prepare('SELECT * FROM item_themes').all(),
+    db.prepare('SELECT * FROM events').all(),
+    db.prepare('SELECT * FROM bubbles').all(),
+    db.prepare('SELECT * FROM bubble_items').all(),
+    db.prepare('SELECT * FROM profiles').all(),
+    db.prepare('SELECT * FROM theme_notes').all(),
+  ]);
+  return c.json({
+    exportedAt: new Date().toISOString(),
+    format: 'memory-v1',
+    items: items.results,
+    captures: captures.results,
+    themes: themes.results,
+    itemThemes: itemThemes.results,
+    events: events.results,
+    bubbles: bubbles.results,
+    bubbleItems: bubbleItems.results,
+    profiles: profiles.results,
+    themeNotes: themeNotes.results,
+  });
 });
 
 // ---------- Items ----------

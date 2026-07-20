@@ -76,13 +76,16 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   return { day, builtAt, stale: false, bubbles, capturedToday, items: shipped };
 }
 
-export async function rebuildMap(env: Env, day: string): Promise<MapPayload> {
+// force: user-initiated re-run for a day that already has a map — the escape
+// hatch for bulk-import days when Captured Today piles up. The automatic
+// trigger stays strictly first-open-of-day (§9.1).
+export async function rebuildMap(env: Env, day: string, force = false): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
 
   // If another request already rebuilt for this day, don't do it twice.
   const existingDay = await getState(db, 'map_day');
-  if (existingDay === day) return getMap(env, day);
+  if (existingDay === day && !force) return getMap(env, day);
 
   // The daily run also recomputes the user profile (§9.1/§7.3) and lets the
   // librarian tidy the taxonomy (§5). Both advisory; failures must not block the map.

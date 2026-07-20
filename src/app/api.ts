@@ -64,11 +64,13 @@ export const api = {
 
   getMap: () => req<MapPayload>(`/api/map?day=${localDay()}`),
 
-  rebuildMap: () =>
+  rebuildMap: (force = false) =>
     req<MapPayload>('/api/map/rebuild', {
       method: 'POST',
-      body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes() }),
+      body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force }),
     }),
+
+  exportAll: () => req<Record<string, unknown>>('/api/export'),
 
   items: () => req<{ items: ItemView[] }>('/api/items'),
 

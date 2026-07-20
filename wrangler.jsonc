@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "memory",
+  "name": "memoryapp",
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-06-01",
   "assets": {
@@ -24,8 +24,10 @@
     "crons": ["*/5 * * * *"]
   },
   "vars": {
-    // Model routing (§12): capture → cheap/fast tier, Brain → top tier.
-    "CAPTURE_MODEL": "claude-haiku-4-5-20251001",
+    // Model routing (§12): capture on Sonnet while validating the premise
+    // (at ~1-3 captures/day the cheap-tier saving is negligible; drop to
+    // claude-haiku-4-5 later if Sonnet proves unnecessary). Brain → top tier.
+    "CAPTURE_MODEL": "claude-sonnet-5",
     "BRAIN_MODEL": "claude-opus-4-8"
   }
   // Secrets (set with `wrangler secret put <NAME>`):

@@ -245,11 +245,13 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
     userProfileNotes: profile ?? null,
   });
 
+  // Generous output budget: a bulk-pasted list can segment into dozens of items.
   const out = await anthropicJson<{ items: LlmParsedItem[]; confidence: 'high' | 'low' }>(
     env,
     env.CAPTURE_MODEL,
     system,
     user,
+    16384,
   );
 
   const items: ParsedItem[] = (out.items ?? []).map((p) => ({
@@ -257,12 +259,15 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
     title: String(p.title ?? text).slice(0, 300),
     deadlinePhrase: p.deadlinePhrase ?? null,
     deadlineHardness: p.deadlineHardness === 'soft' ? 'soft' : p.deadlinePhrase ? 'hard' : null,
-    cadence: p.cadence ?? null,
+    cadence: sanitizeCadence(p.cadence),
     optionality: p.optionality === 'nice' ? 'nice' : 'must',
     effort: p.effort === 'quick' || p.effort === 'large' ? p.effort : 'medium',
     pingNatured: !!p.pingNatured,
     eventAtPhrase: p.eventAtPhrase ?? null,
-    alertLeadMinutes: typeof p.alertLeadMinutes === 'number' ? p.alertLeadMinutes : null,
+    alertLeadMinutes:
+      typeof p.alertLeadMinutes === 'number' && p.alertLeadMinutes > 0
+        ? Math.min(Math.round(p.alertLeadMinutes), 14 * 24 * 60)
+        : null,
     priority: p.priority === 'low' || p.priority === 'high' ? p.priority : 'medium',
     themes: Array.isArray(p.themes) ? p.themes.map(String).slice(0, 3) : [],
     matchItemId: p.matchItemId && candidates.some((c) => c.id === p.matchItemId) ? p.matchItemId : null,
@@ -270,4 +275,27 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
 
   if (!items.length) return heuristicParse(text, ref, tzOffsetMinutes);
   return { items, confidence: out.confidence === 'low' ? 'low' : 'high' };
+}
+
+// Model output feeds the scheduler (occurrence math, §11.4) — never trust the
+// shape blindly.
+function sanitizeCadence(c: unknown): ParsedItem['cadence'] {
+  if (!c || typeof c !== 'object') return null;
+  const o = c as Record<string, unknown>;
+  const freq = o.freq;
+  if (freq !== 'daily' && freq !== 'weekly' && freq !== 'monthly' && freq !== 'yearly') return null;
+  const interval = typeof o.interval === 'number' && o.interval >= 1 ? Math.min(Math.round(o.interval), 365) : 1;
+  const byWeekday = Array.isArray(o.byWeekday)
+    ? o.byWeekday.filter((d): d is number => typeof d === 'number' && d >= 0 && d <= 6).slice(0, 7)
+    : undefined;
+  const byMonthDay =
+    typeof o.byMonthDay === 'number' && o.byMonthDay >= 1 && o.byMonthDay <= 31 ? Math.round(o.byMonthDay) : undefined;
+  const atTime = typeof o.atTime === 'string' && /^\d{1,2}:\d{2}$/.test(o.atTime) ? o.atTime : undefined;
+  return {
+    freq,
+    interval,
+    ...(byWeekday?.length ? { byWeekday } : {}),
+    ...(byMonthDay ? { byMonthDay } : {}),
+    ...(atTime ? { atTime } : {}),
+  };
 }
