@@ -220,6 +220,27 @@ textarea:focus {
   opacity: 0.35;
   box-shadow: none;
 }
+.capture-bar .mic-btn {
+  background: rgba(148, 163, 216, 0.09);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  box-shadow: none;
+  font-size: 17px;
+}
+.capture-bar .mic-btn.listening {
+  background: rgba(240, 112, 140, 0.16);
+  border-color: rgba(240, 112, 140, 0.6);
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(240, 112, 140, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(240, 112, 140, 0);
+  }
+}
 
 /* ---------- tab bar ---------- */
 .tab-bar {
