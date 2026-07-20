@@ -376,18 +376,28 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the raw 30-day event log, write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
 
-  const user = JSON.stringify({
-    today: day,
-    events: events.results.map((e) => ({
-      ts: e.ts,
-      actor: e.actor,
-      type: e.type,
-      item: e.item_id ? titleById.get(e.item_id) ?? null : null,
-      payload: safeParse(e.payload),
-    })),
+  // One compact line per event — the builder needs "what happened when",
+  // not full field diffs. Keeps a month of history to a few thousand tokens.
+  const lines = events.results.map((e) => {
+    const p = safeParse(e.payload) as Record<string, unknown>;
+    const title = e.item_id ? titleById.get(e.item_id) ?? '' : '';
+    let detail = title;
+    if (e.type === 'captured' && typeof p?.text === 'string') detail = p.text.slice(0, 80);
+    else if (e.type === 'edited' && p?.after && typeof p.after === 'object')
+      detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
+    else if (e.type === 're_themed' && Array.isArray(p?.before) && Array.isArray(p?.after))
+      detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
+    else if (e.type === 'recaptured' && typeof p?.appendedText === 'string')
+      detail = `${title} +"${p.appendedText.slice(0, 60)}"`;
+    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
+      detail = `${p?.from ?? ''}→${p?.into ?? p?.to ?? ''}`;
+    else if (e.type === 'map_rebuilt') detail = '';
+    return `${e.ts.slice(5, 16).replace('T', ' ')} ${e.actor} ${e.type}${detail ? ` — ${detail}` : ''}`;
   });
+
+  const user = JSON.stringify({ today: day, events: lines });
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
