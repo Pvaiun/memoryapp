@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
+import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant } from './brain';
+import type { ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
 import { cosine } from './db';
@@ -65,6 +67,188 @@ describe('Layer-1 punctual push (§11.4)', () => {
   it('completed/deleted items never push', () => {
     const items = [{ ...baseItem, status: 'completed', deadline: '2026-07-20T18:00:00Z', deadlineHardness: 'hard' }];
     expect(computeDueAlerts(items, new Date('2026-07-20T17:00:00Z'))).toHaveLength(0);
+  });
+});
+
+describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
+  // now = July 20 08:49 local (UTC-4 → 12:49Z)
+  const now = new Date('2026-07-20T12:49:00Z');
+  const tz = -240;
+  const base = { status: 'active', deadline: null as string | null, eventAt: null as string | null, eventEnd: null as string | null };
+
+  it('soft, optional, low-priority deadline later today still counts (the Pragmata case)', () => {
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-20T13:00:00.000Z' }, now, tz)).toBe(true);
+  });
+  it('overdue deadlines count; tomorrow does not', () => {
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-18T12:00:00Z' }, now, tz)).toBe(true);
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T12:00:00Z' }, now, tz)).toBe(false);
+  });
+  it('events happening today count, including multi-day spans crossing today', () => {
+    expect(isTodayRelevant({ ...base, eventAt: '2026-07-20T16:00:00Z' }, now, tz)).toBe(true);
+    expect(isTodayRelevant({ ...base, eventAt: '2026-07-18T12:00:00Z', eventEnd: '2026-07-25T12:00:00Z' }, now, tz)).toBe(true);
+    expect(isTodayRelevant({ ...base, eventAt: '2026-07-18T12:00:00Z', eventEnd: '2026-07-19T12:00:00Z' }, now, tz)).toBe(false);
+  });
+  it('completed and undated items never count', () => {
+    expect(isTodayRelevant({ ...base, status: 'completed', deadline: '2026-07-20T13:00:00Z' }, now, tz)).toBe(false);
+    expect(isTodayRelevant(base, now, tz)).toBe(false);
+  });
+  it('respects the timezone: 23:30 local today vs already-tomorrow UTC', () => {
+    // 03:30Z July 21 is 23:30 July 20 at UTC-4 — still today locally.
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T03:30:00Z' }, now, tz)).toBe(true);
+  });
+});
+
+describe('brainItemLine — compact Brain input (absence = default)', () => {
+  const now = new Date('2026-07-20T12:00:00Z');
+  const baseView = {
+    id: 'x',
+    type: 'DO',
+    title: 'Call grandma',
+    rawTexts: [{ ts: '', text: '' }],
+    status: 'active',
+    deadline: null,
+    deadlineHardness: null,
+    cadence: null,
+    optionality: 'must',
+    effort: 'medium',
+    pingNatured: false,
+    eventAt: null,
+    eventEnd: null,
+    alertLeadMinutes: null,
+    priorityBase: 0.5,
+    priorityBoost: 0,
+    boostUpdatedAt: null,
+    userPriority: null,
+    flavourOverride: null,
+    createdAt: '2026-07-01T00:00:00Z',
+    updatedAt: '',
+    lastTouchedAt: '',
+    lastCompletedAt: null,
+    completionCount: 0,
+    streak: 0,
+    lastSurfacedAt: null,
+    parseConfidence: 1,
+    themes: [],
+    flavour: 'Task',
+    effectivePriority: 0.5,
+    neglected: false,
+  } as unknown as ItemView;
+
+  it('a bare item writes only type, title, prio, and new — no null boilerplate', () => {
+    const line = brainItemLine(baseView, now);
+    expect(line).toBe('DO "Call grandma" prio=0.5 new');
+  });
+
+  it('the Pragmata case carries its deviations compactly', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        title: 'Wake up at 9:00 a.m. and play Pragmata',
+        deadline: '2026-07-20T13:00:00.000Z',
+        deadlineHardness: 'soft',
+        optionality: 'nice',
+        effort: 'quick',
+        effectivePriority: 0.25,
+        themes: [{ id: 't', name: 'Gaming' }],
+      } as unknown as ItemView,
+      now,
+    );
+    expect(line).toContain('due=today(soft)');
+    expect(line).toContain('[Gaming]');
+    expect(line).toContain('optional');
+    expect(line).toContain('quick');
+    expect(line).toContain('prio=0.25');
+  });
+
+  it('event ranges and recaptures render', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        eventAt: '2026-07-20T16:00:00Z',
+        eventEnd: '2026-07-25T16:00:00Z',
+        rawTexts: [{ ts: '', text: 'a' }, { ts: '', text: 'b' }],
+        lastSurfacedAt: '2026-07-20T05:00:00Z',
+      } as unknown as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=today..+5d');
+    expect(line).toContain('recaptured=1');
+    expect(line).toContain('seen=today');
+  });
+
+  it('aliasItems maps short ids back to real ids', () => {
+    const { lines, idByAlias } = aliasItems([baseView, { ...baseView, id: 'y' } as ItemView], now);
+    expect(lines[0].startsWith('i1 ')).toBe(true);
+    expect(lines[1].startsWith('i2 ')).toBe(true);
+    expect(idByAlias.get('i2')).toBe('y');
+  });
+});
+
+describe('compactEventLines — churn compression for the profile builder', () => {
+  const ev = (ts: string, actor: string, type: string, item_id: string | null, payload: object = {}) => ({
+    ts,
+    actor,
+    type,
+    item_id,
+    payload: JSON.stringify(payload),
+  });
+  const titles = new Map([
+    ['a', 'Play Pragmata (DO)'],
+    ['b', 'Make my will (DO)'],
+  ]);
+
+  it('collapses a created→edited→rejected cycle into one draft_discarded line', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata' }),
+        ev('2026-07-20T03:12:00Z', 'user', 'edited', 'a', { before: {}, after: { deadline: 'x' } }),
+        ev('2026-07-20T03:14:00Z', 'user', 'edited', 'a', { before: {}, after: { priority: 1 } }),
+        ev('2026-07-20T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('draft_discarded');
+    expect(lines[0]).toContain('Play Pragmata');
+  });
+
+  it('collapses same-item edit bursts with a count, keeps kept items visible', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
+        ev('2026-07-20T09:02:00Z', 'user', 'edited', 'b', { after: { deadline: 'x' } }),
+        ev('2026-07-20T09:05:00Z', 'user', 'edited', 'b', { after: { priority: 1 } }),
+        ev('2026-07-20T09:09:00Z', 'user', 'edited', 'b', { after: { title: 'y' } }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2); // created + one collapsed edit line
+    expect(lines[1]).toContain('(x3)');
+  });
+
+  it('collapses identical rapid re-captures', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:00:00Z', 'user', 'captured', null, { text: 'make my will' }),
+        ev('2026-07-20T03:01:00Z', 'user', 'captured', null, { text: 'Make my will ' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('(x2)');
+  });
+
+  it('slow-burn rejections are NOT draft churn', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
+        ev('2026-07-20T09:00:00Z', 'user', 'rejected', 'b', { title: 'Make my will' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('rejected');
   });
 });
 

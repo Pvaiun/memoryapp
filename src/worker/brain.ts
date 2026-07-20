@@ -172,6 +172,23 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
     builtBubbles.push({ name: b.name, prominence: b.prominence, items: memberIds.length });
   }
 
+  // Deterministic safety net: anything dated today that the Brain left out
+  // gets its own bubble. The model curates; it cannot drop today.
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const missed = items.filter((i) => !surfacedIds.has(i.id) && isTodayRelevant(i, now, tz));
+  if (missed.length) {
+    const bubbleId = newId();
+    await db
+      .prepare('INSERT INTO bubbles (id, day, name, kind, prominence, reason, created_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(bubbleId, day, 'Also today', 'situation', 0.8, summarizeItems(missed, now).slice(0, 300), nowIso())
+      .run();
+    for (const item of missed) {
+      await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, item.id).run();
+      surfacedIds.add(item.id);
+    }
+    builtBubbles.push({ name: 'Also today', prominence: 0.8, items: missed.length });
+  }
+
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
   const ts = nowIso();
   for (const id of surfacedIds) {
@@ -186,31 +203,71 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   return getMap(env, day);
 }
 
-// The item view exactly as the Brain's prompt receives it — shared between the
-// live call and the debug snapshot so the snapshot never lies.
-function brainItemPayload(i: ItemView, now: Date) {
-  return {
-    id: i.id,
-    type: i.type,
-    title: i.title,
-    flavour: i.flavour,
-    priority: Math.round(i.effectivePriority * 100) / 100,
-    deadline: i.deadline,
-    deadlineHardness: i.deadlineHardness,
-    daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
-    cadence: i.cadence ? describeCadence(i.cadence) : null,
-    neglected: i.neglected,
-    neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
-    optionality: i.optionality,
-    effort: i.effort,
-    eventAt: i.eventAt,
-    daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
-    themes: i.themes.map((t) => t.name),
-    daysSinceLastSurfaced: i.lastSurfacedAt
-      ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
-      : null,
-    recapturedTimes: Math.max(0, i.rawTexts.length - 1),
+// Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
+// or happening today must reach the map no matter what the Brain decides.
+// Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
+export function isTodayRelevant(
+  i: { status: string; deadline: string | null; eventAt: string | null; eventEnd: string | null },
+  now: Date,
+  tzOffsetMinutes: number,
+): boolean {
+  if (i.status !== 'active') return false;
+  const DAY = 86_400_000;
+  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
+  const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
+  const dayEndUtc = dayStartUtc + DAY;
+  if (i.deadline && new Date(i.deadline).getTime() < dayEndUtc) return true; // due today or overdue
+  if (i.eventAt) {
+    const at = new Date(i.eventAt).getTime();
+    const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
+    if (at < dayEndUtc && end >= dayStartUtc) return true; // spans some part of today
+  }
+  return false;
+}
+
+// The item exactly as the Brain's prompt receives it — one compact line,
+// shared between the live call and the debug snapshot so the snapshot never
+// lies. Absence = default (no dates, no recurrence, not slipping, must-do,
+// medium effort, never recaptured); only deviations are written, so the token
+// cost is signal, not structure.
+export function brainItemLine(i: ItemView, now: Date): string {
+  const relDays = (iso: string): string => {
+    const d = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+    return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
   };
+  const parts: string[] = [];
+  if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
+  if (i.eventAt) {
+    parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
+  }
+  if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
+  if (i.neglected && i.cadence)
+    parts.push(`slipping=${neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now)}d`);
+  parts.push(`prio=${Math.round(i.effectivePriority * 100) / 100}`);
+  if (i.optionality === 'nice') parts.push('optional');
+  if (i.effort !== 'medium') parts.push(i.effort === 'large' ? 'big-effort' : 'quick');
+  if (i.lastSurfacedAt) {
+    const d = Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000);
+    parts.push(`seen=${d === 0 ? 'today' : `${d}d-ago`}`);
+  } else {
+    parts.push('new');
+  }
+  const recaptures = Math.max(0, i.rawTexts.length - 1);
+  if (recaptures > 0) parts.push(`recaptured=${recaptures}`);
+  const themes = i.themes.length ? ` [${i.themes.map((t) => t.name).join(', ')}]` : '';
+  return `${i.type} "${i.title}"${themes} ${parts.join(' ')}`;
+}
+
+// Per-call short aliases (i1, i2, …) so the model reads — and, crucially,
+// echoes back in its output — 2-token handles instead of 36-char UUIDs.
+export function aliasItems(items: ItemView[], now: Date): { lines: string[]; idByAlias: Map<string, string> } {
+  const idByAlias = new Map<string, string>();
+  const lines = items.map((i, idx) => {
+    const alias = `i${idx + 1}`;
+    idByAlias.set(alias, i.id);
+    return `${alias} ${brainItemLine(i, now)}`;
+  });
+  return { lines, idByAlias };
 }
 
 // Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
@@ -263,7 +320,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
     day,
     builtAt: await getState(db, 'map_built_at'),
     input: {
-      items: items.map((i) => brainItemPayload(i, now)),
+      items: aliasItems(items, now).lines,
       userProfile: await getState(db, 'profile_text'),
       recentNameVocabulary: nameRows.results.map((r) => r.name),
       previouslyShown_reuseOnlyIfStillApt: previouslyShown,
@@ -304,7 +361,13 @@ ORGANIZING PRINCIPLE: a bubble is a SITUATION or context — the moment the user
 
 PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "do taxes" outranks "call grandma" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A visitor four weeks out → a small persistent dot (~0.1–0.2).
 
-KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate. If there are no such KNOWs, omit it.
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N means the user re-entered it N times (behavioural salience).
+
+NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
+
+The user profile is advisory colour for naming, grouping, and emphasis ONLY. It must never veto: never exclude or demote a dated item because the profile suggests the user might not care about that kind of thing.
+
+KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured, and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
 
 NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("Sarah & Deidra's visit", not "Before Sarah & Deidra arrive").
 
@@ -312,14 +375,15 @@ PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a 
 
 Do not force every item into the map — the browse view holds everything; you curate. Items may appear in more than one bubble only when genuinely central to both; prefer one home. Every bubble needs at least one item.
 
-OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[ids]}]}
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[short ids like "i3" from the item lines]}]}
 
 "reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + status, e.g. "Dentist Tue 3pm — taxes due Aug 15 need a start" or "6 address updates pending, none scheduled yet". Never repeat the bubble name, never explain the grouping ("these belong together because..."), never meta-commentary. Mention dates when items have them; for a single-item bubble say what the item needs next.`;
 
+  const { lines, idByAlias } = aliasItems(items, now);
   const user = JSON.stringify({
     today: day,
     weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: items.map((i) => brainItemPayload(i, now)),
+    items: lines,
     userProfile: profileText,
     recentNameVocabulary: nameVocabulary,
     previouslyShown_reuseOnlyIfStillApt: previous,
@@ -333,7 +397,8 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
       kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
       prominence: typeof b.prominence === 'number' ? b.prominence : 0.4,
       reason: String(b.reason ?? ''),
-      itemIds: b.itemIds.map(String),
+      // Aliases back to real ids; unknown aliases drop (validated again upstream).
+      itemIds: b.itemIds.map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean),
     }));
 }
 
@@ -407,9 +472,11 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
       itemIds: important.map((i) => i.id),
     });
   }
-  // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen KNOWs.
+  // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen
+  // KNOWs. Reference facts (low priority, never recaptured) stay out — they
+  // exist for search, not rehearsal.
   const knows = items
-    .filter((i) => i.type === 'KNOW')
+    .filter((i) => i.type === 'KNOW' && (i.effectivePriority >= 0.35 || i.rawTexts.length > 1))
     .sort((a, b) => {
       const aSeen = a.lastSurfacedAt ?? '1970';
       const bSeen = b.lastSurfacedAt ?? '1970';
@@ -431,6 +498,96 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
 
 // ---------- Tier-2 profile recompute (§7.3) ----------
 
+// Compress administrative churn before the profile builder sees the log:
+// rapid capture→edit→reject cycles are the user operating the app, not living
+// their life, and profiling them poisons surfacing (a real incident: the
+// profile branded a kind of item "usually rejected" and the Brain dropped a
+// same-day task). Pure and unit-tested.
+export function compactEventLines(
+  events: { ts: string; actor: string; type: string; item_id: string | null; payload: string }[],
+  titleById: Map<string, string>,
+): string[] {
+  const parse = (s: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(s) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+  const fmt = (ts: string, actor: string, type: string, detail: string) =>
+    `${ts.slice(5, 16).replace('T', ' ')} ${actor} ${type}${detail ? ` — ${detail}` : ''}`;
+
+  // Draft churn: created and rejected within 30 minutes → one line, no blow-by-blow.
+  const createdAt = new Map<string, number>();
+  const rejectedAt = new Map<string, number>();
+  for (const e of events) {
+    if (!e.item_id) continue;
+    if (e.type === 'created') createdAt.set(e.item_id, new Date(e.ts).getTime());
+    if (e.type === 'rejected') rejectedAt.set(e.item_id, new Date(e.ts).getTime());
+  }
+  const draftIds = new Set<string>();
+  for (const [id, c] of createdAt) {
+    const r = rejectedAt.get(id);
+    if (r !== undefined && r - c < 30 * 60_000) draftIds.add(id);
+  }
+
+  const lines: string[] = [];
+  const bursts = new Map<string, { idx: number; ts: number; count: number }>();
+  const lastCapture = { text: '', ts: 0, idx: -1, count: 1 };
+
+  for (const e of events) {
+    const p = parse(e.payload);
+    const title = (e.item_id ? titleById.get(e.item_id) : undefined) ?? (typeof p.title === 'string' ? p.title : '');
+    const t = new Date(e.ts).getTime();
+
+    if (e.item_id && draftIds.has(e.item_id)) {
+      if (e.type === 'created') lines.push(fmt(e.ts, 'user', 'draft_discarded', title));
+      continue;
+    }
+
+    if (e.type === 'captured' && typeof p.text === 'string') {
+      const norm = p.text.trim().toLowerCase();
+      if (norm === lastCapture.text && t - lastCapture.ts < 10 * 60_000 && lastCapture.idx >= 0) {
+        lastCapture.count += 1;
+        lastCapture.ts = t;
+        lines[lastCapture.idx] = lines[lastCapture.idx].replace(/( \(x\d+\))?$/, ` (x${lastCapture.count})`);
+        continue;
+      }
+      Object.assign(lastCapture, { text: norm, ts: t, idx: lines.length, count: 1 });
+      lines.push(fmt(e.ts, e.actor, e.type, p.text.slice(0, 80)));
+      continue;
+    }
+
+    if ((e.type === 'edited' || e.type === 're_themed') && e.item_id) {
+      let detail = title;
+      if (e.type === 'edited' && p.after && typeof p.after === 'object')
+        detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
+      if (e.type === 're_themed' && Array.isArray(p.before) && Array.isArray(p.after))
+        detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
+      const key = `${e.item_id}:${e.type}`;
+      const b = bursts.get(key);
+      if (b && t - b.ts < 15 * 60_000) {
+        b.count += 1;
+        b.ts = t;
+        lines[b.idx] = `${fmt(e.ts, e.actor, e.type, detail)} (x${b.count})`;
+        continue;
+      }
+      bursts.set(key, { idx: lines.length, ts: t, count: 1 });
+      lines.push(fmt(e.ts, e.actor, e.type, detail));
+      continue;
+    }
+
+    let detail = title;
+    if (e.type === 'recaptured' && typeof p.appendedText === 'string')
+      detail = `${title} +"${(p.appendedText as string).slice(0, 60)}"`;
+    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
+      detail = `${String(p.from ?? '')}→${String(p.into ?? p.to ?? '')}`;
+    else if (e.type === 'map_rebuilt') detail = '';
+    lines.push(fmt(e.ts, e.actor, e.type, detail));
+  }
+  return lines;
+}
+
 async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   const db = env.DB;
   if (!llmAvailable(env)) return getState(db, 'profile_text');
@@ -442,31 +599,23 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ ts: string; actor: string; type: string; item_id: string | null; payload: string }>();
   if (!events.results.length) return getState(db, 'profile_text');
 
+  // Titles for all items incl. deleted — draft churn references them.
   const itemTitles = await db
-    .prepare("SELECT id, title, type FROM items WHERE status != 'deleted'")
+    .prepare('SELECT id, title, type FROM items')
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) about the USER'S LIFE PATTERNS, for two readers.
 
-  // One compact line per event — the builder needs "what happened when",
-  // not full field diffs. Keeps a month of history to a few thousand tokens.
-  const lines = events.results.map((e) => {
-    const p = safeParse(e.payload) as Record<string, unknown>;
-    const title = e.item_id ? titleById.get(e.item_id) ?? '' : '';
-    let detail = title;
-    if (e.type === 'captured' && typeof p?.text === 'string') detail = p.text.slice(0, 80);
-    else if (e.type === 'edited' && p?.after && typeof p.after === 'object')
-      detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
-    else if (e.type === 're_themed' && Array.isArray(p?.before) && Array.isArray(p?.after))
-      detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
-    else if (e.type === 'recaptured' && typeof p?.appendedText === 'string')
-      detail = `${title} +"${p.appendedText.slice(0, 60)}"`;
-    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
-      detail = `${p?.from ?? ''}→${p?.into ?? p?.to ?? ''}`;
-    else if (e.type === 'map_rebuilt') detail = '';
-    return `${e.ts.slice(5, 16).replace('T', ' ')} ${e.actor} ${e.type}${detail ? ` — ${detail}` : ''}`;
-  });
+For the Brain (surfacing): when they check in and complete things; which themes or kinds of items get done promptly, which linger or get quietly ignored; what activity spikes before events; situation names they respond to.
+For Smart Capture (parsing): filing direction (which themes they consolidate toward when re-theming), priority adjustments they repeatedly make, splitting corrections, how they phrase dates and times.
+
+DO NOT profile app-administration mechanics. Rapid capture→edit→reject cycles, setup sessions, and repeated tweaking while getting an item right are the user OPERATING the app, not living their life — lines marked draft_discarded or (xN) are exactly that churn, pre-collapsed; at most read a filing preference from them, never a verdict on the content. NEVER conclude that a kind of item is a draft, unwanted, or likely to be rejected — wantedness is not yours to judge, and the Brain is forbidden from acting on such claims.
+
+Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+
+  // Deterministically compressed: one line per event, churn collapsed.
+  const lines = compactEventLines(events.results, titleById);
 
   const user = JSON.stringify({ today: day, events: lines });
 
@@ -538,14 +687,6 @@ async function librarianPass(env: Env): Promise<void> {
       await db.prepare('INSERT INTO theme_notes (id, ts, note) VALUES (?,?,?)').bind(newId(), nowIso(), op.note || `Renamed ${t.name} to ${op.newName}`).run();
       await logEvent(db, 'ai', 'theme_renamed', { payload: { from: t.name, to: op.newName, note: op.note } });
     }
-  }
-}
-
-function safeParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return s;
   }
 }
 
