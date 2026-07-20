@@ -364,10 +364,19 @@ textarea:focus {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.tile-count {
-  font-size: 12px;
-  font-weight: 600;
+.tile-desc {
+  font-size: 12.5px;
+  line-height: 1.4;
   color: var(--text-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.tile-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
 }
 /* urgency glow: the loud thing of the day */
 .tile.hot {

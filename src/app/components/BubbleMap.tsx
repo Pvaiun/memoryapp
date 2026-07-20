@@ -1,26 +1,40 @@
 import { useMemo } from 'react';
 import type { Bubble, ItemView } from '../../shared/types';
-import { themeColor } from '../api';
 
 // The map (§6) as a packed mosaic: rounded tiles stuck together, sized by
-// prominence (area = the one scarce resource, §9.2), coloured by theme.
+// prominence (area = the one scarce resource, §9.2). Edge colour is a status
+// scale readable without a legend: red = due now/overdue, amber = pressing
+// this week, blue = upcoming event, neutral = standing, purple = rotation.
 // Deterministic for identical input — the map never jiggles.
+
+const DAY_MS = 86_400_000;
 
 function bubbleColor(bubble: Bubble, items: Record<string, ItemView>): string {
   if (bubble.kind === 'rotation') return 'hsl(260 30% 55%)';
-  const counts = new Map<string, number>();
+  const now = Date.now();
+  let urgent = false;
+  let soon = false;
+  let event = false;
   for (const id of bubble.itemIds) {
-    for (const t of items[id]?.themes ?? []) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
-  }
-  let best: string | null = null;
-  let n = 0;
-  for (const [name, count] of counts) {
-    if (count > n) {
-      best = name;
-      n = count;
+    const it = items[id];
+    if (!it || it.status === 'completed') continue;
+    if (it.deadline) {
+      const due = new Date(it.deadline).getTime();
+      if (due < now + DAY_MS) urgent = true;
+      else if (due < now + 7 * DAY_MS) soon = true;
+    }
+    if (it.neglected) soon = true;
+    if (it.eventAt) {
+      const at = new Date(it.eventAt).getTime();
+      const end = it.eventEnd ? new Date(it.eventEnd).getTime() : at;
+      if (at < now + 2 * DAY_MS && end > now - DAY_MS) urgent = true;
+      else if (at > now) event = true;
     }
   }
-  return best ? themeColor(best) : 'hsl(220 15% 55%)';
+  if (urgent) return 'hsl(348 75% 66%)'; // due now / happening now
+  if (soon || bubble.prominence >= 0.7) return 'hsl(40 75% 62%)'; // pressing
+  if (event) return 'hsl(215 80% 68%)'; // upcoming event
+  return 'hsl(222 18% 62%)'; // standing
 }
 
 // Greedy row packing: highest prominence first; a dominant bubble gets its own
@@ -68,8 +82,9 @@ export default function BubbleMap({
         const rowWeight = row.reduce((s, b) => s + b.prominence, 0);
         const maxP = Math.max(...row.map((b) => b.prominence));
         // Height scales with the row's biggest tile: small dots stay compact,
-        // today's loud thing is unmissable.
-        const height = Math.round(58 + maxP * 96);
+        // today's loud thing is unmissable. Roomier now that cards describe
+        // themselves.
+        const height = Math.round(88 + maxP * 84);
         return (
           <div key={ri} className="tile-row" style={{ height }}>
             {row.map((bubble) => {
@@ -96,6 +111,7 @@ export default function BubbleMap({
                   <span className="tile-name" style={{ fontSize }}>
                     {bubble.name}
                   </span>
+                  {bubble.reason && <span className="tile-desc">{bubble.reason}</span>}
                   <span className="tile-count">
                     {doneCount > 0 ? `${doneCount}/${total} done` : `${total} item${total === 1 ? '' : 's'}`}
                   </span>
