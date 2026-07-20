@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
-import { compactEventLines, isTodayRelevant } from './brain';
+import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant } from './brain';
+import type { ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
 import { cosine } from './db';
@@ -94,6 +95,93 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
   it('respects the timezone: 23:30 local today vs already-tomorrow UTC', () => {
     // 03:30Z July 21 is 23:30 July 20 at UTC-4 — still today locally.
     expect(isTodayRelevant({ ...base, deadline: '2026-07-21T03:30:00Z' }, now, tz)).toBe(true);
+  });
+});
+
+describe('brainItemLine — compact Brain input (absence = default)', () => {
+  const now = new Date('2026-07-20T12:00:00Z');
+  const baseView = {
+    id: 'x',
+    type: 'DO',
+    title: 'Call grandma',
+    rawTexts: [{ ts: '', text: '' }],
+    status: 'active',
+    deadline: null,
+    deadlineHardness: null,
+    cadence: null,
+    optionality: 'must',
+    effort: 'medium',
+    pingNatured: false,
+    eventAt: null,
+    eventEnd: null,
+    alertLeadMinutes: null,
+    priorityBase: 0.5,
+    priorityBoost: 0,
+    boostUpdatedAt: null,
+    userPriority: null,
+    flavourOverride: null,
+    createdAt: '2026-07-01T00:00:00Z',
+    updatedAt: '',
+    lastTouchedAt: '',
+    lastCompletedAt: null,
+    completionCount: 0,
+    streak: 0,
+    lastSurfacedAt: null,
+    parseConfidence: 1,
+    themes: [],
+    flavour: 'Task',
+    effectivePriority: 0.5,
+    neglected: false,
+  } as unknown as ItemView;
+
+  it('a bare item writes only type, title, prio, and new — no null boilerplate', () => {
+    const line = brainItemLine(baseView, now);
+    expect(line).toBe('DO "Call grandma" prio=0.5 new');
+  });
+
+  it('the Pragmata case carries its deviations compactly', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        title: 'Wake up at 9:00 a.m. and play Pragmata',
+        deadline: '2026-07-20T13:00:00.000Z',
+        deadlineHardness: 'soft',
+        optionality: 'nice',
+        effort: 'quick',
+        effectivePriority: 0.25,
+        themes: [{ id: 't', name: 'Gaming' }],
+      } as unknown as ItemView,
+      now,
+    );
+    expect(line).toContain('due=today(soft)');
+    expect(line).toContain('[Gaming]');
+    expect(line).toContain('optional');
+    expect(line).toContain('quick');
+    expect(line).toContain('prio=0.25');
+  });
+
+  it('event ranges and recaptures render', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        eventAt: '2026-07-20T16:00:00Z',
+        eventEnd: '2026-07-25T16:00:00Z',
+        rawTexts: [{ ts: '', text: 'a' }, { ts: '', text: 'b' }],
+        lastSurfacedAt: '2026-07-20T05:00:00Z',
+      } as unknown as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=today..+5d');
+    expect(line).toContain('recaptured=1');
+    expect(line).toContain('seen=today');
+  });
+
+  it('aliasItems maps short ids back to real ids', () => {
+    const { lines, idByAlias } = aliasItems([baseView, { ...baseView, id: 'y' } as ItemView], now);
+    expect(lines[0].startsWith('i1 ')).toBe(true);
+    expect(lines[1].startsWith('i2 ')).toBe(true);
+    expect(idByAlias.get('i2')).toBe('y');
   });
 });
 

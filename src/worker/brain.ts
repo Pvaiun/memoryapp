@@ -225,31 +225,49 @@ export function isTodayRelevant(
   return false;
 }
 
-// The item view exactly as the Brain's prompt receives it — shared between the
-// live call and the debug snapshot so the snapshot never lies.
-function brainItemPayload(i: ItemView, now: Date) {
-  return {
-    id: i.id,
-    type: i.type,
-    title: i.title,
-    flavour: i.flavour,
-    priority: Math.round(i.effectivePriority * 100) / 100,
-    deadline: i.deadline,
-    deadlineHardness: i.deadlineHardness,
-    daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
-    cadence: i.cadence ? describeCadence(i.cadence) : null,
-    neglected: i.neglected,
-    neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
-    optionality: i.optionality,
-    effort: i.effort,
-    eventAt: i.eventAt,
-    daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
-    themes: i.themes.map((t) => t.name),
-    daysSinceLastSurfaced: i.lastSurfacedAt
-      ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
-      : null,
-    recapturedTimes: Math.max(0, i.rawTexts.length - 1),
+// The item exactly as the Brain's prompt receives it — one compact line,
+// shared between the live call and the debug snapshot so the snapshot never
+// lies. Absence = default (no dates, no recurrence, not slipping, must-do,
+// medium effort, never recaptured); only deviations are written, so the token
+// cost is signal, not structure.
+export function brainItemLine(i: ItemView, now: Date): string {
+  const relDays = (iso: string): string => {
+    const d = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+    return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
   };
+  const parts: string[] = [];
+  if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
+  if (i.eventAt) {
+    parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
+  }
+  if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
+  if (i.neglected && i.cadence)
+    parts.push(`slipping=${neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now)}d`);
+  parts.push(`prio=${Math.round(i.effectivePriority * 100) / 100}`);
+  if (i.optionality === 'nice') parts.push('optional');
+  if (i.effort !== 'medium') parts.push(i.effort === 'large' ? 'big-effort' : 'quick');
+  if (i.lastSurfacedAt) {
+    const d = Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000);
+    parts.push(`seen=${d === 0 ? 'today' : `${d}d-ago`}`);
+  } else {
+    parts.push('new');
+  }
+  const recaptures = Math.max(0, i.rawTexts.length - 1);
+  if (recaptures > 0) parts.push(`recaptured=${recaptures}`);
+  const themes = i.themes.length ? ` [${i.themes.map((t) => t.name).join(', ')}]` : '';
+  return `${i.type} "${i.title}"${themes} ${parts.join(' ')}`;
+}
+
+// Per-call short aliases (i1, i2, …) so the model reads — and, crucially,
+// echoes back in its output — 2-token handles instead of 36-char UUIDs.
+export function aliasItems(items: ItemView[], now: Date): { lines: string[]; idByAlias: Map<string, string> } {
+  const idByAlias = new Map<string, string>();
+  const lines = items.map((i, idx) => {
+    const alias = `i${idx + 1}`;
+    idByAlias.set(alias, i.id);
+    return `${alias} ${brainItemLine(i, now)}`;
+  });
+  return { lines, idByAlias };
 }
 
 // Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
@@ -302,7 +320,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
     day,
     builtAt: await getState(db, 'map_built_at'),
     input: {
-      items: items.map((i) => brainItemPayload(i, now)),
+      items: aliasItems(items, now).lines,
       userProfile: await getState(db, 'profile_text'),
       recentNameVocabulary: nameRows.results.map((r) => r.name),
       previouslyShown_reuseOnlyIfStillApt: previouslyShown,
@@ -343,11 +361,13 @@ ORGANIZING PRINCIPLE: a bubble is a SITUATION or context — the moment the user
 
 PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "do taxes" outranks "call grandma" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A visitor four weeks out → a small persistent dot (~0.1–0.2).
 
-NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item due today (daysUntilDeadline ≤ 0) or happening today (daysUntilEvent ≤ 0 and not past) MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N means the user re-entered it N times (behavioural salience).
+
+NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
 
 The user profile is advisory colour for naming, grouping, and emphasis ONLY. It must never veto: never exclude or demote a dated item because the profile suggests the user might not care about that kind of thing.
 
-KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured (recapturedTimes > 0), and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
+KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured, and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
 
 NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("Sarah & Deidra's visit", not "Before Sarah & Deidra arrive").
 
@@ -355,14 +375,15 @@ PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a 
 
 Do not force every item into the map — the browse view holds everything; you curate. Items may appear in more than one bubble only when genuinely central to both; prefer one home. Every bubble needs at least one item.
 
-OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[ids]}]}
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[short ids like "i3" from the item lines]}]}
 
 "reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + status, e.g. "Dentist Tue 3pm — taxes due Aug 15 need a start" or "6 address updates pending, none scheduled yet". Never repeat the bubble name, never explain the grouping ("these belong together because..."), never meta-commentary. Mention dates when items have them; for a single-item bubble say what the item needs next.`;
 
+  const { lines, idByAlias } = aliasItems(items, now);
   const user = JSON.stringify({
     today: day,
     weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: items.map((i) => brainItemPayload(i, now)),
+    items: lines,
     userProfile: profileText,
     recentNameVocabulary: nameVocabulary,
     previouslyShown_reuseOnlyIfStillApt: previous,
@@ -376,7 +397,8 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
       kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
       prominence: typeof b.prominence === 'number' ? b.prominence : 0.4,
       reason: String(b.reason ?? ''),
-      itemIds: b.itemIds.map(String),
+      // Aliases back to real ids; unknown aliases drop (validated again upstream).
+      itemIds: b.itemIds.map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean),
     }));
 }
 
