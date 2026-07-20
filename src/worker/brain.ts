@@ -156,6 +156,7 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 
   const validIds = new Set(items.map((i) => i.id));
   const surfacedIds = new Set<string>();
+  const builtBubbles: { name: string; prominence: number; items: number }[] = [];
   for (const b of proposed) {
     const memberIds = b.itemIds.filter((id) => validIds.has(id));
     if (!memberIds.length) continue;
@@ -168,10 +169,7 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
       await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
       surfacedIds.add(itemId);
     }
-    await logEvent(db, 'ai', 'bubble_created', {
-      bubbleId,
-      payload: { name: b.name, prominence: b.prominence, items: memberIds.length },
-    });
+    builtBubbles.push({ name: b.name, prominence: b.prominence, items: memberIds.length });
   }
 
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
@@ -182,7 +180,8 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 
   await setState(db, 'map_day', day);
   await setState(db, 'map_built_at', ts);
-  await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: proposed.length } });
+  // One consolidated event per rebuild (the bubbles table holds the details).
+  await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
   return getMap(env, day);
 }
@@ -409,6 +408,8 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   const text = data.content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('').trim();
   if (!text) return getState(db, 'profile_text');
 
+  // One profile row per day: forced re-runs replace, never duplicate.
+  await db.prepare('DELETE FROM profiles WHERE day = ?').bind(day).run();
   await db.prepare('INSERT INTO profiles (id, day, text, created_at) VALUES (?,?,?,?)').bind(newId(), day, text, nowIso()).run();
   await setState(db, 'profile_text', text);
   return text;
