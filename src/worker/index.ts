@@ -4,7 +4,7 @@ import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
 import { getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
-import { getItem, listItems, setState, toItemView } from './db';
+import { getItem, getState, listItems, setState, toItemView } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -169,13 +169,28 @@ app.post('/api/push/subscribe', async (c) => {
 // ---------- Diagnostics ----------
 
 app.get('/api/status', async (c) => {
-  const items = await c.env.DB.prepare("SELECT COUNT(*) as n FROM items WHERE status != 'deleted'").first<{ n: number }>();
+  const db = c.env.DB;
+  const [items, active, themes, events, subs] = await Promise.all([
+    db.prepare("SELECT COUNT(*) as n FROM items WHERE status != 'deleted'").first<{ n: number }>(),
+    db.prepare("SELECT COUNT(*) as n FROM items WHERE status = 'active'").first<{ n: number }>(),
+    db.prepare('SELECT COUNT(*) as n FROM themes WHERE deleted_at IS NULL').first<{ n: number }>(),
+    db.prepare('SELECT COUNT(*) as n FROM events').first<{ n: number }>(),
+    db.prepare('SELECT COUNT(*) as n FROM push_subscriptions').first<{ n: number }>(),
+  ]);
   return c.json({
     ok: true,
     items: items?.n ?? 0,
+    activeItems: active?.n ?? 0,
+    themes: themes?.n ?? 0,
+    events: events?.n ?? 0,
     llm: !!c.env.ANTHROPIC_API_KEY,
     workersAi: !!c.env.AI,
     push: !!(c.env.VAPID_PUBLIC_KEY && c.env.VAPID_PRIVATE_KEY),
+    pushSubscriptions: subs?.n ?? 0,
+    captureModel: c.env.CAPTURE_MODEL,
+    brainModel: c.env.BRAIN_MODEL,
+    mapDay: await getState(db, 'map_day'),
+    mapBuiltAt: await getState(db, 'map_built_at'),
   });
 });
 

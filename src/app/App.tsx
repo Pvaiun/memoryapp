@@ -4,6 +4,7 @@ import type { CaptureResponse } from '../shared/types';
 import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
+import SettingsSheet from './components/SettingsSheet';
 import MapView from './views/MapView';
 import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
@@ -43,6 +44,7 @@ export default function App() {
   const [building, setBuilding] = useState(false);
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [captureText, setCaptureText] = useState('');
@@ -403,8 +405,8 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
-          <button className="icon-btn" title="Download a full backup" onClick={exportAll}>
-            ⤓
+          <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
+            ⚙
           </button>
           <button
             className={`icon-btn${pushOn ? ' active' : ''}`}
@@ -479,6 +481,16 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      {settingsOpen && (
+        <SettingsSheet
+          pushOn={pushOn}
+          onEnablePush={enablePush}
+          onRebuild={organizeNow}
+          onExport={exportAll}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {review && map && (
         <ReviewSheet
