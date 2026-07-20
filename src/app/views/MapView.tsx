@@ -7,10 +7,12 @@ export default function MapView({
   map,
   onOpenItem,
   onToggleComplete,
+  onOrganizeNow,
 }: {
   map: MapPayload;
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
+  onOrganizeNow: () => void;
 }) {
   const [openBubble, setOpenBubble] = useState<Bubble | null>(null);
 
@@ -22,7 +24,14 @@ export default function MapView({
     <div>
       {capturedItems.length > 0 && (
         <div className="captured-today">
-          <h3>Captured today</h3>
+          <h3>
+            Captured today
+            {capturedItems.length >= 5 && (
+              <button className="organize-now" onClick={onOrganizeNow}>
+                Organize now
+              </button>
+            )}
+          </h3>
           {capturedItems.map((item) => (
             <ItemRow key={item.id} item={item} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
           ))}

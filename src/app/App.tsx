@@ -298,6 +298,34 @@ export default function App() {
     }
   }, [listening, startRecognizer, toast]);
 
+  // User-initiated re-run for bulk-import days: fold Captured Today into real
+  // bubbles now instead of waiting for tomorrow's first open.
+  const organizeNow = useCallback(async () => {
+    setBuilding(true);
+    try {
+      setMap(await api.rebuildMap(true));
+    } catch (err) {
+      toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setBuilding(false);
+    }
+  }, [toast]);
+
+  const exportAll = useCallback(async () => {
+    try {
+      const data = await api.exportAll();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `memory-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(`Export failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }, [toast]);
+
   const enablePush = useCallback(async () => {
     try {
       const { publicKey } = await api.pushPublicKey();
@@ -361,6 +389,9 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
+          <button className="icon-btn" title="Download a full backup" onClick={exportAll}>
+            ⤓
+          </button>
           <button
             className={`icon-btn${pushOn ? ' active' : ''}`}
             title={pushOn ? 'Alerts on' : 'Enable alerts'}
@@ -373,7 +404,7 @@ export default function App() {
 
       <main className="view">
         {tab === 'map' && map && (
-          <MapView map={map} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
+          <MapView map={map} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} onOrganizeNow={organizeNow} />
         )}
         {tab === 'browse' && (
           <BrowseView refreshKey={refreshKey} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
