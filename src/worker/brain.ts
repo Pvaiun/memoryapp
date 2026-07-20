@@ -377,7 +377,7 @@ Do not force every item into the map — the browse view holds everything; you c
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + status, e.g. "Dentist Tue 3pm — taxes due Aug 15 need a start" or "6 address updates pending, none scheduled yet". Never repeat the bubble name, never explain the grouping ("these belong together because..."), never meta-commentary. Mention dates when items have them; for a single-item bubble say what the item needs next.`;
+"reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + dates, e.g. "Dentist Tue 3pm; taxes due Aug 15" or "6 address updates, none scheduled yet". When one thing should genuinely come first (it gates the others, or its timing demands it), recommend the order plainly ("sunscreen before Friday, the rest can wait"). Never repeat the bubble name, never explain the grouping, never meta-commentary.`;
 
   const { lines, idByAlias } = aliasItems(items, now);
   const user = JSON.stringify({
