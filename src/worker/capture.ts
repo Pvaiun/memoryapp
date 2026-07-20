@@ -113,6 +113,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       effort: p.effort,
       pingNatured: p.type === 'DO' ? p.pingNatured : false,
       eventAt: p.type === 'HAPPEN' ? eventAt?.iso ?? null : null,
+      eventEnd: p.type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
       alertLeadMinutes: p.alertLeadMinutes,
       priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
       parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
@@ -221,13 +222,13 @@ SEGMENTATION — the unit is an INTENTION, not a verb. The large majority of cap
 FOR EACH ITEM emit:
 - "type": "DO" | "KNOW" | "HAPPEN"
 - "title": a clean short imperative/declarative restatement (keep the user's vocabulary; do not embellish). Emphasis/urgency phrasing ("no excuses", "really important", "asap") feeds "priority" — NEVER leave it in the title. Date/time phrases belong in deadlinePhrase/eventAtPhrase, not the title.
-- "deadlinePhrase": for a DO with a due date, the EXACT date/time phrase from the text, else null. Do NOT compute dates yourself.
+- "deadlinePhrase": for a DO with a due date, the date/time phrase from the text, else null. Date phrases (here and in eventAtPhrase) are handed to a deterministic parser, so make them parser-readable while staying faithful: keep relative phrases VERBATIM ("tomorrow", "next Tuesday", "in 3 weeks" — do NOT compute dates yourself), but expand elliptical day ordinals with their month using today's date ("the 20th" → "July 20"; "the 20th to the 25th" → "July 20 to July 25"). Ranges are allowed.
 - "deadlineHardness": "hard" | "soft" | null. A plainly-stated date defaults to "hard"; explicit low-pressure phrasing ("ideally", "sometime", "no rush") makes it "soft".
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null.
 - "optionality": "must" | "nice" — must-do vs nice-to-do, inferred from phrasing ("maybe", "if I get to it" → "nice"). Orthogonal to priority.
 - "effort": "quick" | "medium" | "large" — coarse magnitude ("do taxes" is large, "call grandma" is quick).
 - "pingNatured": true if this DO is a nudge to do a small thing at a moment rather than a deliverable ("remind me to take the bins out" → true; "finish the report by Friday" → false). Only for DO.
-- "eventAtPhrase": for HAPPEN, the EXACT date/time phrase, else null.
+- "eventAtPhrase": for HAPPEN, the date/time phrase (same rules as deadlinePhrase; a range like "July 20 to July 25" captures a multi-day event), else null.
 - "alertLeadMinutes": only if the user explicitly asked when to be alerted ("remind me the night before" → 720), else null.
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
 - "themes": 1-3 theme names. You are the librarian of an EMERGENT taxonomy: strongly prefer reusing an existing theme; coin a new short name (1-2 words, e.g. "Home", "Health", "Sarah") only when nothing fits. Multi-theme is encouraged when genuinely apt.

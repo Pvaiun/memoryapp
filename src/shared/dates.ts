@@ -6,6 +6,33 @@ import * as chrono from 'chrono-node';
 export interface ResolvedDate {
   iso: string; // ISO datetime
   hasTime: boolean; // whether the phrase specified a time of day
+  endIso?: string; // for range phrases ("July 20 to July 25")
+}
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const HAS_MONTH_OR_RELATIVE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|today|tomorrow|tonight|week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[/.-]\d{1,2})/i;
+
+// chrono cannot parse bare day ordinals ("the 20th", "the 20th to the 25th") —
+// they need a month. Expand them deterministically against the user's local
+// date: an ordinal on/after today's day-of-month means this month, else next.
+export function expandBareOrdinals(phrase: string, ref: Date, tzOffsetMinutes = 0): string {
+  if (HAS_MONTH_OR_RELATIVE.test(phrase)) return phrase;
+  if (!/\d{1,2}(st|nd|rd|th)\b/i.test(phrase)) return phrase;
+  const local = new Date(ref.getTime() + tzOffsetMinutes * 60_000);
+  const refDay = local.getUTCDate();
+  const refMonth = local.getUTCMonth();
+  const refYear = local.getUTCFullYear();
+  return phrase.replace(/\b(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b/gi, (_m, d: string) => {
+    const day = parseInt(d, 10);
+    if (day < 1 || day > 31) return _m;
+    let month = refMonth;
+    let year = refYear;
+    if (day < refDay) {
+      month = (refMonth + 1) % 12;
+      if (month === 0) year = refYear + 1;
+    }
+    return `${MONTHS[month]} ${day} ${year}`;
+  });
 }
 
 // tzOffsetMinutes: the client's UTC offset in minutes (Date#getTimezoneOffset
@@ -13,14 +40,25 @@ export interface ResolvedDate {
 // "next Tuesday" must be resolved against the *user's* calendar, not the server's.
 export function resolveDatePhrase(phrase: string, ref: Date, tzOffsetMinutes?: number): ResolvedDate | null {
   const reference = tzOffsetMinutes === undefined ? ref : { instant: ref, timezone: tzOffsetMinutes };
-  const results = chrono.parse(phrase, reference, { forwardDate: true });
-  if (!results.length) return null;
+  let results = chrono.parse(phrase, reference, { forwardDate: true });
+  if (!results.length) {
+    // Fallback: expand bare day ordinals ("the 20th to the 25th") that chrono
+    // cannot read without a month, then retry. Still fully deterministic.
+    const expanded = expandBareOrdinals(phrase, ref, tzOffsetMinutes ?? 0);
+    if (expanded === phrase) return null;
+    results = chrono.parse(expanded, reference, { forwardDate: true });
+    if (!results.length) return null;
+  }
   const r = results[0];
   const date = r.start.date();
   // When no time is given, chrono implies 12:00 in the reference timezone —
   // a safe canonical anchor for date-only deadlines.
   const hasTime = r.start.isCertain('hour');
-  return { iso: date.toISOString(), hasTime };
+  return {
+    iso: date.toISOString(),
+    hasTime,
+    ...(r.end ? { endIso: r.end.date().toISOString() } : {}),
+  };
 }
 
 // Soft-deadline cue words (§3.1): a plainly-stated date defaults to *hard*;

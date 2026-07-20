@@ -211,9 +211,19 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
           entries.push({ itemId: item.id, date: occ.toISOString(), kind: 'occurrence' });
           used.add(item.id);
         }
-      } else if (item.eventAt >= from.toISOString() && item.eventAt < to.toISOString()) {
-        entries.push({ itemId: item.id, date: item.eventAt, kind: 'event' });
-        used.add(item.id);
+      } else {
+        // Multi-day events (eventEnd set) paint every day they span.
+        const start = new Date(item.eventAt);
+        const end = item.eventEnd ? new Date(item.eventEnd) : start;
+        const cursor = new Date(start);
+        for (let i = 0; i < 60 && cursor.getTime() <= end.getTime(); i++) {
+          const iso = cursor.toISOString();
+          if (iso >= from.toISOString() && iso < to.toISOString()) {
+            entries.push({ itemId: item.id, date: iso, kind: 'event' });
+            used.add(item.id);
+          }
+          cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
       }
     }
     if (item.type === 'DO' && item.status === 'active') {
