@@ -51,7 +51,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  status: () => req<{ ok: boolean; items: number; llm: boolean; push: boolean }>('/api/status'),
+  status: () => req<{ ok: boolean } & Record<string, unknown>>('/api/status'),
 
   capture: (text: string) =>
     req<CaptureResponse>('/api/capture', {
