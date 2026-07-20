@@ -156,6 +156,7 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 
   const validIds = new Set(items.map((i) => i.id));
   const surfacedIds = new Set<string>();
+  const builtBubbles: { name: string; prominence: number; items: number }[] = [];
   for (const b of proposed) {
     const memberIds = b.itemIds.filter((id) => validIds.has(id));
     if (!memberIds.length) continue;
@@ -168,10 +169,7 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
       await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
       surfacedIds.add(itemId);
     }
-    await logEvent(db, 'ai', 'bubble_created', {
-      bubbleId,
-      payload: { name: b.name, prominence: b.prominence, items: memberIds.length },
-    });
+    builtBubbles.push({ name: b.name, prominence: b.prominence, items: memberIds.length });
   }
 
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
@@ -182,9 +180,102 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 
   await setState(db, 'map_day', day);
   await setState(db, 'map_built_at', ts);
-  await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: proposed.length } });
+  // One consolidated event per rebuild (the bubbles table holds the details).
+  await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
   return getMap(env, day);
+}
+
+// The item view exactly as the Brain's prompt receives it — shared between the
+// live call and the debug snapshot so the snapshot never lies.
+function brainItemPayload(i: ItemView, now: Date) {
+  return {
+    id: i.id,
+    type: i.type,
+    title: i.title,
+    flavour: i.flavour,
+    priority: Math.round(i.effectivePriority * 100) / 100,
+    deadline: i.deadline,
+    deadlineHardness: i.deadlineHardness,
+    daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
+    cadence: i.cadence ? describeCadence(i.cadence) : null,
+    neglected: i.neglected,
+    neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
+    optionality: i.optionality,
+    effort: i.effort,
+    eventAt: i.eventAt,
+    daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
+    themes: i.themes.map((t) => t.name),
+    daysSinceLastSurfaced: i.lastSurfacedAt
+      ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
+      : null,
+    recapturedTimes: Math.max(0, i.rawTexts.length - 1),
+  };
+}
+
+// Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
+// input the Brain would see right now, paired with the current map output.
+// Compact by construction — no raw log, no embeddings, no captures.
+export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
+  const db = env.DB;
+  const now = new Date();
+  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
+
+  const nameRows = await db
+    .prepare('SELECT DISTINCT name FROM bubbles ORDER BY created_at DESC LIMIT 40')
+    .all<{ name: string }>();
+
+  const prevDay = await db
+    .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
+    .bind(day)
+    .first<{ day: string }>();
+  let previouslyShown: { name: string; itemTitles: string[] }[] = [];
+  if (prevDay) {
+    const rows = await db
+      .prepare(
+        `SELECT b.name, i.title FROM bubbles b
+         JOIN bubble_items bi ON bi.bubble_id = b.id
+         JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
+      )
+      .bind(prevDay.day)
+      .all<{ name: string; title: string }>();
+    const byName = new Map<string, string[]>();
+    for (const r of rows.results) byName.set(r.name, [...(byName.get(r.name) ?? []), r.title]);
+    previouslyShown = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
+  }
+
+  const bubbleRows = await db
+    .prepare('SELECT id, name, kind, prominence, reason FROM bubbles WHERE day = ? ORDER BY prominence DESC')
+    .bind(day)
+    .all<{ id: string; name: string; kind: string; prominence: number; reason: string }>();
+  const memberRows = await db
+    .prepare(
+      `SELECT bi.bubble_id, i.title FROM bubble_items bi
+       JOIN bubbles b ON b.id = bi.bubble_id JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
+    )
+    .bind(day)
+    .all<{ bubble_id: string; title: string }>();
+  const members = new Map<string, string[]>();
+  for (const m of memberRows.results) members.set(m.bubble_id, [...(members.get(m.bubble_id) ?? []), m.title]);
+
+  return {
+    kind: 'memory-brain-snapshot',
+    day,
+    builtAt: await getState(db, 'map_built_at'),
+    input: {
+      items: items.map((i) => brainItemPayload(i, now)),
+      userProfile: await getState(db, 'profile_text'),
+      recentNameVocabulary: nameRows.results.map((r) => r.name),
+      previouslyShown_reuseOnlyIfStillApt: previouslyShown,
+    },
+    output: bubbleRows.results.map((b) => ({
+      name: b.name,
+      kind: b.kind,
+      prominence: b.prominence,
+      reason: b.reason,
+      items: members.get(b.id) ?? [],
+    })),
+  };
 }
 
 interface ProposedBubble {
@@ -228,28 +319,7 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
   const user = JSON.stringify({
     today: day,
     weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: items.map((i) => ({
-      id: i.id,
-      type: i.type,
-      title: i.title,
-      flavour: i.flavour,
-      priority: Math.round(i.effectivePriority * 100) / 100,
-      deadline: i.deadline,
-      deadlineHardness: i.deadlineHardness,
-      daysUntilDeadline: i.deadline ? Math.round((new Date(i.deadline).getTime() - now.getTime()) / 86_400_000) : null,
-      cadence: i.cadence ? describeCadence(i.cadence) : null,
-      neglected: i.neglected,
-      neglectedByDays: i.neglected && i.cadence ? neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now) : 0,
-      optionality: i.optionality,
-      effort: i.effort,
-      eventAt: i.eventAt,
-      daysUntilEvent: i.eventAt ? Math.round((new Date(i.eventAt).getTime() - now.getTime()) / 86_400_000) : null,
-      themes: i.themes.map((t) => t.name),
-      daysSinceLastSurfaced: i.lastSurfacedAt
-        ? Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000)
-        : null,
-      recapturedTimes: Math.max(0, i.rawTexts.length - 1),
-    })),
+    items: items.map((i) => brainItemPayload(i, now)),
     userProfile: profileText,
     recentNameVocabulary: nameVocabulary,
     previouslyShown_reuseOnlyIfStillApt: previous,
@@ -377,18 +447,28 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the raw 30-day event log, write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) of this user's patterns, for two readers: the Brain (surfacing habits: when they check in, which themes/items they reliably skip or complete, what spikes before what) and Smart Capture (correction patterns: re-theming tendencies, priority adjustments they make, over/under-splitting corrections — so future parses can lean toward their demonstrated preferences). Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
 
-  const user = JSON.stringify({
-    today: day,
-    events: events.results.map((e) => ({
-      ts: e.ts,
-      actor: e.actor,
-      type: e.type,
-      item: e.item_id ? titleById.get(e.item_id) ?? null : null,
-      payload: safeParse(e.payload),
-    })),
+  // One compact line per event — the builder needs "what happened when",
+  // not full field diffs. Keeps a month of history to a few thousand tokens.
+  const lines = events.results.map((e) => {
+    const p = safeParse(e.payload) as Record<string, unknown>;
+    const title = e.item_id ? titleById.get(e.item_id) ?? '' : '';
+    let detail = title;
+    if (e.type === 'captured' && typeof p?.text === 'string') detail = p.text.slice(0, 80);
+    else if (e.type === 'edited' && p?.after && typeof p.after === 'object')
+      detail = `${title} [changed: ${Object.keys(p.after as object).join(', ')}]`;
+    else if (e.type === 're_themed' && Array.isArray(p?.before) && Array.isArray(p?.after))
+      detail = `${title} [${(p.before as string[]).join('/')}→${(p.after as string[]).join('/')}]`;
+    else if (e.type === 'recaptured' && typeof p?.appendedText === 'string')
+      detail = `${title} +"${p.appendedText.slice(0, 60)}"`;
+    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
+      detail = `${p?.from ?? ''}→${p?.into ?? p?.to ?? ''}`;
+    else if (e.type === 'map_rebuilt') detail = '';
+    return `${e.ts.slice(5, 16).replace('T', ' ')} ${e.actor} ${e.type}${detail ? ` — ${detail}` : ''}`;
   });
+
+  const user = JSON.stringify({ today: day, events: lines });
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -409,6 +489,8 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   const text = data.content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('').trim();
   if (!text) return getState(db, 'profile_text');
 
+  // One profile row per day: forced re-runs replace, never duplicate.
+  await db.prepare('DELETE FROM profiles WHERE day = ?').bind(day).run();
   await db.prepare('INSERT INTO profiles (id, day, text, created_at) VALUES (?,?,?,?)').bind(newId(), day, text, nowIso()).run();
   await setState(db, 'profile_text', text);
   return text;

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
-import { getMap, rebuildMap } from './brain';
+import { brainSnapshot, getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, listItems, setState, toItemView } from './db';
@@ -67,6 +67,14 @@ app.post('/api/map/rebuild', async (c) => {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
   return c.json(await rebuildMap(c.env, day, !!force));
+});
+
+// Brain workshop snapshot: the exact input the Brain sees + the current map
+// output, as one small JSON — for tuning the clustering without full exports.
+app.get('/api/debug/brain', async (c) => {
+  const day = c.req.query('day') ?? (await getState(c.env.DB, 'map_day'));
+  if (!day) return c.json({ error: 'no map built yet' }, 400);
+  return c.json(await brainSnapshot(c.env, day));
 });
 
 // Full backup: everything, as one JSON document. Behind the access gate.

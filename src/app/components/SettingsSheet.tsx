@@ -20,12 +20,14 @@ export default function SettingsSheet({
   onEnablePush,
   onRebuild,
   onExport,
+  onCopyBrainSnapshot,
   onClose,
 }: {
   pushOn: boolean | null;
   onEnablePush: () => void;
   onRebuild: () => void;
   onExport: () => void;
+  onCopyBrainSnapshot: () => void;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
@@ -100,6 +102,10 @@ export default function SettingsSheet({
               <small>Punctual pushes for events and hard deadlines</small>
             </button>
           )}
+          <button className="settings-btn" onClick={onCopyBrainSnapshot}>
+            Copy Brain snapshot
+            <small>What the Brain sees + the map it built — for workshopping</small>
+          </button>
           <button className="settings-btn" onClick={onExport}>
             Download full backup
             <small>Everything as one JSON file — items, history, themes</small>
