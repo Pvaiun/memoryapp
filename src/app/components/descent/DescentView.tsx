@@ -9,36 +9,40 @@ import {
   cameraAt,
   cameraRange,
   clamp,
+  corridorY,
   CULL_BEHIND,
-  DEPTH_RANGE,
   depthCues,
+  descFade,
   easeDolly,
   easeSnap,
   engagedIndex,
-  FAR_TIER_S,
   fanRows,
   GAUGE_INSET,
-  gaugeColumns,
-  latMag,
   passState,
-  pCam,
   scaleFor,
   scrollFor,
-  tierFades,
+  trackNorm,
 } from './engine';
 import type { TrackCard } from './engine';
 
-// Descent "Instrument" (visual spec, 2026-07-20). React renders the scene
+// Descent "Instrument", v2 — the vertical corridor. React renders the scene
 // structure once per data change; a rAF loop writes transforms/opacity/filter
 // straight to the DOM as a pure function of scrollTop, so scrolling never
-// touches React. Scroll physics (momentum, fling, settle-snap onto a card)
-// are native: a real scroll container with CSS scroll-snap points at each
-// focal plane. Nothing here animates without user input or a data delta.
+// touches React. Scroll physics (momentum, fling, settle-onto-a-card) are
+// native: a real scroll container with CSS scroll-snap points at each focal
+// plane. Nothing here animates without user input or a data delta.
+//
+// Spatially: cards are horizontally centered. Depth recedes upward — deep
+// cards hang small near a vanishing line in the upper third, descend and
+// grow as the camera approaches, reach focus in the lower-middle, then
+// sweep down off the bottom edge as they pass. The gauge (right edge)
+// plots the display track so its dots always match the felt travel; the
+// ledger opens as a left-side panel with room for full names.
 
-const CARD_W = 272; // focus-tier card width; weave keeps it on-screen at 390
-const GAUGE_PAD = 14; // px above p=1.0 / below p=0 on the scale
+const CARD_W = 272; // focus-tier card width — fully on-screen at 390
+const GAUGE_PAD = 14; // px above/below the scale ends
 const GAUGE_HIT = 24;
-const LEDGER_W = 120;
+const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
 
 const STORAGE_KEY = 'memory.descent.prev';
 
@@ -46,10 +50,7 @@ interface CardEls {
   root: HTMLButtonElement;
   base: HTMLElement;
   pigment: HTMLElement;
-  chip: HTMLElement;
-  fardot: HTMLElement;
   desc: HTMLElement | null;
-  count: HTMLElement | null;
 }
 
 interface CardInfo {
@@ -132,23 +133,20 @@ export default function DescentView({
 
   const vw = size.w;
   const vh = size.h;
-  const cx = (vw - 28) / 2; // track center: viewport center minus gauge inset (§0a)
-  const gaugeX = vw - GAUGE_INSET; // scale line x (§4)
+  const cx = (vw - 28) / 2; // corridor center: viewport center minus gauge inset
 
-  const yForP = useCallback(
-    (p: number) => GAUGE_PAD + (1 - p) * (vh - 2 * GAUGE_PAD),
+  const yForNorm = useCallback(
+    (norm: number) => GAUGE_PAD + norm * (vh - 2 * GAUGE_PAD),
     [vh],
   );
-  const pForY = useCallback(
-    (y: number) => clamp(1 - (y - GAUGE_PAD) / (vh - 2 * GAUGE_PAD), 0, 1),
+  const normForY = useCallback(
+    (y: number) => clamp((y - GAUGE_PAD) / (vh - 2 * GAUGE_PAD), 0, 1),
     [vh],
   );
 
   // ----- imperative registries -------------------------------------------
   const cardElsRef = useRef(new Map<string, CardEls>());
-  const cardHRef = useRef(new Map<string, number>());
   const dotElsRef = useRef(new Map<string, HTMLElement>());
-  const nearAmtRef = useRef(new Map<string, number>()); // focus-lock dim lerp (§3b)
   const engagedIdRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const gaugeActiveUntilRef = useRef(0);
@@ -179,10 +177,7 @@ export default function DescentView({
         root: el,
         base: el.querySelector<HTMLElement>('.dsc-base')!,
         pigment: el.querySelector<HTMLElement>('.dsc-pigment')!,
-        chip: el.querySelector<HTMLElement>('.dsc-chip')!,
-        fardot: el.querySelector<HTMLElement>('.dsc-fardot')!,
         desc: el.querySelector<HTMLElement>('.dsc-desc'),
-        count: el.querySelector<HTMLElement>('.dsc-count'),
       });
     };
   }, []);
@@ -201,7 +196,7 @@ export default function DescentView({
   }, []);
 
   const renderFrame = useCallback(
-    (now: number, dtMs: number): boolean => {
+    (now: number): boolean => {
       const scroller = scrollerRef.current;
       const tr = trackRef.current;
       const { w, h } = sizeRef.current;
@@ -216,9 +211,6 @@ export default function DescentView({
 
       let unsettled = Math.abs(c - lastCRef.current) > 0.01;
       lastCRef.current = c;
-
-      // smoothing factor for the focus-lock dim/push (frame-rate independent)
-      const k = 1 - Math.exp(-dtMs / 70);
 
       for (const t of tr) {
         const els = cardElsRef.current.get(t.id);
@@ -237,54 +229,35 @@ export default function DescentView({
 
         const s = scaleFor(d);
         const cues = depthCues(d, isReduced);
-        const pass = passState(d, t.side);
-        const fades = tierFades(s);
+        const pass = passState(d);
+        const y = corridorY(s, h) + pass.drop * PASS_DROP_FRAC * h;
 
-        // §3b focus lock: non-engaged card near the focal plane dims and
-        // gets an extra 8px push. Smoothed so the handoff doesn't pop.
-        const isEngaged = t.i === engaged;
-        const nearTarget = !isEngaged && Math.abs(d) <= 120 ? 1 : 0;
-        const cur = nearAmtRef.current.get(t.id) ?? 0;
-        const nearAmt = isReduced ? nearTarget : cur + (nearTarget - cur) * k;
-        nearAmtRef.current.set(t.id, nearAmt);
-        if (Math.abs(nearAmt - nearTarget) > 0.005) unsettled = true;
-
-        const lat = t.side * latMag(d) + t.side * 8 * nearAmt;
-        const dim = 1 - 0.62 * nearAmt;
         const settledMul = info?.settled ? 0.7 : 1;
         const sat = (info?.settled ? 0.8 : 1) * cues.saturation;
 
-        els.root.style.transform = `translate(-50%, -50%) translate3d(${(lat + pass.tx).toFixed(2)}px, ${t.vy}px, 0) rotate(${pass.rot.toFixed(2)}deg) scale(${s.toFixed(4)})`;
-        els.root.style.opacity = (pass.alpha * dim).toFixed(3);
-        els.root.style.pointerEvents = s >= FAR_TIER_S ? '' : 'none';
+        els.root.style.transform = `translate(-50%, -50%) translate3d(0, ${y.toFixed(2)}px, 0) scale(${s.toFixed(4)})`;
+        els.root.style.opacity = pass.alpha.toFixed(3);
+        els.root.style.pointerEvents = pass.alpha > 0.05 ? '' : 'none';
         els.base.style.opacity = (cues.opacity * settledMul).toFixed(3);
         els.base.style.filter = `saturate(${sat.toFixed(3)}) contrast(${cues.contrast.toFixed(3)})`;
-        // Status pigment is exempt (§1): full saturation, opacity floor 0.85.
+        // Status pigment is exempt: full saturation, opacity floor 0.85.
         els.pigment.style.opacity = Math.max(cues.opacity, 0.85).toFixed(3);
-        els.chip.style.opacity = fades.chip.toFixed(3);
-        if (els.count) els.count.style.opacity = fades.chip.toFixed(3);
-        // Far-tier dot counter-scales so it stays ~6px on screen (8px red).
-        els.fardot.style.opacity = (1 - fades.chip).toFixed(3);
-        els.fardot.style.transform = `scale(${Math.min(1 / s, 4).toFixed(3)})`;
-        if (els.desc) els.desc.style.opacity = (fades.desc * (1 - nearAmt)).toFixed(3);
+        if (els.desc) els.desc.style.opacity = descFade(s).toFixed(3);
       }
 
-      // ----- gauge (renders from p and c only, §4) -----
-      const p = pCam(c);
-      const yTop = GAUGE_PAD;
-      const yBot = h - GAUGE_PAD;
-      const puckY = yTop + (1 - p) * (yBot - yTop);
+      // ----- gauge: plots the display track -----
+      const camNorm = trackNorm(tr, c);
+      const puckY = yForNormPx(camNorm, h);
       if (puckRef.current) puckRef.current.style.transform = `translateY(${puckY.toFixed(1)}px)`;
       if (readoutRef.current) {
-        readoutRef.current.style.transform = `translateY(${(puckY - 6).toFixed(1)}px)`;
-        const label = p >= 0.995 ? '1.0' : `.${String(Math.round(p * 100)).padStart(2, '0')}`;
-        if (readoutRef.current.textContent !== `p ${label}`) readoutRef.current.textContent = `p ${label}`;
+        readoutRef.current.style.transform = `translateY(${(puckY - 7).toFixed(1)}px)`;
+        const label = `${engaged + 1} / ${tr.length}`;
+        if (readoutRef.current.textContent !== label) readoutRef.current.textContent = label;
       }
       for (const t of tr) {
         const dot = dotElsRef.current.get(t.id);
         if (!dot) continue;
-        const passed = c > t.zp + 20;
-        dot.classList.toggle('passed', passed);
+        dot.classList.toggle('passed', c > t.zp + 20);
       }
 
       // gauge active state: enters on scroll/touch, exits 800ms after input
@@ -295,29 +268,28 @@ export default function DescentView({
       }
       if (gaugeActive) unsettled = true;
 
-      // leader line: puck → engaged card's nearest corner (§4)
+      // leader line: puck → engaged card's right edge
       if (leaderRef.current && engagedCard) {
-        const cardH = cardHRef.current.get(engagedCard.id) ?? 100;
         const d = engagedCard.zp - c;
-        const s = scaleFor(d);
-        const nearAmt = nearAmtRef.current.get(engagedCard.id) ?? 0;
-        const centerX = cardCx + engagedCard.side * (latMag(d) + 8 * nearAmt);
-        const centerY = h / 2 + engagedCard.vy;
-        const cornerX = centerX + (CARD_W * s) / 2;
-        const cornerY = puckY > centerY ? centerY + (cardH * s) / 2 : centerY - (cardH * s) / 2;
-        leaderRef.current.setAttribute('x1', String(w - GAUGE_INSET));
-        leaderRef.current.setAttribute('y1', puckY.toFixed(1));
-        leaderRef.current.setAttribute('x2', cornerX.toFixed(1));
-        leaderRef.current.setAttribute('y2', cornerY.toFixed(1));
+        if (d <= CULL_BEHIND) {
+          leaderRef.current.setAttribute('x2', String(w - GAUGE_INSET));
+          leaderRef.current.setAttribute('x1', String(w - GAUGE_INSET));
+        } else {
+          const s = scaleFor(d);
+          const y = corridorY(s, h) + passState(d).drop * PASS_DROP_FRAC * h;
+          leaderRef.current.setAttribute('x1', String(w - GAUGE_INSET));
+          leaderRef.current.setAttribute('y1', puckY.toFixed(1));
+          leaderRef.current.setAttribute('x2', (cardCx + (CARD_W * s) / 2).toFixed(1));
+          leaderRef.current.setAttribute('y2', y.toFixed(1));
+        }
       }
 
-      // §6 the ends: header fades out approaching card 0; footer fades in
-      // within 100 units of the bottom stop.
+      // the ends: header shows in the pulled-back overview; footer past the last card
       if (headerRef.current) {
-        headerRef.current.style.opacity = band(tr[0].zp - c, 40, 100).toFixed(3);
+        headerRef.current.style.opacity = band(tr[0].zp - c, 60, 180).toFixed(3);
       }
       if (footerRef.current) {
-        footerRef.current.style.opacity = band(c, rg.cEnd - 100, rg.cEnd - 20).toFixed(3);
+        footerRef.current.style.opacity = band(c - tr[tr.length - 1].zp, 60, 180).toFixed(3);
       }
 
       return unsettled;
@@ -330,11 +302,8 @@ export default function DescentView({
 
   const startLoopRef = useRef<() => void>(() => {});
   useEffect(() => {
-    let last = performance.now();
     const tick = (now: number) => {
-      const dt = Math.min(now - last, 100);
-      last = now;
-      const unsettled = renderFrameRef.current(now, dt);
+      const unsettled = renderFrameRef.current(now);
       if (unsettled) lastActivityRef.current = now;
       if (now - lastActivityRef.current < 1400 || dollyRef.current !== null) {
         loopRef.current = requestAnimationFrame(tick);
@@ -343,10 +312,7 @@ export default function DescentView({
       }
     };
     startLoopRef.current = () => {
-      if (!loopRef.current) {
-        last = performance.now();
-        loopRef.current = requestAnimationFrame(tick);
-      }
+      if (!loopRef.current) loopRef.current = requestAnimationFrame(tick);
     };
     return () => {
       if (loopRef.current) cancelAnimationFrame(loopRef.current);
@@ -409,18 +375,20 @@ export default function DescentView({
   // ----- interactions -----------------------------------------------------
   const handleCardTap = useCallback(
     (bubble: Bubble, zp: number) => {
-      if (engagedIdRef.current === bubble.id) {
-        onOpen(bubble); // tapping the engaged card opens the item list (§2)
+      const scroller = scrollerRef.current;
+      const c = scroller ? cameraAt(rangeRef.current.cStart, scroller.scrollTop) : zp;
+      // open only a card that is engaged AND at focus — otherwise the tap
+      // brings it to focus first (you never open something you haven't read)
+      if (engagedIdRef.current === bubble.id && Math.abs(zp - c) < 80) {
+        onOpen(bubble);
       } else {
-        // first tap snaps focus — you never open something you haven't read
         dollyTo(scrollForPlane(zp), 180, easeSnap);
       }
     },
     [dollyTo, onOpen, scrollForPlane],
   );
 
-  // Gauge pointer machine: drag puck → scrub; tap scale → dolly to p;
-  // long-press → ledger (§4, §5).
+  // Gauge pointer machine: drag → scrub; tap → dolly; long-press → ledger.
   const gaugeStateRef = useRef<{
     id: number;
     y0: number;
@@ -428,6 +396,12 @@ export default function DescentView({
     scrubbing: boolean;
     timer: number;
   } | null>(null);
+
+  const camForNorm = useCallback((norm: number) => {
+    const tr = trackRef.current;
+    if (tr.length < 2) return tr.length ? tr[0].zp : 0;
+    return tr[0].zp + norm * (tr[tr.length - 1].zp - tr[0].zp);
+  }, []);
 
   const gaugePointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -439,7 +413,7 @@ export default function DescentView({
       const rect = viewportRef.current!.getBoundingClientRect();
       const y = e.clientY - rect.top;
       const c = cameraAt(rangeRef.current.cStart, scroller.scrollTop);
-      const puckY = yForP(pCam(c));
+      const puckY = yForNorm(trackNorm(trackRef.current, c));
       const scrubbing = Math.abs(y - puckY) < 16;
       if (scrubbing) scroller.style.scrollSnapType = 'none';
       const timer = window.setTimeout(() => {
@@ -454,7 +428,7 @@ export default function DescentView({
       gaugeStateRef.current = { id: e.pointerId, y0: y, moved: false, scrubbing, timer };
       (e.target as Element).setPointerCapture(e.pointerId);
     },
-    [cancelDolly, markActivity, vh, yForP],
+    [cancelDolly, markActivity, vh, yForNorm],
   );
 
   const gaugePointerMove = useCallback(
@@ -474,14 +448,14 @@ export default function DescentView({
         }
       }
       if (st.scrubbing && st.moved) {
-        // direct, position-coupled — no easing (§4)
-        const c = (1 - pForY(y)) * DEPTH_RANGE;
+        // direct, position-coupled — no easing
+        const c = camForNorm(normForY(y));
         scroller.scrollTop = clamp(scrollFor(rangeRef.current.cStart, c), 0, rangeRef.current.maxScroll);
         gaugeActiveUntilRef.current = performance.now() + 800;
         markActivity();
       }
     },
-    [markActivity, pForY],
+    [camForNorm, markActivity, normForY],
   );
 
   const gaugePointerUp = useCallback(
@@ -498,10 +472,9 @@ export default function DescentView({
       const y = e.clientY - rect.top;
       const c = cameraAt(rangeRef.current.cStart, scroller.scrollTop);
       if (!st.moved) {
-        // tap: dolly to the tapped p, resolving onto the nearest card (§3b)
+        // tap: dolly to the tapped position, resolving onto the nearest card
         setLedgerOpen(false);
-        const cTap = (1 - pForY(y)) * DEPTH_RANGE;
-        const target = nearestPlane(cTap);
+        const target = nearestPlane(camForNorm(normForY(y)));
         if (target) {
           const dist = Math.abs(target.zp - c);
           dollyTo(scrollForPlane(target.zp), dist > 500 ? 560 : 420, easeDolly);
@@ -512,7 +485,7 @@ export default function DescentView({
         if (target) dollyTo(scrollForPlane(target.zp), 180, easeSnap);
       }
     },
-    [dollyTo, markActivity, nearestPlane, pForY, scrollForPlane],
+    [camForNorm, dollyTo, markActivity, nearestPlane, normForY, scrollForPlane],
   );
 
   // ----- scroll / touch wiring -------------------------------------------
@@ -548,9 +521,7 @@ export default function DescentView({
     return () => ro.disconnect();
   }, []);
 
-  // cache unscaled card heights for the leader line
   useEffect(() => {
-    for (const [id, els] of cardElsRef.current) cardHRef.current.set(id, els.root.offsetHeight);
     markActivity();
   });
 
@@ -565,11 +536,10 @@ export default function DescentView({
       if (t && scroller && userScrolledRef.current) scroller.scrollTop = scrollForPlane(t.zp);
     }
     trackKeyRef.current = key;
-    nearAmtRef.current = new Map();
     markActivity();
   }, [track, scrollForPlane, markActivity]);
 
-  // ----- living HUD: data-delta ripples (§4a) -----------------------------
+  // ----- living HUD: data-delta ripples -----------------------------------
   const prevToneRef = useRef(new Map<string, string>());
   useEffect(() => {
     if (!vh) return;
@@ -582,16 +552,16 @@ export default function DescentView({
       if (prev !== undefined && prev !== sig && !reducedRef.current) {
         newRipples.push({
           key: rippleSeq++,
-          y: yForP(t.p),
+          y: yForNorm(trackNorm(track, t.zp)),
           color: info.settled ? 'var(--good)' : info.status.color,
         });
       }
     }
     prevToneRef.current = next;
     if (newRipples.length) setRipples((r) => [...r, ...newRipples]);
-  }, [byTrack, vh, yForP]);
+  }, [byTrack, track, vh, yForNorm]);
 
-  // ----- morning rebuild story (§4a) --------------------------------------
+  // ----- morning rebuild story --------------------------------------------
   // Yesterday's record is snapshotted at first render — the persist effect
   // below overwrites the storage key before the init effect gets to run.
   const [storedPrev] = useState<{ identity: string; byName: Record<string, number> } | null>(() => {
@@ -610,38 +580,39 @@ export default function DescentView({
     const isNewBuild = stored !== null && stored.identity !== identity;
     if (isNewBuild) {
       if (reducedRef.current) {
-        // instant reposition under a 200ms fade (§8)
+        // instant reposition under a short fade
         viewportRef.current?.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 200 });
         const scroller = scrollerRef.current;
         if (scroller) scroller.scrollTop = scrollForPlane(track[0].zp);
       } else {
-        // dots walk from yesterday's p to today's, staggered by rank …
+        // dots walk from yesterday's track position to today's, staggered …
         for (const { t, info } of byTrack) {
           const dot = dotElsRef.current.get(t.id);
-          const prevP = stored!.byName[info.bubble.name];
+          const prevNorm = stored!.byName[info.bubble.name];
           if (!dot) continue;
-          if (prevP !== undefined && Math.abs(prevP - t.p) > 0.001) {
-            const dy = yForP(prevP) - yForP(t.p);
+          const norm = trackNorm(track, t.zp);
+          if (prevNorm !== undefined && Math.abs(prevNorm - norm) > 0.002) {
+            const dy = yForNorm(prevNorm) - yForNorm(norm);
             dot.animate(
               [{ transform: `translateY(${dy.toFixed(1)}px)` }, { transform: 'translateY(0)' }],
               { duration: 600, delay: t.i * 40, easing: 'ease-in-out', fill: 'backwards' },
             );
-          } else if (prevP === undefined) {
-            dot.animate([{ opacity: 0 }, { opacity: 0.9 }], { duration: 300, delay: 600 + t.i * 40, fill: 'backwards' });
+          } else if (prevNorm === undefined) {
+            dot.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, delay: 600 + t.i * 40, fill: 'backwards' });
           }
         }
-        // … then the camera dollies from the top cap to the first focal plane
+        // … then the camera dollies from the overview to the first focal plane
         window.setTimeout(() => dollyTo(scrollForPlane(track[0].zp), 500, easeDolly), 700 + track.length * 40);
       }
     }
     markActivity();
-  }, [vh, track, byTrack, day, builtAt, storedPrev, dollyTo, scrollForPlane, markActivity, yForP]);
+  }, [vh, track, byTrack, day, builtAt, storedPrev, dollyTo, scrollForPlane, markActivity, yForNorm]);
 
-  // persist today's p by bubble name for tomorrow's rebuild story
+  // persist today's track position by bubble name for tomorrow's story
   useEffect(() => {
     if (!track.length) return;
     const byName: Record<string, number> = {};
-    for (const { t, info } of byTrack) byName[info.bubble.name] = t.p;
+    for (const { t, info } of byTrack) byName[info.bubble.name] = trackNorm(track, t.zp);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ identity: `${day}|${builtAt ?? ''}`, byName }));
     } catch {
@@ -652,7 +623,7 @@ export default function DescentView({
   // ----- ledger -----------------------------------------------------------
   const pickFromLedger = useCallback(
     (zp: number) => {
-      // collapse and dolly run concurrently (§5)
+      // collapse and dolly run concurrently
       setLedgerOpen(false);
       dollyTo(scrollForPlane(zp), 420, easeDolly);
     },
@@ -665,27 +636,22 @@ export default function DescentView({
 
   // ----- static gauge geometry (React-rendered) ---------------------------
   const ticks = useMemo(() => {
-    const out: { p: number; major: boolean }[] = [];
-    for (let i = 0; i <= 20; i++) {
-      const p = i / 20;
-      out.push({ p, major: i % 5 === 0 });
-    }
+    const out: { f: number; major: boolean }[] = [];
+    for (let i = 0; i <= 20; i++) out.push({ f: i / 20, major: i % 5 === 0 });
     return out;
   }, []);
 
   const dotLayout = useMemo(() => {
     if (!vh) return [];
-    const ys = track.map((t) => yForP(t.p));
-    const cols = gaugeColumns(ys);
-    return track.map((t, idx) => ({ t, y: ys[idx], col: cols[idx] }));
-  }, [track, vh, yForP]);
+    return track.map((t) => ({ t, y: yForNorm(trackNorm(track, t.zp)) }));
+  }, [track, vh, yForNorm]);
 
   const ledgerRows = useMemo(() => {
     if (!vh || !ledgerOpen) return [];
-    const ys = track.map((t) => yForP(t.p));
-    const fanned = fanRows(ys, 22, vh - GAUGE_PAD);
-    return track.map((t, idx) => ({ t, info: infos.get(t.id)!, trueY: ys[idx], y: fanned[idx] }));
-  }, [track, infos, vh, ledgerOpen, yForP]);
+    const ys = track.map((t) => yForNorm(trackNorm(track, t.zp)));
+    const fanned = fanRows(ys, 30, vh - GAUGE_PAD);
+    return track.map((t, idx) => ({ t, info: infos.get(t.id)!, y: fanned[idx] }));
+  }, [track, infos, vh, ledgerOpen, yForNorm]);
 
   const dateLine = useMemo(() => {
     const d = new Date();
@@ -727,16 +693,18 @@ export default function DescentView({
                     >
                       <span className="dsc-base">
                         <span className="dsc-top">
-                          <span className={`status-chip dsc-ghost${info.status.tone === 'red' && !info.settled ? ' filled' : ''}`}>
-                            {info.settled ? 'done' : info.status.label}
-                          </span>
+                          <span className="dsc-name">{b.name}</span>
                           <span className="dsc-count">
                             {info.doneCount > 0
                               ? `${info.doneCount}/${info.total}`
                               : `${info.total} item${info.total === 1 ? '' : 's'}`}
                           </span>
                         </span>
-                        <span className="dsc-name">{b.name}</span>
+                        <span className="dsc-chiprow">
+                          <span className={`status-chip dsc-ghost${info.status.tone === 'red' && !info.settled ? ' filled' : ''}`}>
+                            {info.settled ? 'done' : info.status.label}
+                          </span>
+                        </span>
                         {b.reason && !info.settled && <span className="dsc-desc">{b.reason}</span>}
                       </span>
                       <span className="dsc-pigment">
@@ -745,10 +713,6 @@ export default function DescentView({
                         >
                           {info.settled ? 'done' : info.status.label}
                         </span>
-                        <span
-                          className={`dsc-fardot tone-${info.settled ? 'settled' : info.status.tone}`}
-                          style={{ background: info.settled ? 'transparent' : info.status.color }}
-                        />
                       </span>
                     </button>
                   );
@@ -757,11 +721,12 @@ export default function DescentView({
                   end of today
                 </div>
               </div>
-              {/* focal-plane snap points: coming to rest always lands on a card */}
+              {/* focal-plane snap points, plus rests at both ends */}
               <div className="dsc-snap" style={{ top: 0 }} />
               {track.map((t) => (
                 <div key={t.id} className="dsc-snap" style={{ top: scrollFor(range.cStart, t.zp) }} />
               ))}
+              <div className="dsc-snap" style={{ top: range.maxScroll }} />
             </div>
           </div>
 
@@ -772,15 +737,7 @@ export default function DescentView({
           {ledgerOpen && (
             <>
               <div className="dsc-dim" onClick={() => setLedgerOpen(false)} />
-              <div className="dsc-ledger" style={{ width: LEDGER_W }}>
-                <svg className="dsc-ledger-ties" width={LEDGER_W} height={vh} aria-hidden>
-                  {ledgerRows.map(
-                    ({ t, y, trueY }) =>
-                      Math.abs(y - trueY) > 1 && (
-                        <line key={t.id} x1={LEDGER_W - 32} y1={y} x2={LEDGER_W - GAUGE_INSET} y2={trueY} />
-                      ),
-                  )}
-                </svg>
+              <div className="dsc-ledger">
                 {ledgerRows.map(({ t, info, y }) => (
                   <button
                     key={t.id}
@@ -792,7 +749,7 @@ export default function DescentView({
                       className="dsc-ledger-word"
                       style={{ color: info.settled ? 'var(--good)' : info.status.color }}
                     >
-                      {info.settled ? '✓' : info.status.label}
+                      {info.settled ? '✓ done' : info.status.label}
                     </span>
                     <span className="dsc-ledger-name">{info.bubble.name}</span>
                   </button>
@@ -813,40 +770,27 @@ export default function DescentView({
             <div className="dsc-scale" style={{ top: GAUGE_PAD, bottom: GAUGE_PAD }} />
             <div className="dsc-cap" style={{ top: GAUGE_PAD - 1 }} />
             <div className="dsc-cap" style={{ bottom: GAUGE_PAD - 1 }} />
-            {ticks.map(({ p, major }) => (
-              <div
-                key={p}
-                className={`dsc-tick${major ? ' major' : ''}`}
-                style={{ top: yForP(p) }}
-              />
+            {ticks.map(({ f, major }) => (
+              <div key={f} className={`dsc-tick${major ? ' major' : ''}`} style={{ top: yForNorm(f) }} />
             ))}
-            {[1, 0.75, 0.5, 0.25, 0].map((p) => (
-              <div key={p} className="dsc-glabel" style={{ top: yForP(p) - 5 }}>
-                {p === 1 ? '1.0' : p === 0 ? '0' : `.${p * 100}`}
-              </div>
-            ))}
-            {dotLayout.map(({ t, y, col }) => {
+            {dotLayout.map(({ t, y }) => {
               const info = infos.get(t.id)!;
               const red = info.status.tone === 'red' && !info.settled;
-              const dsize = red ? 5 : 3.5;
+              const dsize = red ? 7 : 5;
               return (
-                <div key={t.id}>
-                  {col === 1 && (
-                    <div className="dsc-ghair" style={{ top: y, right: GAUGE_INSET, width: 5 }} />
-                  )}
-                  <div
-                    ref={attachDot(t.id)}
-                    className={`dsc-gdot${info.settled ? ' settled' : ''}${red ? ' red' : ''}`}
-                    style={{
-                      top: y - dsize / 2,
-                      right: GAUGE_INSET - dsize / 2 - (col === 1 ? 5 : 0),
-                      width: dsize,
-                      height: dsize,
-                      background: info.settled ? 'transparent' : info.status.color,
-                      borderColor: info.settled ? 'var(--good)' : info.status.color,
-                    }}
-                  />
-                </div>
+                <div
+                  key={t.id}
+                  ref={attachDot(t.id)}
+                  className={`dsc-gdot${info.settled ? ' settled' : ''}${red ? ' red' : ''}`}
+                  style={{
+                    top: y - dsize / 2,
+                    right: GAUGE_INSET - dsize / 2,
+                    width: dsize,
+                    height: dsize,
+                    background: info.settled ? 'transparent' : info.status.color,
+                    borderColor: info.settled ? 'var(--good)' : info.status.color,
+                  }}
+                />
               );
             })}
             {ripples.map((r) => (
@@ -864,4 +808,9 @@ export default function DescentView({
       )}
     </div>
   );
+}
+
+// module-scope helper so renderFrame (stable callback) can use it
+function yForNormPx(norm: number, vh: number): number {
+  return GAUGE_PAD + norm * (vh - 2 * GAUGE_PAD);
 }
