@@ -218,10 +218,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div>
-          <h1>Memory</h1>
-          <div className="day">
-            {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+        <div className="brand">
+          <span className="brand-dot" />
+          <div>
+            <h1>Memory</h1>
+            <div className="day">
+              {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+            </div>
           </div>
         </div>
         <div className="header-actions">
@@ -262,8 +265,8 @@ export default function App() {
             }
           }}
         />
-        <button disabled={!captureText.trim() || capturing} onClick={capture}>
-          {capturing ? '…' : 'Save'}
+        <button disabled={!captureText.trim() || capturing} onClick={capture} aria-label="Capture">
+          {capturing ? '…' : '↑'}
         </button>
       </div>
 

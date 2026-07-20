@@ -7,7 +7,7 @@ import { themeColor } from '../api';
 // Deterministic for identical input — the map never jiggles.
 
 function bubbleColor(bubble: Bubble, items: Record<string, ItemView>): string {
-  if (bubble.kind === 'rotation') return 'hsl(260 25% 40%)';
+  if (bubble.kind === 'rotation') return 'hsl(260 30% 55%)';
   const counts = new Map<string, number>();
   for (const id of bubble.itemIds) {
     for (const t of items[id]?.themes ?? []) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
@@ -78,15 +78,17 @@ export default function BubbleMap({
               const total = bubble.itemIds.length;
               const allDone = total > 0 && doneCount === total;
               const fontSize = Math.max(13, Math.min(19, 12 + bubble.prominence * 8));
+              // Urgency glow: reserved for genuinely loud bubbles (§9.2's
+              // "large, loud" end of the prominence range).
+              const hot = bubble.kind !== 'rotation' && bubble.prominence >= 0.8;
               return (
                 <button
                   key={bubble.id}
-                  className={`tile bubble${bubble.kind === 'rotation' ? ' rotation' : ''}`}
+                  className={`tile bubble${bubble.kind === 'rotation' ? ' rotation' : ''}${hot ? ' hot' : ''}`}
                   style={{
                     flexGrow: bubble.prominence / rowWeight,
                     flexBasis: 0,
-                    background: bubble.kind === 'rotation' ? 'transparent' : color,
-                    borderColor: color,
+                    ['--tile-accent' as string]: color,
                     opacity: allDone ? 0.35 : 1,
                   }}
                   onClick={() => onOpen(bubble)}

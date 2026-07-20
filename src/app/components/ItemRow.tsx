@@ -76,7 +76,10 @@ export default function ItemRow({
           ))}
         </div>
       </div>
-      <span className="priority-dot" style={{ background: priorityColor(item.effectivePriority) }} />
+      <span
+        className="priority-dot"
+        style={{ background: priorityColor(item.effectivePriority), color: priorityColor(item.effectivePriority) }}
+      />
     </div>
   );
 }
