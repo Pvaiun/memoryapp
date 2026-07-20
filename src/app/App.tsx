@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ItemView, MapPayload } from '../shared/types';
+import type { CaptureResponse } from '../shared/types';
 import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
+import ReviewSheet from './components/ReviewSheet';
 import MapView from './views/MapView';
 import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
@@ -40,6 +42,7 @@ export default function App() {
   const [map, setMap] = useState<MapPayload | null>(null);
   const [building, setBuilding] = useState(false);
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
+  const [review, setReview] = useState<CaptureResponse | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [captureText, setCaptureText] = useState('');
@@ -174,39 +177,9 @@ export default function App() {
         };
       });
       setRefreshKey((k) => k + 1);
-
-      // The one destructive op — recapture-merge — is never silent (§10.1).
-      for (const b of res.boosted) {
-        toast(`Bumped “${b.item.title}”`, {
-          label: 'Undo',
-          fn: async () => {
-            const { newItem } = await api.undoRecapture(b.item.id, b.appendedText);
-            if (newItem) {
-              setMap((m) =>
-                m
-                  ? { ...m, items: { ...m.items, [newItem.id]: newItem }, capturedToday: [newItem.id, ...m.capturedToday] }
-                  : m,
-              );
-            }
-            setRefreshKey((k) => k + 1);
-            loadMap();
-          },
-        }, 10000);
-      }
-      if (res.nudge === 'split') {
-        toast(`Split into ${res.created.length} items`, {
-          label: 'Review',
-          fn: () => {
-            setTab('map');
-            if (res.created[0]) setOpenItem(res.created[0]);
-          },
-        });
-      } else if (res.nudge === 'low-confidence' && res.created[0]) {
-        toast('Filed — took a guess at the details', {
-          label: 'Check',
-          fn: () => setOpenItem(res.created[0]),
-        });
-      }
+      // Review is part of the flow (user decision): every capture ends at the
+      // review sheet. Items are already created; dismissing accepts as-is.
+      setReview(res);
     } catch (err) {
       setCaptureText(text); // never lose a capture
       toast(`Capture failed: ${err instanceof Error ? err.message : err}`);
@@ -307,6 +280,37 @@ export default function App() {
       toast("Couldn't start the microphone.");
     }
   }, [listening, startRecognizer, toast]);
+
+  // Undo a recapture-merge from the review sheet: reverts the boost and splits
+  // the phrasing back out as its own item.
+  const undoBoost = useCallback(
+    async (itemId: string, appendedText: string) => {
+      try {
+        const { newItem } = await api.undoRecapture(itemId, appendedText);
+        setReview((r) =>
+          r
+            ? {
+                ...r,
+                boosted: r.boosted.filter((b) => !(b.item.id === itemId && b.appendedText === appendedText)),
+                created: newItem ? [...r.created, newItem] : r.created,
+              }
+            : r,
+        );
+        if (newItem) {
+          setMap((m) =>
+            m
+              ? { ...m, items: { ...m.items, [newItem.id]: newItem }, capturedToday: [newItem.id, ...m.capturedToday] }
+              : m,
+          );
+        }
+        setRefreshKey((k) => k + 1);
+        loadMap();
+      } catch (err) {
+        toast(`Undo failed: ${err instanceof Error ? err.message : err}`);
+      }
+    },
+    [loadMap, toast],
+  );
 
   // User-initiated re-run for bulk-import days: fold Captured Today into real
   // bubbles now instead of waiting for tomorrow's first open.
@@ -475,6 +479,17 @@ export default function App() {
           </button>
         ))}
       </nav>
+
+      {review && map && (
+        <ReviewSheet
+          response={review}
+          items={map.items}
+          onOpenItem={setOpenItem}
+          onToggleComplete={toggleComplete}
+          onUndoBoost={undoBoost}
+          onClose={() => setReview(null)}
+        />
+      )}
 
       {openItem && (
         <ItemSheet

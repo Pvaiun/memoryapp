@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { isNeglected, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
+import { expandBareOrdinals, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -140,6 +140,29 @@ describe('deterministic dates (§12)', () => {
   });
   it('dayKey formats local date', () => {
     expect(dayKey(new Date(2026, 6, 20))).toBe('2026-07-20');
+  });
+  it('resolves bare day ordinals via deterministic month expansion', () => {
+    // ref is July 19 — "the 20th" means July 20.
+    const r = resolveDatePhrase('the 20th', new Date('2026-07-19T15:00:00Z'), 0);
+    expect(r?.iso.startsWith('2026-07-20')).toBe(true);
+    // An ordinal before today's day-of-month rolls to next month.
+    const r2 = resolveDatePhrase('the 5th', new Date('2026-07-19T15:00:00Z'), 0);
+    expect(r2?.iso.startsWith('2026-08-05')).toBe(true);
+  });
+  it('resolves ordinal ranges with start and end ("the 20th to the 25th")', () => {
+    const r = resolveDatePhrase('the 20th to the 25th', new Date('2026-07-19T15:00:00Z'), 0);
+    expect(r?.iso.startsWith('2026-07-20')).toBe(true);
+    expect(r?.endIso?.startsWith('2026-07-25')).toBe(true);
+  });
+  it('resolves explicit ranges with end dates', () => {
+    const r = resolveDatePhrase('July 20 to July 25', new Date('2026-07-19T15:00:00Z'), 0);
+    expect(r?.endIso?.startsWith('2026-07-25')).toBe(true);
+  });
+  it('expandBareOrdinals leaves month-bearing and relative phrases alone', () => {
+    const ref = new Date('2026-07-19T15:00:00Z');
+    expect(expandBareOrdinals('July 20th', ref)).toBe('July 20th');
+    expect(expandBareOrdinals('tomorrow', ref)).toBe('tomorrow');
+    expect(expandBareOrdinals('next Tuesday', ref)).toBe('next Tuesday');
   });
 });
 

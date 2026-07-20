@@ -142,6 +142,7 @@ export interface ParseResult {
 
 export interface CaptureResponse {
   captureId: string;
+  rawText: string; // echoed for the review sheet
   created: ItemView[];
   boosted: { item: ItemView; appendedText: string }[]; // recapture merges, each undoable
   nudge: 'split' | 'low-confidence' | 'merge' | null;

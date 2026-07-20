@@ -66,7 +66,12 @@ export default function ItemRow({
               {item.deadlineHardness === 'soft' ? ' (soft)' : ''}
             </span>
           )}
-          {item.eventAt && <span>{fmtDate(item.eventAt)}</span>}
+          {item.eventAt && (
+            <span>
+              {fmtDate(item.eventAt)}
+              {item.eventEnd && ` – ${fmtDate(item.eventEnd)}`}
+            </span>
+          )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
           {item.neglected && <span className="neglected">slipping</span>}
           {item.themes.slice(0, 2).map((t) => (

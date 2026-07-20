@@ -1,6 +1,6 @@
 import * as chrono from 'chrono-node';
 import type { BackendType, Cadence, ParsedItem, ParseResult, PriorityLevel } from './types';
-import { inferHardness, inferOptionality } from './dates';
+import { expandBareOrdinals, inferHardness, inferOptionality } from './dates';
 
 // Deterministic fallback parser, used when no LLM is configured (local dev,
 // missing key) so capture always works. Intentionally modest: no intent-based
@@ -74,7 +74,12 @@ export function heuristicParse(raw: string, ref: Date, tzOffsetMinutes?: number)
     .filter(Boolean);
   const items: ParsedItem[] = segments.map((text) => {
     const reference = tzOffsetMinutes === undefined ? ref : { instant: ref, timezone: tzOffsetMinutes };
-    const chronoResults = chrono.parse(text, reference, { forwardDate: true });
+    let chronoResults = chrono.parse(text, reference, { forwardDate: true });
+    if (!chronoResults.length) {
+      // Bare day ordinals ("the 20th to the 25th") need month expansion.
+      const expanded = expandBareOrdinals(text, ref, tzOffsetMinutes ?? 0);
+      if (expanded !== text) chronoResults = chrono.parse(expanded, reference, { forwardDate: true });
+    }
     const datePhrase = chronoResults.length ? chronoResults[0].text : null;
     const type = inferType(text, !!datePhrase);
     const cadence = type === 'KNOW' ? null : parseCadencePhrase(text);
