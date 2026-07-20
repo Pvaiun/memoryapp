@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "memory",
+  "name": "memoryapp",
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-06-01",
   "assets": {

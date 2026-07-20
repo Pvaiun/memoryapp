@@ -51,6 +51,12 @@ export default function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   // Text that was in the box when dictation started; speech appends after it.
   const dictationBaseRef = useRef('');
+  // Finals accumulated across recognizer restarts (Chrome auto-ends on
+  // silence; we restart until the user explicitly taps stop).
+  const dictationFinalsRef = useRef('');
+  const sessionFinalRef = useRef('');
+  const stopRequestedRef = useRef(false);
+  const fatalErrorRef = useRef(false);
   const speechSupported = getSpeechRecognition() !== null;
 
   const toast = useCallback((msg: string, action?: Toast['action'], ttl = 6000) => {
@@ -148,8 +154,10 @@ export default function App() {
     const text = captureText.trim();
     if (!text || capturing) return;
     // Stop dictation so late speech results can't refill the cleared box.
+    stopRequestedRef.current = true;
     recognitionRef.current?.stop();
     dictationBaseRef.current = '';
+    dictationFinalsRef.current = '';
     setCapturing(true);
     setCaptureText('');
     try {
@@ -210,18 +218,17 @@ export default function App() {
   }, [captureText, capturing, toast, loadMap]);
 
   // Dictation: transcribe into the capture box, editable before sending.
-  const toggleMic = useCallback(() => {
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
+  // Listening continues through pauses — the recognizer is restarted whenever
+  // it auto-ends on silence — and stops ONLY when the user taps the stop
+  // button (or sends). Fatal mic errors break the restart loop.
+  const startRecognizer = useCallback(() => {
     const Ctor = getSpeechRecognition();
-    if (!Ctor) return;
+    if (!Ctor) return false;
     const rec = new Ctor();
     rec.lang = navigator.language || 'en-US';
     rec.continuous = true;
     rec.interimResults = true;
-    dictationBaseRef.current = captureRef.current?.value.trim() ?? '';
+    sessionFinalRef.current = '';
 
     rec.onresult = (e) => {
       let finalText = '';
@@ -231,32 +238,65 @@ export default function App() {
         if (e.results[i].isFinal) finalText += chunk;
         else interim += chunk;
       }
-      const base = dictationBaseRef.current;
-      const joined = [base, (finalText + interim).trim()].filter(Boolean).join(' ');
+      sessionFinalRef.current = finalText;
+      const joined = [
+        dictationBaseRef.current,
+        (dictationFinalsRef.current + finalText + interim).replace(/\s+/g, ' ').trim(),
+      ]
+        .filter(Boolean)
+        .join(' ');
       setCaptureText(joined);
     };
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        fatalErrorRef.current = true;
         toast('Microphone access was blocked — allow it in your browser settings.');
       } else if (e.error === 'audio-capture') {
+        fatalErrorRef.current = true;
         toast('No microphone found on this device.');
       } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
-        toast(`Dictation error: ${e.error}`);
+        // Transient (e.g. network): keep the session; the restart loop handles it.
+        console.warn('dictation error', e.error);
       }
     };
     rec.onend = () => {
+      // Carry this session's finals over before any restart.
+      dictationFinalsRef.current = (dictationFinalsRef.current + sessionFinalRef.current).replace(/\s+/g, ' ');
+      sessionFinalRef.current = '';
+      if (!stopRequestedRef.current && !fatalErrorRef.current) {
+        // Auto-ended on silence — keep listening until the user says done.
+        try {
+          startRecognizer();
+          return;
+        } catch {
+          /* fall through to a real stop */
+        }
+      }
       setListening(false);
       recognitionRef.current = null;
       captureRef.current?.focus();
     };
     recognitionRef.current = rec;
+    rec.start();
+    return true;
+  }, [toast]);
+
+  const toggleMic = useCallback(() => {
+    if (listening) {
+      stopRequestedRef.current = true;
+      recognitionRef.current?.stop();
+      return;
+    }
+    stopRequestedRef.current = false;
+    fatalErrorRef.current = false;
+    dictationBaseRef.current = captureRef.current?.value.trim() ?? '';
+    dictationFinalsRef.current = '';
     try {
-      rec.start();
-      setListening(true);
+      if (startRecognizer()) setListening(true);
     } catch {
       toast("Couldn't start the microphone.");
     }
-  }, [listening, toast]);
+  }, [listening, startRecognizer, toast]);
 
   const enablePush = useCallback(async () => {
     try {
@@ -353,7 +393,10 @@ export default function App() {
           onChange={(e) => {
             setCaptureText(e.target.value);
             // Manual edits mid-dictation become the new base text.
-            if (listening) dictationBaseRef.current = e.target.value;
+            if (listening) {
+              dictationBaseRef.current = e.target.value;
+              dictationFinalsRef.current = '';
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -366,9 +409,9 @@ export default function App() {
           <button
             className={`mic-btn${listening ? ' listening' : ''}`}
             onClick={toggleMic}
-            aria-label={listening ? 'Stop dictation' : 'Dictate'}
+            aria-label={listening ? 'Done dictating' : 'Dictate'}
           >
-            🎙
+            {listening ? '⏹' : '🎙'}
           </button>
         )}
         <button disabled={!captureText.trim() || capturing} onClick={capture} aria-label="Capture">
