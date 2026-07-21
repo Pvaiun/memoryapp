@@ -1,5 +1,5 @@
-import type { Bubble, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeCadence, neglectedByDays } from '../shared/cadence';
+import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
+import { describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -158,16 +158,36 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
     .all<{ name: string }>();
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
+  const input = brainInput(day, items, previous, nameVocabulary, profileText, now);
   let proposed: ProposedBubble[];
+  let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, day, items, previous, nameVocabulary, profileText);
+      proposed = await llmBuildBubbles(env, input);
+      mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
       proposed = fallbackBubbles(items, now);
     }
   } else {
     proposed = fallbackBubbles(items, now);
+  }
+
+  // Code-side prominence floors mirroring the prompt's tier floors — the
+  // guarantee lives here, not in the model's compliance: a bubble holding a
+  // same-day item never renders below the quiet band; a same-day must-do or
+  // hard deadline holds it at least mid.
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const itemById = new Map(items.map((i) => [i.id, i]));
+  for (const b of proposed) {
+    let floor = 0;
+    for (const id of b.itemIds) {
+      const it = itemById.get(id);
+      if (!it || !isTodayRelevant(it, now, tz)) continue;
+      const insistent = it.optionality !== 'nice' || (!!it.deadline && (it.deadlineHardness ?? 'hard') === 'hard');
+      floor = Math.max(floor, insistent ? 0.5 : 0.28);
+    }
+    if (floor > b.prominence) b.prominence = floor;
   }
 
   // Replace the day's map wholesale (idempotent under re-runs).
@@ -211,7 +231,6 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
 
   // Deterministic safety net: anything dated today that the Brain left out
   // gets its own bubble. The model curates; it cannot drop today.
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const missed = items.filter((i) => !surfacedIds.has(i.id) && isTodayRelevant(i, now, tz));
   if (missed.length) {
     const bubbleId = newId();
@@ -237,6 +256,9 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
 
   await setState(db, 'map_day', day);
   await setState(db, 'map_built_at', ts);
+  // What the Brain was actually called with — the debug snapshot's source of
+  // truth (a fresh reconstruction would drift and hide noHistory/fallback runs).
+  await setState(db, 'brain_last_input', JSON.stringify({ day, builtAt: ts, mode, noHistory, payload: input.payload }));
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
@@ -348,7 +370,15 @@ export async function addFirstStep(
 // or happening today must reach the map no matter what the Brain decides.
 // Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
 export function isTodayRelevant(
-  i: { status: string; deadline: string | null; eventAt: string | null; eventEnd: string | null },
+  i: {
+    status: string;
+    deadline: string | null;
+    eventAt: string | null;
+    eventEnd: string | null;
+    cadence?: Cadence | null;
+    createdAt?: string;
+    lastCompletedAt?: string | null;
+  },
   now: Date,
   tzOffsetMinutes: number,
 ): boolean {
@@ -362,6 +392,23 @@ export function isTodayRelevant(
     const at = new Date(i.eventAt).getTime();
     const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
     if (at < dayEndUtc && end >= dayStartUtc) return true; // spans some part of today
+  }
+  // Recurring rhythms: a cadence whose next occurrence lands today counts.
+  // Without this, a "daily at 7pm" DO has neither deadline nor eventAt and the
+  // floor silently excludes it — the exact hole that dropped a daily task.
+  if (i.cadence) {
+    // Already completed within the user-local today → the floor releases
+    // until tomorrow's occurrence.
+    if (i.lastCompletedAt) {
+      const done = new Date(i.lastCompletedAt).getTime();
+      if (done >= dayStartUtc && done < dayEndUtc) return false;
+    }
+    const from = new Date(dayStartUtc);
+    const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
+    const occ = i.cadence.atTime
+      ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
+      : nextOccurrence(i.cadence, anchor, from);
+    if (occ.getTime() < dayEndUtc) return true;
   }
   return false;
 }
@@ -432,35 +479,16 @@ export function aliasItems(items: ItemView[], now: Date): { lines: string[]; idB
 }
 
 // Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
-// input the Brain would see right now, paired with the current map output.
-// Compact by construction — no raw log, no embeddings, no captures.
+// input the Brain was called with on the last rebuild (stored at build time,
+// never reconstructed — reconstruction drifts as items change and lies about
+// noHistory/fallback runs), paired with the current map output.
 export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
   const db = env.DB;
-  const now = new Date();
-  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
 
-  const nameRows = await db
-    .prepare('SELECT DISTINCT name FROM bubbles ORDER BY created_at DESC LIMIT 40')
-    .all<{ name: string }>();
-
-  const prevDay = await db
-    .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
-    .bind(day)
-    .first<{ day: string }>();
-  let previouslyShown: { name: string; itemTitles: string[] }[] = [];
-  if (prevDay) {
-    const rows = await db
-      .prepare(
-        `SELECT b.name, i.title FROM bubbles b
-         JOIN bubble_items bi ON bi.bubble_id = b.id
-         JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
-      )
-      .bind(prevDay.day)
-      .all<{ name: string; title: string }>();
-    const byName = new Map<string, string[]>();
-    for (const r of rows.results) byName.set(r.name, [...(byName.get(r.name) ?? []), r.title]);
-    previouslyShown = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
-  }
+  const stored = await getState(db, 'brain_last_input');
+  const last = stored
+    ? (JSON.parse(stored) as { day: string; builtAt: string; mode: string; noHistory: boolean; payload: unknown })
+    : null;
 
   const bubbleRows = await db
     .prepare('SELECT id, name, kind, prominence, sentence, first_step FROM bubbles WHERE day = ? ORDER BY prominence DESC')
@@ -479,13 +507,11 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
   return {
     kind: 'memory-brain-snapshot',
     day,
-    builtAt: await getState(db, 'map_built_at'),
-    input: {
-      items: aliasItems(items, now).lines,
-      userProfile: await getState(db, 'profile_text'),
-      recentNameVocabulary: nameRows.results.map((r) => r.name),
-      previouslyShown_reuseOnlyIfStillApt: previouslyShown,
-    },
+    builtAt: last?.builtAt ?? (await getState(db, 'map_built_at')),
+    // How the last build ran: llm vs fallback, and whether yesterday's
+    // groupings were withheld (the no-history workshop rebuild).
+    build: last ? { day: last.day, mode: last.mode, noHistory: last.noHistory } : null,
+    input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
     output: bubbleRows.results.map((b) => ({
       name: b.name,
       kind: b.kind,
@@ -507,18 +533,69 @@ interface ProposedBubble {
   itemIds: string[];
 }
 
+// Tier judgment from the Brain, numbers from code. Asked for a 0-1 number the
+// model emits an evenly spaced ladder (rank order, not salience); ordinal
+// judgment is what it does well, so the prompt asks for a tier and this maps
+// tiers into fixed bands. Bands sit ≥0.10 apart in p — past the descent
+// view's spacing floor — so a tier boundary always renders as a felt cliff,
+// while within-band gaps stay shelf-tight.
+export type BrainTier = 'loud' | 'mid' | 'quiet' | 'dot';
+const TIER_BANDS: Record<BrainTier, [top: number, bottom: number]> = {
+  loud: [0.95, 0.78],
+  mid: [0.68, 0.5],
+  quiet: [0.4, 0.28],
+  dot: [0.18, 0.08],
+};
+
+// Members of a tier spread evenly from the band top in output order; a lone
+// member sits at the top. Output order across tiers may interleave.
+export function tierProminences(tiers: BrainTier[]): number[] {
+  const counts = new Map<BrainTier, number>();
+  for (const t of tiers) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const seen = new Map<BrainTier, number>();
+  return tiers.map((t) => {
+    const [top, bottom] = TIER_BANDS[t];
+    const n = counts.get(t)!;
+    const k = seen.get(t) ?? 0;
+    seen.set(t, k + 1);
+    return n === 1 ? top : top - ((top - bottom) * k) / (n - 1);
+  });
+}
+
 // ---------- The top-tier Brain call (§9.2) ----------
 
-async function llmBuildBubbles(
-  env: Env,
+// The exact user-side payload the Brain is called with. Built once per
+// rebuild, sent to the model, and persisted verbatim (brain_last_input) so
+// the debug snapshot reports what the Brain actually saw — a reconstruction
+// drifts as items change and lies about withheld history.
+export interface BrainInput {
+  payload: Record<string, unknown>;
+  idByAlias: Map<string, string>;
+}
+
+export function brainInput(
   day: string,
   items: ItemView[],
   previous: { name: string; itemTitles: string[] }[],
   nameVocabulary: string[],
   profileText: string | null,
-): Promise<ProposedBubble[]> {
-  const now = new Date();
+  now: Date,
+): BrainInput {
+  const { lines, idByAlias } = aliasItems(items, now);
+  return {
+    payload: {
+      today: day,
+      weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
+      items: lines,
+      userProfile: profileText,
+      recentNameVocabulary: nameVocabulary,
+      previouslyShown_reuseOnlyIfStillApt: previous,
+    },
+    idByAlias,
+  };
+}
 
+async function llmBuildBubbles(env: Env, input: BrainInput): Promise<ProposedBubble[]> {
   const system = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
 ORGANIZING PRINCIPLE: a bubble is a reason to act as one unit — build from what today's items actually offer, never from a template. Reasons that recur: an approaching event that just needs seeing; dated must-dos; a handful of small DOs that could fall in one burst because they share a context ("while the kettle boils", "one errand loop"), whatever their topics; one big amorphous thing plus its break-it-down invitation; a couple of facts worth keeping warm. Most days only some of these exist, and some days the right card fits none of these shapes — if a grouping has a clear reason to act as one unit, compose it. Never force a kind onto a day that doesn't contain it, and never pad the map to have one of each. What you don't build: time-buckets ("due this week" is sorting, not acting) and theme-groupings (the browse view owns those). Yours is activation: this user starts hard and, once started, keeps going — one good bundle turns a single activation into several completions, where five separate small cards would each demand their own.
@@ -527,15 +604,15 @@ MEMBERSHIP: an item joins a bubble through one of two bonds. The EPISODE bond (s
 
 MAP SHAPE: a good day is usually 4-7 cards; ten mostly-single-item cards is a list wearing bubbles, and the map's value is gone. Bundling and dropping both get you there, and both are judgment calls. Bundle when the DOING bond genuinely holds — never fabricate a package to hit a count; a forced bundle is worse than a longer list. Drop freely: quiet undated items don't need to appear every day (seen= shows what's had recent airtime — let them take turns across days). Break-it-down invitations each ask the user for real activation energy, so weigh how many one day can carry. The map is the day's shape, not the inventory; browse holds everything.
 
-PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. Nothing hard-caps the count — a truly important thing gets its slot even when small — but the target is a composed day (see MAP SHAPE), not coverage. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. USE THE WHOLE SCALE, fresh each day: prominence is relative salience TODAY, not an absolute urgency grade — the day's loudest card typically sits 0.8-0.95 (a hard deadline today/overdue → ~1.0) even when nothing is objectively on fire, and the quietest dots sit 0.1-0.2 (a conference four weeks out). A day where everything lands 0.3-0.7 gives the map no shape. A package's prominence comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the prominence of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
+TIER is the scarce resource, not inclusion. Nothing hard-caps the count — a truly important thing gets its slot even when small — but the target is a composed day (see MAP SHAPE), not coverage. Four tiers, judged fresh each day as relative salience TODAY: "loud" — the day's centre of gravity, what the user should meet first (most days have one or two, even when nothing is objectively on fire); "mid" — matters today, met after the loud things; "quiet" — worth seeing, takes its turn; "dot" — barely-there, a glance. Order the bubbles array loudest-first; within a tier, your order is the ranking. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A package's tier comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the tier of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
 
-ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures) — write like someone who heard them say it.
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).
 
-NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
+NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble QUIETER (never below "quiet"), never absent; must-do or hard-deadline same-day items sit at least "mid". Missing a same-day item is this app's cardinal failure.
 
 The user profile is advisory colour for naming, grouping, and emphasis ONLY. It must never veto: never exclude or demote a dated item because the profile suggests the user might not care about that kind of thing.
 
-KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured, and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
+KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", tier "dot", name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured, and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
 
 NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("The Lisbon trip", not "Before the Lisbon trip").
 
@@ -543,49 +620,52 @@ PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a 
 
 Do not force every item into the map — the browse view holds everything; you curate. Every bubble needs at least one item.
 
-OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance saying why this bubble matters TODAY: a short sentence for a quiet bubble, up to three or four woven sentences for the loudest, fullest ones — there is room on the card. REGISTER: motivating and matter-of-fact — the world's best assistant, crisp and specific, quietly confident the user will act. NOT a friend, parent, or coach: no coddling ("no pressure", "that's okay", "just…"), no performed warmth, no praising the user to themselves. Acknowledging a fact — a deadline, a felt= colour, a task that keeps slipping — means stating it plainly, not soothing it. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
+"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance saying why this bubble matters TODAY: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
 
 THE CARD GRAMMAR (only these two marks):
-- **bold** the recognizable nouns — people, entities, dates ("**Uncle Tomas** lands **Friday**, through the **9th**"). At distance the card crops to its bold tokens alone, so they must scan as a fragment.
-- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place ("the [oil change](iN) before the trip"). The phrase must read naturally inside the sentence. Every active DO on a card must be a chip — completing from the card is the point, and a DO that requires opening the sheet to tick off is a broken card. (Rotation bubbles are the exception: no chips.)
+- **bold** the recognizable nouns — people, entities, dates. At distance the card crops to its bold tokens alone, so they must scan as a fragment.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". The phrase must read naturally inside the sentence. Every active DO on a card must be a chip — completing from the card is the point, and a DO that requires opening the sheet to tick off is a broken card. (Rotation bubbles are the exception: no chips.)
 
 CONSTRUCTION follows the cluster's shape:
 - Mixed cluster, few actionables → weave facts and 1-3 chips into one utterance.
-- 4+ near-identical siblings → speak of the batch collectively, chipping each sibling inline where it reads naturally ("Five **holiday cards**, one sitting — [Nan](iN), [Theo](iN), [June](iN), [the Walshes](iN)."). A progress pip-row renders automatically. Get any count you state from the member list, not from momentum.
-- One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, direct invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when it's big and formless; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. Shapes from other lives: a looming attic clear-out — "Which corner would you start with?"; a guitar gathering dust — "Want to pick a night this week?". The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
-- Rotation bubbles read as an offering, not an obligation ("Worth a glance: the **spare key** lives with **Marta downstairs**"), no chips.`;
+- 4+ near-identical siblings → speak of the batch collectively, chipping each sibling inline where it reads naturally. Never state the number of items in the sentence — the card renders the true count itself as a progress pip-row.
+- One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, direct invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when there's no visible first action; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
+- Rotation bubbles read as an offering, not an obligation — no chips.`;
 
-  const { lines, idByAlias } = aliasItems(items, now);
-  const user = JSON.stringify({
-    today: day,
-    weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: lines,
-    userProfile: profileText,
-    recentNameVocabulary: nameVocabulary,
-    previouslyShown_reuseOnlyIfStillApt: previous,
+  const { idByAlias } = input;
+  const user = JSON.stringify(input.payload);
+
+  interface RawBubble {
+    name?: string;
+    kind?: string;
+    tier?: string;
+    sentence?: string;
+    reason?: string;
+    firstStep?: unknown;
+    itemIds?: unknown[];
+  }
+  const out = await anthropicJson<{ bubbles: RawBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
+  const raw = (out.bubbles ?? []).filter((b) => b && b.name && Array.isArray(b.itemIds));
+  const isTier = (t: unknown): t is BrainTier => t === 'loud' || t === 'mid' || t === 'quiet' || t === 'dot';
+  const prominences = tierProminences(raw.map((b) => (isTier(b.tier) ? b.tier : 'quiet')));
+  return raw.map((b, idx) => {
+    // Aliases back to real ids; unknown aliases drop (validated again upstream).
+    const itemIds = (b.itemIds as unknown[]).map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean);
+    // Chip refs in the sentence resolve the same way; strays degrade to bold.
+    const sentence = resolveSentence(String(b.sentence ?? b.reason ?? ''), idByAlias, new Set(itemIds));
+    const firstStep = typeof b.firstStep === 'string' && b.firstStep.trim() ? b.firstStep.trim() : null;
+    return {
+      name: String(b.name),
+      kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
+      prominence: prominences[idx],
+      reason: stripSentence(sentence),
+      sentence,
+      firstStep,
+      itemIds,
+    };
   });
-
-  const out = await anthropicJson<{ bubbles: ProposedBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
-  return (out.bubbles ?? [])
-    .filter((b) => b && b.name && Array.isArray(b.itemIds))
-    .map((b) => {
-      // Aliases back to real ids; unknown aliases drop (validated again upstream).
-      const itemIds = b.itemIds.map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean);
-      // Chip refs in the sentence resolve the same way; strays degrade to bold.
-      const sentence = resolveSentence(String(b.sentence ?? b.reason ?? ''), idByAlias, new Set(itemIds));
-      const firstStep = typeof b.firstStep === 'string' && b.firstStep.trim() ? b.firstStep.trim() : null;
-      return {
-        name: String(b.name),
-        kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
-        prominence: typeof b.prominence === 'number' ? b.prominence : 0.4,
-        reason: stripSentence(sentence),
-        sentence,
-        firstStep,
-        itemIds,
-      };
-    });
 }
 
 // ---------- Deterministic fallback map (no LLM configured) ----------
