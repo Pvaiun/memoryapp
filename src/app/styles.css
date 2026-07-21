@@ -1208,9 +1208,11 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 11px;
-  margin-left: 20px;
-  padding: 13px 16px;
-  border-radius: 14px;
+  /* a drawer under the card, not a satellite: full card width, tucked in
+     tight, top corners flattened toward the body it belongs to */
+  margin: -2px 0 0;
+  padding: 13px 16px 13px 20px;
+  border-radius: 8px 8px 18px 18px;
   border: 1px solid var(--line);
   background: var(--card);
   font-size: 14.5px;
