@@ -74,7 +74,10 @@ export const api = {
     }),
 
   addFirstStep: (bubbleId: string, title: string) =>
-    req<MapPayload>(`/api/bubbles/${bubbleId}/first-step`, { method: 'POST', body: JSON.stringify({ title }) }),
+    req<{ map: MapPayload; capture: CaptureResponse }>(`/api/bubbles/${bubbleId}/first-step`, {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    }),
 
   exportAll: () => req<Record<string, unknown>>('/api/export'),
 

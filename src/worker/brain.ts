@@ -1,8 +1,11 @@
-import type { Bubble, ItemView, MapPayload } from '../shared/types';
+import type { Bubble, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
 import { describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
+import { heuristicParse } from '../shared/heuristicParse';
+import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
+import { llmParse } from './capture';
 import { embed } from './embeddings';
 import {
   getItem,
@@ -237,10 +240,18 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 }
 
 // A bubble's break-it-down invitation, answered (§9.2 nudge): the Brain only
-// invites; the step's content is the user's. Their typed step becomes a real
-// quick DO — inheriting the bubble members' themes, joining the bubble, and
-// appearing on the card as a chip — and the invitation clears.
-export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string): Promise<MapPayload | null> {
+// invites; the step's content is the user's. The answer is parsed by Smart
+// Capture's own parse call — same date understanding as any capture — but with
+// the matching stage structurally off (empty candidates): the answer often
+// near-matches the very item it breaks down, and a recapture-merge would eat
+// the step. Type is forced to DO and themes are inherited from the bubble, not
+// inferred. The step joins the bubble, lands on the card as a chip, and the
+// response carries a CaptureResponse so the client runs the usual review sheet.
+export async function addFirstStep(
+  env: Env,
+  bubbleId: string,
+  rawTitle: string,
+): Promise<{ map: MapPayload; capture: CaptureResponse } | null> {
   const db = env.DB;
   // The title lands inside the card grammar as [title](id) — strip the four
   // marker characters so a stray bracket can't break the sentence markup.
@@ -265,26 +276,67 @@ export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string)
     }
   }
 
+  // Raw text first, unconditionally (§12) — the answer is a user utterance
+  // like any other capture.
+  const captureId = newId();
+  await db.prepare('INSERT INTO captures (id, ts, raw_text) VALUES (?,?,?)').bind(captureId, nowIso(), title).run();
+  await logEvent(db, 'user', 'captured', { payload: { captureId, text: title } });
+
+  const now = new Date();
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  let parsed: ParseResult;
+  if (llmAvailable(env)) {
+    try {
+      parsed = await llmParse(env, title, now, tz, []);
+    } catch (err) {
+      console.error('first-step parse failed; falling back to heuristics', err);
+      parsed = heuristicParse(title, now, tz);
+    }
+  } else {
+    parsed = heuristicParse(title, now, tz);
+  }
+  const p = parsed.items[0];
+  // Re-sanitize: the parsed restatement also lands inside chip markup.
+  const stepTitle = (p?.title || title).replace(/[[\]()*]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // An answer to a "when" invitation may phrase its date as an event time;
+  // either phrase resolves to the step's deadline.
+  const phrase = p?.deadlinePhrase ?? p?.eventAtPhrase ?? null;
+  const deadline = refineWithSourceTime(phrase ? resolveDatePhrase(phrase, now, tz) : null, title, now, tz);
+
   const ts = nowIso();
   const itemId = await insertItem(db, {
     type: 'DO',
-    title,
+    title: stepTitle,
     rawText: { ts, text: title },
+    deadline: deadline?.iso ?? null,
+    deadlineHardness: deadline ? p?.deadlineHardness ?? 'hard' : null,
+    cadence: p?.cadence ?? null,
+    pingNatured: p?.pingNatured ?? false,
     effort: 'quick',
-    embedding: await embed(env, title),
+    parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
+    captureId,
+    embedding: await embed(env, stepTitle),
   });
   await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
   await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(ts, itemId).run();
   await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
 
-  const sentence = `${(bubble.sentence ?? '').trim()} First: [${title}](${itemId}).`.trim().slice(0, 700);
+  const sentence = `${(bubble.sentence ?? '').trim()} First: [${stepTitle}](${itemId}).`.trim().slice(0, 700);
   await db
     .prepare('UPDATE bubbles SET sentence = ?, reason = ?, first_step = NULL WHERE id = ?')
     .bind(sentence, stripSentence(sentence).slice(0, 300), bubbleId)
     .run();
-  await logEvent(db, 'user', 'first_step_added', { itemId, bubbleId, payload: { title } });
+  await logEvent(db, 'user', 'first_step_added', { itemId, bubbleId, payload: { title: stepTitle, captureId } });
 
-  return getMap(env, bubble.day);
+  const created = await getItem(db, itemId);
+  const capture: CaptureResponse = {
+    captureId,
+    rawText: title,
+    created: created ? [toItemView(created, now)] : [],
+    boosted: [],
+    nudge: parsed.confidence === 'low' ? 'low-confidence' : null,
+  };
+  return { map: await getMap(env, bubble.day), capture };
 }
 
 // Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
@@ -327,6 +379,10 @@ export function brainItemLine(i: ItemView, now: Date): string {
   if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
   if (i.neglected && i.cadence)
     parts.push(`slipping=${neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now)}d`);
+  // Days since first capture — without it, a task that's been sitting three
+  // weeks reads identically to one from yesterday, and "piling up" is invisible.
+  const ageDays = Math.floor((now.getTime() - new Date(i.createdAt).getTime()) / 86_400_000);
+  if (ageDays >= 1) parts.push(`age=${ageDays}d`);
   parts.push(`prio=${Math.round(i.effectivePriority * 100) / 100}`);
   if (i.optionality === 'nice') parts.push('optional');
   if (i.effort !== 'medium') parts.push(i.effort === 'large' ? 'big-effort' : 'quick');
@@ -454,11 +510,13 @@ async function llmBuildBubbles(
 
   const system = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
-ORGANIZING PRINCIPLE: a bubble is a SITUATION or context — the moment the user would act ("Before Sarah visits", "Morning routine", "At the computer"). NOT time-buckets ("Due this week" is a task list, not a situation) and NOT themes (theme grouping belongs to the browse view, never to you). Time pressure pulls items into their situation and raises prominence; it is not a bubble of its own.
+ORGANIZING PRINCIPLE: a bubble is a reason to act as one unit — build from what today's items actually offer, never from a template. Reasons that recur: an approaching event that just needs seeing; dated must-dos; a handful of small DOs that could fall in one burst because they share a context ("while the kettle boils", "one errand loop"), whatever their topics; one big amorphous thing plus its break-it-down invitation; a couple of facts worth keeping warm. Most days only some of these exist, and some days the right card fits none of these shapes — if a grouping has a clear reason to act as one unit, compose it. Never force a kind onto a day that doesn't contain it, and never pad the map to have one of each. What you don't build: time-buckets ("due this week" is sorting, not acting) and theme-groupings (the browse view owns those). Yours is activation: this user starts hard and, once started, keeps going — one good bundle turns a single activation into several completions, where five separate small cards would each demand their own.
 
-PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "do taxes" outranks "call grandma" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A visitor four weeks out → a small persistent dot (~0.1–0.2).
+MEMBERSHIP: an item joins a bubble through one of two bonds. The EPISODE bond (situations): the item is part of the same real-world story — the event itself, its sub-events, the prep it demands, the facts needed while it's happening. Test: if the situation were cancelled, this item would vanish or stop mattering. The DOING bond (packages): the item would be completed in the same burst as the others — one sitting, one tool, one trip. Shared topic, shared people, or a shared date are none of these: they're resemblance, not connection. The tell that a member doesn't belong: the sentence needs a link the items don't themselves establish to make it fit. Items may appear in more than one bubble only when genuinely central to both; prefer one home.
 
-ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience).
+PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A conference four weeks out → a small persistent dot (~0.1–0.2). A package's prominence comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the prominence of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
+
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience).
 
 NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
 
@@ -466,25 +524,25 @@ The user profile is advisory colour for naming, grouping, and emphasis ONLY. It 
 
 KNOWs: event-linked KNOWs (their trigger is another item in the app) go INTO that situation's bubble alongside its DOs. Life-triggered KNOWs (trigger the app can't sense) get rehearsal rotation: include ONE small bubble (kind "rotation", prominence ≤ 0.15, name like "Keep in mind") with 2-4 KNOWs, favouring important and not-recently-surfaced ones. Quiet — under-rotate rather than over-rotate; omitting the rotation bubble entirely is often the right call. Distinguish two kinds of KNOW: REFERENCE facts (where objects are stored, measurements, how-tos — useful exactly when searched for) almost never rotate — only if recently recaptured, and never just to fill the bubble. KEEP-WARM facts (people-facts, commitments, insights the user needs near top of mind) are what rotation is for.
 
-NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("Sarah & Deidra's visit", not "Before Sarah & Deidra arrive").
+NAMING: reuse a name from the vocabulary when semantically apt (never coin a synonym for the same recurring situation — that causes needless reshuffle); coin a new name when the situation genuinely differs. Names are short, concrete, plainly human. Preparation framing ("Before X", "Getting ready for X") is EARNED: use it only when the bubble actually contains prep tasks to do before the event. A bubble that is just an upcoming event (plus related facts) is simply named as the event ("The Lisbon trip", not "Before the Lisbon trip").
 
 PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a grouping only if it is still apt today. Compose fresh from the items; do NOT treat yesterday's map as a default to preserve.
 
-Do not force every item into the map — the browse view holds everything; you curate. Items may appear in more than one bubble only when genuinely central to both; prefer one home. Every bubble needs at least one item.
+Do not force every item into the map — the browse view holds everything; you curate. Every bubble needs at least one item.
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance saying why this bubble matters TODAY: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
+"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance saying why this bubble matters TODAY: a short sentence for a quiet bubble, up to three or four woven sentences for the loudest, fullest ones — there is room on the card, and warm, momentum-building language beats terseness. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
 
 THE CARD GRAMMAR (only these two marks):
-- **bold** the recognizable nouns — people, entities, dates ("**Sarah & Deidra** arrive **today** through the **25th**"). At distance the card crops to its bold tokens alone, so they must scan as a fragment.
-- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place ("the [litter boxes](i4) by noon"). At most 2-3 chips per card; the phrase must read naturally inside the sentence.
+- **bold** the recognizable nouns — people, entities, dates ("**Uncle Tomas** lands **Friday**, through the **9th**"). At distance the card crops to its bold tokens alone, so they must scan as a fragment.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place ("the [oil change](iN) before the trip"). At most 2-3 chips per card; the phrase must read naturally inside the sentence.
 
 CONSTRUCTION follows the cluster's shape:
 - Mixed cluster, few actionables → weave facts and 1-3 chips into one utterance.
-- 4+ near-identical siblings → speak of the batch collectively ("Six **address updates**, one sitting — license, bank, work, government."). A progress pip-row renders automatically; never chip or enumerate the items as a list.
-- One big amorphous thing with no date → a bare sentence, no chips, plus "firstStep": a short invitation, in your own voice, for the user to name their first ten-minute step ("Name the first ten minutes — what would you start with?"). Their answer becomes a real item on the card. NEVER write the step's content yourself — the breakdown is theirs to make. firstStep is null in every other case.
-- Rotation bubbles read as an offering, not an obligation ("Worth a glance: **umbrellas** live in the **front closet**"), no chips.`;
+- 4+ near-identical siblings → speak of the batch collectively ("Five **holiday cards**, one sitting — Nan, Theo, June, the Walshes."). A progress pip-row renders automatically; never chip or enumerate the items as a list. Get any count you state from the member list, not from momentum.
+- One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, encouraging invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when it's big and formless; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. Shapes from other lives: a looming attic clear-out — "Which corner would you start with?"; a guitar gathering dust — "Want to pick a night this week?". The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
+- Rotation bubbles read as an offering, not an obligation ("Worth a glance: the **spare key** lives with **Marta downstairs**"), no chips.`;
 
   const { lines, idByAlias } = aliasItems(items, now);
   const user = JSON.stringify({

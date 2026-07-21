@@ -70,13 +70,14 @@ app.post('/api/map/rebuild', async (c) => {
 });
 
 // The user answers a bubble's break-it-down invitation (§9.2): their typed
-// step becomes a real item on the card. Returns the updated map.
+// step is parsed like any capture and becomes a real item on the card.
+// Returns the updated map plus a CaptureResponse for the review sheet.
 app.post('/api/bubbles/:id/first-step', async (c) => {
   const { title } = await c.req.json<{ title: string }>();
   if (!title?.trim()) return c.json({ error: 'empty step' }, 400);
-  const payload = await addFirstStep(c.env, c.req.param('id'), title);
-  if (!payload) return c.json({ error: 'bubble not found' }, 404);
-  return c.json(payload);
+  const res = await addFirstStep(c.env, c.req.param('id'), title);
+  if (!res) return c.json({ error: 'bubble not found' }, 404);
+  return c.json(res);
 });
 
 // Brain workshop snapshot: the exact input the Brain sees + the current map

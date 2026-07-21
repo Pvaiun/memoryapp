@@ -332,13 +332,16 @@ export default function App() {
     [loadMap, toast],
   );
 
-  // A bubble's break-it-down invitation, answered: the typed step becomes a
-  // real item and the server returns the map with the new chip in place.
+  // A bubble's break-it-down invitation, answered: the typed step is parsed
+  // like any capture, the map returns with the new chip in place, and the
+  // usual review sheet opens so inferred fields stay one tap from fixable.
   const addFirstStep = useCallback(
     async (bubbleId: string, title: string) => {
       try {
-        setMap(await api.addFirstStep(bubbleId, title));
+        const { map: rebuilt, capture } = await api.addFirstStep(bubbleId, title);
+        setMap(rebuilt);
         setRefreshKey((k) => k + 1);
+        setReview(capture);
       } catch (err) {
         toast(`Couldn't add the step: ${err instanceof Error ? err.message : err}`);
       }
