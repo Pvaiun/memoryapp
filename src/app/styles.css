@@ -1071,12 +1071,12 @@ textarea:focus {
 /* theme accent (§5) — exactly three homes: rim, gauge dot, chip tint */
 .dsc-rim {
   position: absolute;
-  /* a centered accent tick, not a full-height pole — the reading-scale
-     card is tall enough that spanning it overweights the pigment */
+  /* a ledge jutting from the card's left edge: lives INSIDE the base card
+     shape (never the card+invitation stack), centered on it, proportional
+     to it — not a fixed-length tick and not a full-height pole */
   top: 50%;
   transform: translateY(-50%);
-  height: 64px;
-  max-height: calc(100% - 30px);
+  height: 62%;
   left: 0;
   width: 4px;
   border-radius: 0 4px 4px 0;

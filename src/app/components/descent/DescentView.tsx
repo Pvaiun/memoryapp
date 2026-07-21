@@ -914,6 +914,7 @@ export default function DescentView({
                     >
                       <span className="dsc-near">
                         <span className="dsc-body">
+                          <span className="dsc-rim" aria-hidden />
                           {info.rail && !info.settled && (
                             <span className="dsc-rail" aria-hidden>
                               <span
@@ -962,7 +963,6 @@ export default function DescentView({
                           </span>
                         )}
                       </span>
-                      <span className="dsc-rim" aria-hidden />
                       <span className="dsc-far" aria-hidden>
                         {info.settled ? `✓ ${b.name}` : info.far}
                       </span>
