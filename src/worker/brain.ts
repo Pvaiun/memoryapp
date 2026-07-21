@@ -100,7 +100,15 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // trigger stays strictly first-open-of-day (§9.1).
 // noHistory: workshop mode — the Brain composes without yesterday's groupings;
 // everything else (librarian, profile, name vocabulary) runs as normal.
-export async function rebuildMap(env: Env, day: string, force = false, noHistory = false): Promise<MapPayload> {
+// promptVariant: 'minimal' runs the shootout prompt (objective + contracts
+// only) instead of the full spec; the snapshot records which one built the map.
+export async function rebuildMap(
+  env: Env,
+  day: string,
+  force = false,
+  noHistory = false,
+  promptVariant: BrainPromptVariant = 'full',
+): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
 
@@ -164,7 +172,7 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, input);
+      proposed = await llmBuildBubbles(env, input, promptVariant);
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
@@ -258,7 +266,11 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
   await setState(db, 'map_built_at', ts);
   // What the Brain was actually called with — the debug snapshot's source of
   // truth (a fresh reconstruction would drift and hide noHistory/fallback runs).
-  await setState(db, 'brain_last_input', JSON.stringify({ day, builtAt: ts, mode, noHistory, payload: input.payload }));
+  await setState(
+    db,
+    'brain_last_input',
+    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: promptVariant, payload: input.payload }),
+  );
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
@@ -506,7 +518,14 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
 
   const stored = await getState(db, 'brain_last_input');
   const last = stored
-    ? (JSON.parse(stored) as { day: string; builtAt: string; mode: string; noHistory: boolean; payload: unknown })
+    ? (JSON.parse(stored) as {
+        day: string;
+        builtAt: string;
+        mode: string;
+        noHistory: boolean;
+        prompt?: string;
+        payload: unknown;
+      })
     : null;
 
   const bubbleRows = await db
@@ -529,7 +548,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
     builtAt: last?.builtAt ?? (await getState(db, 'map_built_at')),
     // How the last build ran: llm vs fallback, and whether yesterday's
     // groupings were withheld (the no-history workshop rebuild).
-    build: last ? { day: last.day, mode: last.mode, noHistory: last.noHistory } : null,
+    build: last ? { day: last.day, mode: last.mode, noHistory: last.noHistory, prompt: last.prompt ?? 'full' } : null,
     input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
     output: bubbleRows.results.map((b) => ({
       name: b.name,
@@ -615,8 +634,11 @@ export function brainInput(
   };
 }
 
-async function llmBuildBubbles(env: Env, input: BrainInput): Promise<ProposedBubble[]> {
-  const system = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
+// ---------- the two Brain prompts (workshop shootout, §9.2) ----------
+// Shared input legend — one source so the variants can never drift.
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+
+const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
 ORGANIZING PRINCIPLE: a bubble is a reason to act as one unit — build from what today's items actually offer, never from a template. Reasons that recur: an approaching event that just needs seeing; dated must-dos; a handful of small DOs that could fall in one burst because they share a context ("while the kettle boils", "one errand loop"), whatever their topics; one big amorphous thing plus its break-it-down invitation; a couple of facts worth keeping warm. Most days only some of these exist, and some days the right card fits none of these shapes — if a grouping has a clear reason to act as one unit, compose it. Never force a kind onto a day that doesn't contain it, and never pad the map to have one of each. What you don't build: time-buckets ("due this week" is sorting, not acting) and theme-groupings (the browse view owns those). Yours is activation: this user starts hard and, once started, keeps going — one good bundle turns a single activation into several completions, where five separate small cards would each demand their own.
 
@@ -626,7 +648,7 @@ MAP SHAPE: a good day is usually 4-7 cards; ten mostly-single-item cards is a li
 
 TIER is the scarce resource, not inclusion. Nothing hard-caps the count — a truly important thing gets its slot even when small — but the target is a composed day (see MAP SHAPE), not coverage. Four tiers, judged fresh each day as relative salience TODAY: "loud" — the day's centre of gravity, what the user should meet first (most days have one or two, even when nothing is objectively on fire); "mid" — matters today, met after the loud things; "quiet" — worth seeing, takes its turn; "dot" — barely-there, a glance. Order the bubbles array loudest-first; within a tier, your order is the ranking. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A package's tier comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the tier of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
 
-ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).
+${ITEM_FORMAT}
 
 NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble QUIETER (never below "quiet"), never absent; must-do or hard-deadline same-day items sit at least "mid". Missing a same-day item is this app's cardinal failure.
 
@@ -654,6 +676,37 @@ CONSTRUCTION follows the cluster's shape:
 - One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, direct invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when there's no visible first action; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
 - Rotation bubbles read as an offering, not an obligation — no chips.`;
 
+// The minimal variant: objective + contracts only, at roughly a fifth of the
+// full prompt's mass. The bet under test — the model's unforced judgment beats
+// rule-following, because rules invite performed compliance (the fabricated
+// "while you're squaring away plans" bridge) while the code layer now carries
+// every hard guarantee (same-day floor, tier bands, chip guarantee, counts).
+// Same input, same output contract; only the guidance differs. Keep exactly
+// one sentence of case law: resemblance alone is not a bond.
+const MINIMAL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you compose the day's map fresh from the user's items: a handful of bubbles, ordered loudest to quietest, that together say what matters today. Reply with ONLY a JSON object.
+
+THE GOAL: put items in one bubble when they genuinely go together — they'd be done in the same burst, they're part of the same real-world situation, or one depends on the other. Resemblance alone (same topic, same people, same date) is not a reason. Don't force weak groupings: single-item bubbles are fine, and so is a short day. You curate rather than inventory — quiet undated items can take turns across days, and the browse view holds everything — but every item marked due=today, due=...overdue, or happens=today must appear in some bubble.
+
+${ITEM_FORMAT}
+
+TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
+
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
+
+"sentence" IS the card — the user reads nothing else on the day view. Say why this bubble matters today, in your own words: brief for a quiet bubble, fuller for a loud one. Two marks only: **bold** the recognizable nouns (people, dates, entities — at distance the card crops to its bold tokens alone), and [phrase](iN) renders as a tappable checkbox completing DO item iN — give every active DO on the card a chip that reads naturally in the prose.
+
+"firstStep": when one big or stalled thing needs a way in rather than volume, offer a short invitation asking the user for their own first move (their typed answer becomes a real item on the card). Never write the step's content yourself. Otherwise null.
+
+NAMING: reuse a name from recentNameVocabulary when the bubble is the same recurring situation; otherwise coin a short, concrete, human name.`;
+
+export type BrainPromptVariant = 'full' | 'minimal';
+
+async function llmBuildBubbles(
+  env: Env,
+  input: BrainInput,
+  variant: BrainPromptVariant = 'full',
+): Promise<ProposedBubble[]> {
+  const system = variant === 'minimal' ? MINIMAL_SYSTEM : FULL_SYSTEM;
   const { idByAlias } = input;
   const user = JSON.stringify(input.payload);
 
