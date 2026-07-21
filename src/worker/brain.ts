@@ -1,5 +1,5 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
+import { describeAtTime, describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -158,7 +158,8 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
     .all<{ name: string }>();
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
-  const input = brainInput(day, items, previous, nameVocabulary, profileText, now);
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
   let proposed: ProposedBubble[];
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
@@ -177,7 +178,6 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
   // guarantee lives here, not in the model's compliance: a bubble holding a
   // same-day item never renders below the quiet band; a same-day must-do or
   // hard deadline holds it at least mid.
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const itemById = new Map(items.map((i) => [i.id, i]));
   for (const b of proposed) {
     let floor = 0;
@@ -396,21 +396,35 @@ export function isTodayRelevant(
   // Recurring rhythms: a cadence whose next occurrence lands today counts.
   // Without this, a "daily at 7pm" DO has neither deadline nor eventAt and the
   // floor silently excludes it — the exact hole that dropped a daily task.
-  if (i.cadence) {
-    // Already completed within the user-local today → the floor releases
-    // until tomorrow's occurrence.
-    if (i.lastCompletedAt) {
-      const done = new Date(i.lastCompletedAt).getTime();
-      if (done >= dayStartUtc && done < dayEndUtc) return false;
-    }
-    const from = new Date(dayStartUtc);
-    const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
-    const occ = i.cadence.atTime
-      ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
-      : nextOccurrence(i.cadence, anchor, from);
-    if (occ.getTime() < dayEndUtc) return true;
-  }
+  if (cadenceOccurrenceToday(i, now, tzOffsetMinutes)) return true;
   return false;
+}
+
+// The occurrence of a recurring rhythm that falls within the user-local today,
+// or null. Shared by the same-day floor and the item line's happens=today
+// token so the guarantee and the Brain's input can never disagree. An
+// occurrence already completed within the local today doesn't count — the
+// rhythm releases until tomorrow.
+export function cadenceOccurrenceToday(
+  i: { cadence?: Cadence | null; eventAt: string | null; createdAt?: string; lastCompletedAt?: string | null },
+  now: Date,
+  tzOffsetMinutes: number,
+): Date | null {
+  if (!i.cadence) return null;
+  const DAY = 86_400_000;
+  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
+  const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
+  const dayEndUtc = dayStartUtc + DAY;
+  if (i.lastCompletedAt) {
+    const done = new Date(i.lastCompletedAt).getTime();
+    if (done >= dayStartUtc && done < dayEndUtc) return null;
+  }
+  const from = new Date(dayStartUtc);
+  const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
+  const occ = i.cadence.atTime
+    ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
+    : nextOccurrence(i.cadence, anchor, from);
+  return occ.getTime() < dayEndUtc ? occ : null;
 }
 
 // The item exactly as the Brain's prompt receives it — one compact line,
@@ -418,7 +432,7 @@ export function isTodayRelevant(
 // lies. Absence = default (no dates, no recurrence, not slipping, must-do,
 // medium effort, never recaptured); only deviations are written, so the token
 // cost is signal, not structure.
-export function brainItemLine(i: ItemView, now: Date): string {
+export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): string {
   const relDays = (iso: string): string => {
     const d = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
     return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
@@ -427,6 +441,11 @@ export function brainItemLine(i: ItemView, now: Date): string {
   if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
   if (i.eventAt) {
     parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
+  } else if (i.cadence && cadenceOccurrenceToday(i, now, tzOffsetMinutes)) {
+    // Recurring items otherwise never carry a today marker, forcing the Brain
+    // to re-derive "daily + it's Tuesday = today" mid-composition — the
+    // inference it kept failing. Same token the dated NON-NEGOTIABLE keys on.
+    parts.push(`happens=today${i.cadence.atTime ? `(${describeAtTime(i.cadence.atTime)})` : ''}`);
   }
   if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
   if (i.neglected && i.cadence)
@@ -468,12 +487,12 @@ export function brainItemLine(i: ItemView, now: Date): string {
 
 // Per-call short aliases (i1, i2, …) so the model reads — and, crucially,
 // echoes back in its output — 2-token handles instead of 36-char UUIDs.
-export function aliasItems(items: ItemView[], now: Date): { lines: string[]; idByAlias: Map<string, string> } {
+export function aliasItems(items: ItemView[], now: Date, tzOffsetMinutes = 0): { lines: string[]; idByAlias: Map<string, string> } {
   const idByAlias = new Map<string, string>();
   const lines = items.map((i, idx) => {
     const alias = `i${idx + 1}`;
     idByAlias.set(alias, i.id);
-    return `${alias} ${brainItemLine(i, now)}`;
+    return `${alias} ${brainItemLine(i, now, tzOffsetMinutes)}`;
   });
   return { lines, idByAlias };
 }
@@ -580,8 +599,9 @@ export function brainInput(
   nameVocabulary: string[],
   profileText: string | null,
   now: Date,
+  tzOffsetMinutes = 0,
 ): BrainInput {
-  const { lines, idByAlias } = aliasItems(items, now);
+  const { lines, idByAlias } = aliasItems(items, now, tzOffsetMinutes);
   return {
     payload: {
       today: day,

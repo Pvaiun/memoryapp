@@ -237,6 +237,23 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('prio=0.25');
   });
 
+  it('a recurring rhythm occurring today carries happens=today, same token as dated items', () => {
+    // now is Monday Jul 20; UTC-4. The Brain never had a today marker for
+    // recurring items and kept failing the "daily + it's Tuesday" inference.
+    const daily = { freq: 'daily', interval: 1, atTime: '19:00' } as Cadence;
+    const line = brainItemLine({ ...baseView, cadence: daily } as ItemView, now, -240);
+    expect(line).toContain('happens=today(7pm)');
+    expect(line).toContain('every="daily at 7pm"');
+  });
+  it('no happens=today off the rhythm day or once completed today', () => {
+    const weeklySun = { freq: 'weekly', interval: 1, byWeekday: [0], atTime: '11:00' } as Cadence;
+    expect(brainItemLine({ ...baseView, cadence: weeklySun } as ItemView, now, -240)).not.toContain('happens=');
+    const daily = { freq: 'daily', interval: 1, atTime: '19:00' } as Cadence;
+    expect(
+      brainItemLine({ ...baseView, cadence: daily, lastCompletedAt: '2026-07-20T11:00:00Z' } as ItemView, now, -240),
+    ).not.toContain('happens=');
+  });
+
   it('event ranges and recaptures render', () => {
     const line = brainItemLine(
       {
