@@ -34,8 +34,10 @@ import {
   settleTarget,
   spreadPositions,
   TOP_BEFORE,
+  VP_FRAC,
 } from './engine';
 import type { TrackCard } from './engine';
+import type { Flight } from '../../App';
 
 // Descent "Instrument", v3 — the vertical corridor with a true-scale gauge.
 // React renders the scene structure once per data change; a rAF loop writes
@@ -57,8 +59,17 @@ import type { TrackCard } from './engine';
 // it crawl. The ledger opens over it with room for full names.
 
 const CARD_W = 272; // focus-tier card width — fully on-screen at 390
-const GAUGE_PAD = 14; // px above/below the scale ends
+// The scale ends are asymmetric: the top pad leaves literal room ABOVE the
+// cap for the surface ticks — floating captures sit off the scale because
+// they are unweighed, and the puck (clamped to p ≤ 1.0) never reaches them.
+const GAUGE_PAD_TOP = 30;
+const GAUGE_PAD_BOT = 14;
 const GAUGE_HIT = 24;
+// ----- the surface: unweighed captures floating above the corridor -----
+const SURF_W = 236; // sliver width — far-form scale, screen-space
+const SURF_ROW = 30; // full-row step
+const SURF_TUCK = 8; // tucked-stack step once rows run out
+const SURF_FULL = 3; // slivers that get a full row before tucking begins
 const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
 const SETTLE_HYST = 30; // camera units of drift that still return backward
 
@@ -120,16 +131,22 @@ function usePrefersReducedMotion(): boolean {
 export default function DescentView({
   bubbles,
   items,
+  surface = [],
+  flights = [],
   day,
   builtAt,
   onOpen,
+  onOpenItem,
   onToggleComplete,
 }: {
   bubbles: Bubble[];
   items: Record<string, ItemView>;
+  surface?: ItemView[]; // unweighed captures, newest first
+  flights?: Flight[]; // pending fly-into-bubble receipts
   day: string;
   builtAt: string | null;
   onOpen: (bubble: Bubble) => void;
+  onOpenItem?: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
 }) {
   const reduced = usePrefersReducedMotion();
@@ -140,6 +157,7 @@ export default function DescentView({
   const leaderRef = useRef<SVGLineElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
 
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -193,9 +211,12 @@ export default function DescentView({
   const cx = (vw + 28) / 2;
 
   // gauge scale: fixed, linear in true prominence
-  const yForP = useCallback((p: number) => GAUGE_PAD + (1 - p) * (vh - 2 * GAUGE_PAD), [vh]);
+  const yForP = useCallback(
+    (p: number) => GAUGE_PAD_TOP + (1 - p) * (vh - GAUGE_PAD_TOP - GAUGE_PAD_BOT),
+    [vh],
+  );
   const pForY = useCallback(
-    (y: number) => clamp(1 - (y - GAUGE_PAD) / (vh - 2 * GAUGE_PAD), 0, 1),
+    (y: number) => clamp(1 - (y - GAUGE_PAD_TOP) / (vh - GAUGE_PAD_TOP - GAUGE_PAD_BOT), 0, 1),
     [vh],
   );
 
@@ -386,7 +407,7 @@ export default function DescentView({
       // card's dot even when equal prominences fanned the cluster apart;
       // the readout still reports interpolated true p.
       const p = puckP(tr, c);
-      const puckY = puckYAt(tr, c, dotYsRef.current, GAUGE_PAD);
+      const puckY = puckYAt(tr, c, dotYsRef.current, GAUGE_PAD_TOP);
       if (puckRef.current) puckRef.current.style.transform = `translateY(${puckY.toFixed(1)}px)`;
       if (readoutRef.current) {
         readoutRef.current.style.transform = `translateY(${(puckY - 7).toFixed(1)}px)`;
@@ -426,6 +447,15 @@ export default function DescentView({
       // the ends: header shows in the pulled-back overview; footer at the floor
       if (headerRef.current) {
         headerRef.current.style.opacity = band(tr[0].zp - c, 60, 180).toFixed(3);
+      }
+      // the surface floats above the corridor: fully present at the top of
+      // the day, sliding up and off as the dolly dives — never pinned over
+      // the focus card, never nagging from off-screen.
+      if (surfaceRef.current) {
+        const tSurf = band(tr[0].zp - c, 60, 180);
+        surfaceRef.current.style.opacity = tSurf.toFixed(3);
+        surfaceRef.current.style.transform = `translateY(${(-(1 - tSurf) * 110).toFixed(1)}px)`;
+        surfaceRef.current.style.visibility = tSurf < 0.04 ? 'hidden' : '';
       }
       if (footerRef.current) {
         const zpLast = tr[tr.length - 1].zp;
@@ -523,7 +553,7 @@ export default function DescentView({
       const rect = viewportRef.current!.getBoundingClientRect();
       const y = e.clientY - rect.top;
       const c = cameraAt(rangeRef.current.cStart, scroller.scrollTop);
-      const puckY = puckYAt(trackRef.current, c, dotYsRef.current, GAUGE_PAD);
+      const puckY = puckYAt(trackRef.current, c, dotYsRef.current, GAUGE_PAD_TOP);
       const scrubbing = Math.abs(y - puckY) < 16;
       const timer = window.setTimeout(() => {
         // long-press: toggle the ledger, cancel any pending tap/scrub
@@ -797,6 +827,100 @@ export default function DescentView({
     markActivity();
   }, [ledgerOpen, markActivity]);
 
+  // ----- the surface: captures the Brain hasn't weighed -------------------
+  // A zone above the vanishing point — above depth zero, off the prominence
+  // axis entirely. Hollow slivers in far-form geometry, the user's own words
+  // verbatim. No header, no meta, no empty state: an empty surface is nothing.
+  const surfaceLayout = useMemo(() => {
+    if (!vh || !surface.length) return [];
+    const bottom = VP_FRAC * vh - 26; // front sliver rests just above the VP line
+    const out: { item: ItemView; y: number; alpha: number; z: number }[] = [];
+    surface.forEach((item, i) => {
+      // First few get a full row; the rest occlude into a tucked stack —
+      // peeking edges, fading upward like the horizon swallowing far strips.
+      const y =
+        i < SURF_FULL
+          ? bottom - i * SURF_ROW
+          : bottom - (SURF_FULL - 1) * SURF_ROW - (i - SURF_FULL + 1) * SURF_TUCK;
+      const alpha = i < SURF_FULL ? 1 : Math.max(0, 1 - (i - SURF_FULL + 1) * 0.28);
+      if (alpha > 0.03) out.push({ item, y, alpha, z: surface.length - i });
+    });
+    return out;
+  }, [surface, vh]);
+
+  // Unwoven voice: theme hue when the capture already carries one, slate
+  // otherwise ('Misc' is the no-theme invariant, not a real theme).
+  const surfAccent = (it: ItemView): string => {
+    const name = it.themes[0]?.name;
+    return name && name !== 'Misc' ? themeColor(name) : 'hsl(222 15% 52%)';
+  };
+  const surfText = (it: ItemView): string => it.rawTexts[0]?.text ?? it.title;
+
+  // ----- flight receipts: a filed capture flies into its bubble -----------
+  // The one animation that is also the receipt: capture bar → the bubble's
+  // current position in the corridor (its gauge dot when the card is off
+  // stage), landing with a single ripple on the dot. The count already
+  // ticked with the data; the sentence stays a morning snapshot.
+  const flownRef = useRef(new Set<number>());
+  useEffect(() => {
+    if (!vh || !flights.length) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    let launched = 0;
+    for (const f of flights) {
+      if (flownRef.current.has(f.key)) continue;
+      flownRef.current.add(f.key);
+      const t = trackRef.current.find((x) => x.id === f.bubbleId);
+      const info = infosRef.current.get(f.bubbleId);
+      if (!t || !info) continue;
+      const dotY = dotYsRef.current[t.i] ?? yForP(t.p);
+      const land = () => {
+        if (!reducedRef.current) {
+          setRipples((r) => [...r, { key: rippleSeq++, y: dotY, color: info.accent }]);
+        }
+      };
+      if (reducedRef.current) {
+        land();
+        continue;
+      }
+      // target: the card if it's on stage, else its dot on the gauge
+      const cardEl = cardElsRef.current.get(f.bubbleId)?.root;
+      const vpRect = viewport.getBoundingClientRect();
+      let tx = GAUGE_INSET;
+      let ty = dotY;
+      if (cardEl && cardEl.style.visibility !== 'hidden' && parseFloat(cardEl.style.opacity || '0') > 0.05) {
+        const r = cardEl.getBoundingClientRect();
+        tx = r.left + r.width / 2 - vpRect.left;
+        ty = r.top + r.height / 2 - vpRect.top;
+      }
+      const startX = (vw + 28) / 2;
+      const startY = vh - 18;
+      const el = document.createElement('div');
+      el.className = 'dsc-flight';
+      el.textContent = f.text;
+      el.style.left = `${startX}px`;
+      el.style.top = `${startY}px`;
+      el.style.setProperty('--surf-accent', info.accent);
+      viewport.appendChild(el);
+      const anim = el.animate(
+        [
+          { transform: 'translate(-50%, -50%)', opacity: 1 },
+          {
+            transform: `translate(-50%, -50%) translate(${(tx - startX).toFixed(1)}px, ${(ty - startY).toFixed(1)}px) scale(0.4)`,
+            opacity: 0.1,
+          },
+        ],
+        { duration: 620, delay: launched * 140, easing: 'cubic-bezier(0.3, 0.7, 0.2, 1)', fill: 'backwards' },
+      );
+      anim.onfinish = () => {
+        el.remove();
+        land();
+      };
+      launched += 1;
+      markActivity();
+    }
+  }, [flights, vh, vw, yForP, markActivity]);
+
   // ----- static gauge geometry (React-rendered) ---------------------------
   const ticks = useMemo(() => {
     const out: { p: number; major: boolean }[] = [];
@@ -812,8 +936,8 @@ export default function DescentView({
     const ys = spreadPositions(
       track.map((t) => yForP(t.p)),
       8,
-      GAUGE_PAD,
-      vh - GAUGE_PAD,
+      GAUGE_PAD_TOP,
+      vh - GAUGE_PAD_BOT,
     );
     return track.map((t, idx) => ({ t, y: ys[idx] }));
   }, [track, vh, yForP]);
@@ -829,8 +953,8 @@ export default function DescentView({
     const ys = spreadPositions(
       track.map((t) => yForP(t.p)),
       30,
-      GAUGE_PAD + 8,
-      vh - GAUGE_PAD - 8,
+      GAUGE_PAD_TOP + 8,
+      vh - GAUGE_PAD_BOT - 8,
     );
     return track.map((t, idx) => ({
       t,
@@ -897,6 +1021,29 @@ export default function DescentView({
                 <div className="dsc-header" ref={headerRef}>
                   {dateLine}
                 </div>
+                {surfaceLayout.length > 0 && (
+                  <div className="dsc-surface" ref={surfaceRef}>
+                    {surfaceLayout.map(({ item, y, alpha, z }) => (
+                      <button
+                        key={item.id}
+                        className="dsc-surf"
+                        style={
+                          {
+                            left: cx,
+                            top: y,
+                            width: SURF_W,
+                            zIndex: z,
+                            opacity: alpha,
+                            '--surf-accent': surfAccent(item),
+                          } as CSSProperties
+                        }
+                        onClick={() => onOpenItem?.(item)}
+                      >
+                        {surfText(item)}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {byTrack.map(({ t, info }) => {
                   const b = info.bubble;
                   const rotation = b.kind === 'rotation';
@@ -1032,9 +1179,14 @@ export default function DescentView({
             onPointerUp={gaugePointerUp}
             onPointerCancel={gaugePointerUp}
           >
-            <div className="dsc-scale" style={{ top: GAUGE_PAD, bottom: GAUGE_PAD }} />
-            <div className="dsc-cap" style={{ top: GAUGE_PAD - 1 }} />
-            <div className="dsc-cap" style={{ bottom: GAUGE_PAD - 1 }} />
+            <div className="dsc-scale" style={{ top: GAUGE_PAD_TOP, bottom: GAUGE_PAD_BOT }} />
+            <div className="dsc-cap" style={{ top: GAUGE_PAD_TOP - 1 }} />
+            <div className="dsc-cap" style={{ bottom: GAUGE_PAD_BOT - 1 }} />
+            {/* floating captures: ticks above the cap, off the scale — the
+                items are literally unweighed. Presence, never a count. */}
+            {surface.slice(0, 4).map((it, i) => (
+              <div key={it.id} className="dsc-stick" style={{ top: GAUGE_PAD_TOP - 10 - i * 5 }} />
+            ))}
             {ticks.map(({ p, major }) => (
               <div key={p} className={`dsc-tick${major ? ' major' : ''}`} style={{ top: yForP(p) }} />
             ))}

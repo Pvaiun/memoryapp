@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Bubble, ItemView, MapPayload } from '../../shared/types';
+import type { Flight } from '../App';
 import BubbleMap from '../components/BubbleMap';
 import DescentView from '../components/descent/DescentView';
 import ItemRow from '../components/ItemRow';
@@ -9,12 +10,14 @@ export type NowView = 'descent' | 'tiles';
 export default function MapView({
   map,
   nowView,
+  flights = [],
   onOpenItem,
   onToggleComplete,
   onOrganizeNow,
 }: {
   map: MapPayload;
   nowView: NowView;
+  flights?: Flight[];
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
   onOrganizeNow: () => void;
@@ -60,15 +63,20 @@ export default function MapView({
   );
 
   if (descent) {
+    // No Captured Today panel here — position = prominence is the corridor's
+    // core invariant. Unweighed captures float at the surface, inside the
+    // instrument itself.
     return (
       <div className="descent-wrap">
-        {capturedBlock}
         <DescentView
           bubbles={map.bubbles}
           items={map.items}
+          surface={capturedItems}
+          flights={flights}
           day={map.day}
           builtAt={map.builtAt}
           onOpen={setOpenBubble}
+          onOpenItem={onOpenItem}
           onToggleComplete={onToggleComplete}
         />
         {bubbleSheet}

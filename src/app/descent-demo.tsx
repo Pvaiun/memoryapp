@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Bubble, ItemView, MapPayload } from '../shared/types';
+import type { Flight } from './App';
 import MapView from './views/MapView';
 import './styles.css';
 
@@ -182,17 +183,58 @@ const bubbles: Bubble[] = defs.map((d, i) => {
   };
 });
 
+// The surface: same-day captures the Brain hasn't weighed — hollow slivers
+// floating above the corridor. Five so the tucked stack is visible too.
+const surfaced = [
+  mkItem({
+    title: 'Ask Kyle about hanging out',
+    rawTexts: [{ ts: iso(now - 0.5 * 3600e3), text: 'Ask Kyle if he wants to hang out' }],
+    themes: theme('Friends'),
+  }),
+  mkItem({
+    title: 'Buy a new bike pump',
+    rawTexts: [{ ts: iso(now - 1 * 3600e3), text: 'buy a new bike pump' }],
+    themes: [],
+  }),
+  mkItem({
+    title: 'Look up the ferry timetable',
+    rawTexts: [{ ts: iso(now - 2 * 3600e3), text: 'look up the ferry timetable' }],
+    themes: theme('Travel'),
+  }),
+  mkItem({
+    title: 'Return the library book',
+    rawTexts: [{ ts: iso(now - 3 * 3600e3), text: 'return the library book' }],
+    themes: [],
+  }),
+  mkItem({
+    title: 'Water the ficus',
+    rawTexts: [{ ts: iso(now - 4 * 3600e3), text: 'water the ficus' }],
+    themes: theme('Home'),
+  }),
+];
+for (const it of surfaced) items[it.id] = it;
+
 const map: MapPayload = {
   day: new Date(now).toISOString().slice(0, 10),
   builtAt: iso(now),
   stale: false,
   bubbles,
-  capturedToday: [],
+  capturedToday: surfaced.map((it) => it.id),
   items,
 };
 
 function Demo() {
   const [payload, setPayload] = useState(map);
+  // Flight-receipt specimen: a filed capture flies into the loudest bubble
+  // shortly after load — the mechanism the review-sheet close triggers live.
+  const [flights, setFlights] = useState<Flight[]>([]);
+  React.useEffect(() => {
+    const t = setTimeout(
+      () => setFlights([{ key: 1, bubbleId: 'bub0', text: 'Go to Kagayaki with Sarah and Deidra' }]),
+      1500,
+    );
+    return () => clearTimeout(t);
+  }, []);
   const toggle = (item: ItemView) => {
     const flipped: ItemView = {
       ...item,
@@ -207,6 +249,7 @@ function Demo() {
         <MapView
           map={payload}
           nowView="descent"
+          flights={flights}
           onOpenItem={() => {}}
           onToggleComplete={toggle}
           onOrganizeNow={() => {}}
