@@ -105,6 +105,7 @@ export function heuristicParse(raw: string, ref: Date, tzOffsetMinutes?: number)
       alertLeadMinutes: null,
       priority: inferPriority(text),
       themes: [],
+      affect: [],
       matchItemId: null,
     };
   });
@@ -129,6 +130,7 @@ function emptyFallback(raw: string): ParsedItem {
     alertLeadMinutes: null,
     priority: 'medium',
     themes: [],
+    affect: [],
     matchItemId: null,
   };
 }

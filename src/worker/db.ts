@@ -1,4 +1,4 @@
-import type { BackendType, Cadence, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
+import type { AffectEntry, BackendType, Cadence, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
 import { deriveFlavour } from '../shared/flavour';
 import { effectivePriority } from '../shared/priority';
 import { isNeglected } from '../shared/cadence';
@@ -40,6 +40,7 @@ interface ItemRow {
   last_surfaced_at: string | null;
   parse_confidence: number;
   capture_id: string | null;
+  affect_tags: string | null;
 }
 
 export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
@@ -71,6 +72,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
     streak: row.streak,
     lastSurfacedAt: row.last_surfaced_at,
     parseConfidence: row.parse_confidence,
+    affects: row.affect_tags ? (JSON.parse(row.affect_tags) as AffectEntry[]) : [],
     themes,
   };
 }
@@ -168,6 +170,7 @@ export interface NewItemInput {
   priorityBase?: number;
   parseConfidence?: number;
   captureId?: string | null;
+  affects?: AffectEntry[];
   embedding?: Float32Array | null;
 }
 
@@ -183,8 +186,8 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
         priority_base, priority_boost, boost_updated_at, user_priority,
         flavour_override, created_at, updated_at, last_touched_at,
         last_completed_at, completion_count, streak, last_surfaced_at,
-        parse_confidence, capture_id, embedding
-      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,?,?,?)`,
+        parse_confidence, capture_id, affect_tags, embedding
+      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,?,?,?,?)`,
     )
     .bind(
       id,
@@ -206,6 +209,7 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
       ts,
       input.parseConfidence ?? 1.0,
       input.captureId ?? null,
+      input.affects?.length ? JSON.stringify(input.affects) : null,
       input.embedding ? embeddingToBlob(input.embedding) : null,
     )
     .run();

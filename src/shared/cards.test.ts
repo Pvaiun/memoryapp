@@ -22,6 +22,7 @@ function item(over: Partial<ItemView>): ItemView {
     type: 'DO',
     title: id,
     rawTexts: [],
+    affects: [],
     status: 'active',
     deadline: null,
     deadlineHardness: null,

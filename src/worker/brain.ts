@@ -315,6 +315,7 @@ export async function addFirstStep(
     effort: 'quick',
     parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
     captureId,
+    affects: (p?.affect ?? []).map((tag) => ({ tag, ts })),
     embedding: await embed(env, stepTitle),
   });
   await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
@@ -403,6 +404,12 @@ export function brainItemLine(i: ItemView, now: Date): string {
       when = `(${d <= 0 ? 'today' : `${d}d-ago`})`;
     }
     parts.push(`recaptured=${recaptures}${when}`);
+  }
+  if (i.affects?.length) {
+    // Tag counts span recaptures — felt=forgotten(x2) is history, not mood.
+    const counts = new Map<string, number>();
+    for (const a of i.affects) counts.set(a.tag, (counts.get(a.tag) ?? 0) + 1);
+    parts.push(`felt=${[...counts.entries()].map(([t, n]) => (n > 1 ? `${t}(x${n})` : t)).join(',')}`);
   }
   const themes = i.themes.length ? ` [${i.themes.map((t) => t.name).join(', ')}]` : '';
   return `${i.type} "${i.title}"${themes} ${parts.join(' ')}`;
@@ -516,7 +523,7 @@ MEMBERSHIP: an item joins a bubble through one of two bonds. The EPISODE bond (s
 
 PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A conference four weeks out → a small persistent dot (~0.1–0.2). A package's prominence comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the prominence of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
 
-ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience).
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures) — write like someone who heard them say it.
 
 NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
 

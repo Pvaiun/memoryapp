@@ -1,4 +1,5 @@
-import type { Cadence, Flavour, ItemView } from '../shared/types';
+import type { AffectTag, Cadence, Flavour, ItemView } from '../shared/types';
+import { AFFECT_TAGS } from '../shared/types';
 import { atTimeOccurrencesBetween, cadencePeriodMs, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase } from '../shared/dates';
 import type { Env } from './env';
@@ -90,6 +91,7 @@ export interface ItemEdits {
   priority?: number | null; // user edit; null clears the override
   flavourOverride?: Flavour | null;
   themes?: string[];
+  affects?: string[]; // desired current tag set; history of kept tags survives
   tzOffsetMinutes?: number;
 }
 
@@ -132,6 +134,18 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   // Flavour override is presentation-only (§4): stored, wins over derived,
   // never mutates the behaviour-driving parameters above.
   if (edits.flavourOverride !== undefined) set('flavour_override', 'flavourOverride', edits.flavourOverride);
+  if (edits.affects !== undefined) {
+    // The edit is the desired tag SET; history reconciles rather than resets —
+    // kept tags retain their per-capture entries (and counts), removed tags
+    // drop all entries, added tags start fresh at now.
+    const want = new Set(edits.affects.filter((t): t is AffectTag => (AFFECT_TAGS as readonly string[]).includes(t)));
+    const have = new Set(item.affects.map((a) => a.tag));
+    const next = [
+      ...item.affects.filter((a) => want.has(a.tag)),
+      ...[...want].filter((t) => !have.has(t)).map((tag) => ({ tag, ts: nowIso() })),
+    ];
+    set('affect_tags', 'affects', next.length ? JSON.stringify(next) : null);
+  }
 
   if (Object.keys(fields).length) {
     await updateItemFields(db, id, fields);

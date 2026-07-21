@@ -34,6 +34,28 @@ export interface RawText {
   text: string;
 }
 
+// Affect (§10): the emotional colour the user's own phrasing carried at
+// capture. A closed vocabulary so history stays countable across recaptures —
+// "forgotten" twice is a fact no single capture contains. Extracted by Smart
+// Capture, user-editable in the item sheet, read by the Brain as data only.
+export const AFFECT_TAGS = [
+  'nervous',
+  'dreading',
+  'excited',
+  'someday',
+  'for-someone',
+  'guilty',
+  'forgotten',
+  'important',
+  'heavy',
+] as const;
+export type AffectTag = (typeof AFFECT_TAGS)[number];
+
+export interface AffectEntry {
+  tag: AffectTag;
+  ts: string; // ISO timestamp of the capture that carried it
+}
+
 export interface Item {
   id: string;
   type: BackendType;
@@ -73,6 +95,7 @@ export interface Item {
   lastSurfacedAt: string | null; // rehearsal rotation input (§9.2)
 
   parseConfidence: number; // coarse 0..1 from Smart Capture (§10.1)
+  affects: AffectEntry[]; // affect history, appended per capture/recapture
   themes: Theme[];
 }
 
@@ -140,6 +163,7 @@ export interface ParsedItem {
   alertLeadMinutes: number | null;
   priority: PriorityLevel;
   themes: string[]; // theme names — existing reused or new coined (§5)
+  affect: AffectTag[]; // 0-2 tags; the phrasing's emotional colour, usually []
   // Recapture-match (§10.3): id of the existing item this capture re-refers to.
   matchItemId: string | null;
 }
