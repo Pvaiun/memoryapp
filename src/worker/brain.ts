@@ -1,10 +1,11 @@
-import type { Bubble, ItemView, MapPayload } from '../shared/types';
+import type { Bubble, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
 import { describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
-import { resolveDatePhrase } from '../shared/dates';
+import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
+import { llmParse } from './capture';
 import { embed } from './embeddings';
 import {
   getItem,
@@ -239,10 +240,18 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
 }
 
 // A bubble's break-it-down invitation, answered (§9.2 nudge): the Brain only
-// invites; the step's content is the user's. Their typed step becomes a real
-// quick DO — inheriting the bubble members' themes, joining the bubble, and
-// appearing on the card as a chip — and the invitation clears.
-export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string): Promise<MapPayload | null> {
+// invites; the step's content is the user's. The answer is parsed by Smart
+// Capture's own parse call — same date understanding as any capture — but with
+// the matching stage structurally off (empty candidates): the answer often
+// near-matches the very item it breaks down, and a recapture-merge would eat
+// the step. Type is forced to DO and themes are inherited from the bubble, not
+// inferred. The step joins the bubble, lands on the card as a chip, and the
+// response carries a CaptureResponse so the client runs the usual review sheet.
+export async function addFirstStep(
+  env: Env,
+  bubbleId: string,
+  rawTitle: string,
+): Promise<{ map: MapPayload; capture: CaptureResponse } | null> {
   const db = env.DB;
   // The title lands inside the card grammar as [title](id) — strip the four
   // marker characters so a stray bracket can't break the sentence markup.
@@ -267,23 +276,45 @@ export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string)
     }
   }
 
-  // Invitations may ask for a WHEN ("Want to pick a night this week?"), so the
-  // answer goes through the same deterministic parse the recapture-undo path
-  // uses: "read Thursday evening" becomes a dated DO, not a dead label.
+  // Raw text first, unconditionally (§12) — the answer is a user utterance
+  // like any other capture.
+  const captureId = newId();
+  await db.prepare('INSERT INTO captures (id, ts, raw_text) VALUES (?,?,?)').bind(captureId, nowIso(), title).run();
+  await logEvent(db, 'user', 'captured', { payload: { captureId, text: title } });
+
   const now = new Date();
   const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
-  const p = heuristicParse(title, now, tz).items[0];
-  const stepTitle = p?.title || title;
+  let parsed: ParseResult;
+  if (llmAvailable(env)) {
+    try {
+      parsed = await llmParse(env, title, now, tz, []);
+    } catch (err) {
+      console.error('first-step parse failed; falling back to heuristics', err);
+      parsed = heuristicParse(title, now, tz);
+    }
+  } else {
+    parsed = heuristicParse(title, now, tz);
+  }
+  const p = parsed.items[0];
+  // Re-sanitize: the parsed restatement also lands inside chip markup.
+  const stepTitle = (p?.title || title).replace(/[[\]()*]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  // An answer to a "when" invitation may phrase its date as an event time;
+  // either phrase resolves to the step's deadline.
+  const phrase = p?.deadlinePhrase ?? p?.eventAtPhrase ?? null;
+  const deadline = refineWithSourceTime(phrase ? resolveDatePhrase(phrase, now, tz) : null, title, now, tz);
 
   const ts = nowIso();
   const itemId = await insertItem(db, {
     type: 'DO',
     title: stepTitle,
     rawText: { ts, text: title },
-    deadline: p?.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, now, tz)?.iso ?? null : null,
-    deadlineHardness: p?.deadlineHardness ?? null,
+    deadline: deadline?.iso ?? null,
+    deadlineHardness: deadline ? p?.deadlineHardness ?? 'hard' : null,
     cadence: p?.cadence ?? null,
+    pingNatured: p?.pingNatured ?? false,
     effort: 'quick',
+    parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
+    captureId,
     embedding: await embed(env, stepTitle),
   });
   await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
@@ -295,9 +326,17 @@ export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string)
     .prepare('UPDATE bubbles SET sentence = ?, reason = ?, first_step = NULL WHERE id = ?')
     .bind(sentence, stripSentence(sentence).slice(0, 300), bubbleId)
     .run();
-  await logEvent(db, 'user', 'first_step_added', { itemId, bubbleId, payload: { title } });
+  await logEvent(db, 'user', 'first_step_added', { itemId, bubbleId, payload: { title: stepTitle, captureId } });
 
-  return getMap(env, bubble.day);
+  const created = await getItem(db, itemId);
+  const capture: CaptureResponse = {
+    captureId,
+    rawText: title,
+    created: created ? [toItemView(created, now)] : [],
+    boosted: [],
+    nudge: parsed.confidence === 'low' ? 'low-confidence' : null,
+  };
+  return { map: await getMap(env, bubble.day), capture };
 }
 
 // Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,

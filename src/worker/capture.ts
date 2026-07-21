@@ -204,7 +204,9 @@ interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId'> {
   matchConfidence?: 'high' | 'low';
 }
 
-async function llmParse(
+// Exported for the first-step path (§9.2), which reuses the parse with an
+// empty candidates list so recapture-match is structurally off.
+export async function llmParse(
   env: Env,
   text: string,
   ref: Date,
