@@ -8,6 +8,7 @@ import {
   deriveSpanRail,
   farTokens,
   parseSentence,
+  withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
 import { themeColor } from '../../api';
@@ -158,8 +159,12 @@ export default function DescentView({
       const members = b.itemIds.map((id) => items[id]).filter(Boolean);
       const construction = deriveConstruction(members, b.firstStep);
       // Older maps have no sentence; the plain reason parses to one text run.
-      const segments = parseSentence(b.sentence || b.reason);
-      const tokens = farTokens(segments);
+      const parsed = parseSentence(b.sentence || b.reason);
+      // Chip guarantee: member DOs the prose forgot to chip append as bare
+      // chips (rotation stays chip-free). The far form crops the prose alone —
+      // appended chips would duplicate its tokens.
+      const segments = b.kind === 'rotation' ? parsed : withMemberChips(parsed, members);
+      const tokens = farTokens(parsed);
       const themeName = anchorThemeName(members);
       m.set(b.id, {
         bubble: b,

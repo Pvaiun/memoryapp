@@ -9,6 +9,7 @@ import {
   parseSentence,
   resolveSentence,
   stripSentence,
+  withMemberChips,
 } from './cards';
 
 const DAY_MS = 86_400_000;
@@ -53,6 +54,29 @@ function item(over: Partial<ItemView>): ItemView {
     ...over,
   };
 }
+
+describe('withMemberChips — the chip guarantee', () => {
+  it('appends a chip for a member DO the prose only bolded', () => {
+    const recycling = item({ id: 'r1', title: 'Take out recycling' });
+    const segs = withMemberChips(parseSentence('**Recycling** goes out tonight at 9:30.'), [recycling]);
+    expect(segs[segs.length - 1]).toEqual({ kind: 'chip', text: 'Take out recycling', itemId: 'r1' });
+  });
+  it('leaves a fully-chipped card untouched', () => {
+    const doc = item({ id: 'd1', title: 'Call the doctor' });
+    const segs = parseSentence('[Call the doctor](d1) — hard deadline.');
+    expect(withMemberChips(segs, [doc])).toBe(segs);
+  });
+  it('skips HAPPENs and KNOWs — only DOs are completable', () => {
+    const visit = item({ id: 'v1', type: 'HAPPEN', title: 'Sarah visiting' });
+    const segs = parseSentence('**Sarah** is here through Friday.');
+    expect(withMemberChips(segs, [visit])).toBe(segs);
+  });
+  it('keeps completed DOs so a checked chip stays on the card', () => {
+    const done = item({ id: 'c1', title: 'Take out garbage', status: 'completed' });
+    const segs = withMemberChips(parseSentence('Bins night.'), [done]);
+    expect(segs.some((s) => s.kind === 'chip' && s.itemId === 'c1')).toBe(true);
+  });
+});
 
 describe('sentence markup — the card grammar', () => {
   it('parses prose, bold tokens, and chips in order', () => {

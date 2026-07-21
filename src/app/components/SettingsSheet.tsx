@@ -23,6 +23,7 @@ export default function SettingsSheet({
   onEnablePush,
   onRebuild,
   onRebuildNoHistory,
+  onRebuildMinimal,
   onExport,
   onCopyBrainSnapshot,
   onClose,
@@ -33,6 +34,7 @@ export default function SettingsSheet({
   onEnablePush: () => void;
   onRebuild: () => void;
   onRebuildNoHistory: () => void;
+  onRebuildMinimal: () => void;
   onExport: () => void;
   onCopyBrainSnapshot: () => void;
   onClose: () => void;
@@ -121,6 +123,16 @@ export default function SettingsSheet({
           >
             Rebuild map now — no history
             <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
+          </button>
+          <button
+            className="settings-btn"
+            onClick={() => {
+              onClose();
+              onRebuildMinimal();
+            }}
+          >
+            Rebuild map now — minimal prompt
+            <small>Shootout: bare objective instead of the full spec, no history — compare snapshots</small>
           </button>
           {!pushOn && (
             <button

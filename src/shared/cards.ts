@@ -33,6 +33,27 @@ export function parseSentence(sentence: string): CardSegment[] {
   return out;
 }
 
+// Chip guarantee (§7: chips act where they are read): every member DO is
+// completable from the card even when the prose forgot to chip it — unchipped
+// DOs append as bare chips after the utterance. The prompt asks for chips;
+// the renderer guarantees them. Completed DOs append too, so a card stays
+// stable (checkable ✓, un-checkable) across completion. Callers skip rotation
+// bubbles — those are chip-free by design.
+export function withMemberChips(segments: CardSegment[], members: ItemView[]): CardSegment[] {
+  const chipped = new Set(segments.filter((s) => s.kind === 'chip').map((s) => s.itemId));
+  const missing = members.filter(
+    (m) => m.type === 'DO' && !chipped.has(m.id) && (m.status === 'active' || m.status === 'completed'),
+  );
+  if (!missing.length) return segments;
+  return [
+    ...segments,
+    ...missing.flatMap((m): CardSegment[] => [
+      { kind: 'text', text: ' ' },
+      { kind: 'chip', text: m.title, itemId: m.id },
+    ]),
+  ];
+}
+
 // Plain prose — for the sheet, tiles, and anywhere the markup mustn't leak.
 export function stripSentence(sentence: string): string {
   return parseSentence(sentence)

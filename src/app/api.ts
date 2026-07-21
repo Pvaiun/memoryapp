@@ -67,10 +67,10 @@ export const api = {
 
   getMap: () => req<MapPayload>(`/api/map?day=${localDay()}`),
 
-  rebuildMap: (force = false, noHistory = false) =>
+  rebuildMap: (force = false, noHistory = false, minimalPrompt = false) =>
     req<MapPayload>('/api/map/rebuild', {
       method: 'POST',
-      body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force, noHistory }),
+      body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force, noHistory, minimalPrompt }),
     }),
 
   addFirstStep: (bubbleId: string, title: string) =>

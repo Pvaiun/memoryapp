@@ -351,11 +351,12 @@ export default function App() {
 
   // User-initiated re-run for bulk-import days: fold Captured Today into real
   // bubbles now instead of waiting for tomorrow's first open. noHistory is the
-  // workshop variant — the Brain composes without yesterday's groupings.
-  const organizeNow = useCallback(async (noHistory = false) => {
+  // workshop variant — the Brain composes without yesterday's groupings;
+  // minimalPrompt runs the shootout prompt (objective + contracts only).
+  const organizeNow = useCallback(async (noHistory = false, minimalPrompt = false) => {
     setBuilding(true);
     try {
-      setMap(await api.rebuildMap(true, noHistory));
+      setMap(await api.rebuildMap(true, noHistory, minimalPrompt));
     } catch (err) {
       toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -553,6 +554,7 @@ export default function App() {
           onEnablePush={enablePush}
           onRebuild={() => organizeNow()}
           onRebuildNoHistory={() => organizeNow(true)}
+          onRebuildMinimal={() => organizeNow(true, true)}
           onExport={exportAll}
           onCopyBrainSnapshot={copyBrainSnapshot}
           onClose={() => setSettingsOpen(false)}
