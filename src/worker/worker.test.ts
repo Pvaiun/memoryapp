@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
-import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant, PROFILE_EVENT_TYPES } from './brain';
+import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant, PROFILE_EVENT_TYPES, tierProminences } from './brain';
 import type { Cadence, ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
@@ -142,6 +142,25 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
     const daily2345: Cadence = { freq: 'daily', interval: 1, atTime: '23:45' };
     expect(isTodayRelevant({ ...base, cadence: daily2345, createdAt: created }, lateNow, tz)).toBe(true);
     expect(isTodayRelevant({ ...base, cadence: weeklyTue, createdAt: '2026-07-07T15:00:00Z' }, lateNow, tz)).toBe(false);
+  });
+});
+
+describe('tierProminences — tier judgment from the Brain, numbers from code', () => {
+  it('lone members sit at their band top; peers spread evenly to the band bottom', () => {
+    const ps = tierProminences(['loud', 'mid', 'mid', 'quiet', 'dot']);
+    [0.95, 0.68, 0.5, 0.4, 0.18].forEach((want, i) => expect(ps[i]).toBeCloseTo(want));
+  });
+  it('a tier boundary is always a real cliff (≥0.1 in p), unlike the ladder it replaces', () => {
+    const tiers = ['loud', 'loud', 'loud', 'mid', 'mid', 'quiet', 'quiet', 'dot'] as const;
+    const ps = tierProminences([...tiers]);
+    for (let i = 1; i < ps.length; i++) {
+      expect(ps[i]).toBeLessThan(ps[i - 1]); // loudest-first order preserved
+      if (tiers[i] !== tiers[i - 1]) expect(ps[i - 1] - ps[i]).toBeGreaterThanOrEqual(0.1 - 1e-9);
+    }
+  });
+  it('handles interleaved output order per tier', () => {
+    const ps = tierProminences(['mid', 'loud', 'mid']);
+    [0.68, 0.95, 0.5].forEach((want, i) => expect(ps[i]).toBeCloseTo(want));
   });
 });
 
