@@ -14,6 +14,7 @@ interface Status {
   brainModel: string;
   mapDay: string | null;
   mapBuiltAt: string | null;
+  brainPrompt: 'full' | 'minimal';
 }
 
 export default function SettingsSheet({
@@ -40,10 +41,24 @@ export default function SettingsSheet({
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
+  const [brainPrompt, setBrainPrompt] = useState<'full' | 'minimal' | null>(null);
 
   useEffect(() => {
-    api.status().then((s) => setStatus(s as unknown as Status)).catch(() => {});
+    api.status().then((s) => {
+      const st = s as unknown as Status;
+      setStatus(st);
+      setBrainPrompt(st.brainPrompt ?? 'minimal');
+    }).catch(() => {});
   }, []);
+
+  // The morning-prompt toggle (workshop shootout, longitudinal arm): which
+  // Brain prompt tomorrow's first-open rebuild uses. Optimistic; reverts on
+  // failure. Workshop rebuild buttons override per run.
+  const pickPrompt = (v: 'full' | 'minimal') => {
+    const prev = brainPrompt;
+    setBrainPrompt(v);
+    api.setBrainPrompt(v).catch(() => setBrainPrompt(prev));
+  };
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -100,6 +115,21 @@ export default function SettingsSheet({
           </div>
           <small className="settings-hint">
             Descent is the new depth instrument — experimental. Tiles is the previous mosaic.
+          </small>
+        </div>
+
+        <div className="field">
+          <label>Morning Brain prompt</label>
+          <div className="seg">
+            <button className={brainPrompt === 'minimal' ? 'on' : ''} onClick={() => pickPrompt('minimal')}>
+              Minimal
+            </button>
+            <button className={brainPrompt === 'full' ? 'on' : ''} onClick={() => pickPrompt('full')}>
+              Full
+            </button>
+          </div>
+          <small className="settings-hint">
+            Which prompt builds tomorrow's map — comparing them over days. Workshop rebuilds override per run.
           </small>
         </div>
 

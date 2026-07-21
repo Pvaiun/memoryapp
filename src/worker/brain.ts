@@ -100,14 +100,16 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // trigger stays strictly first-open-of-day (§9.1).
 // noHistory: workshop mode — the Brain composes without yesterday's groupings;
 // everything else (librarian, profile, name vocabulary) runs as normal.
-// promptVariant: 'minimal' runs the shootout prompt (objective + contracts
-// only) instead of the full spec; the snapshot records which one built the map.
+// promptVariant: which Brain prompt builds the map. Omitted (the morning
+// rebuild, the plain re-run) → the user's stored preference, default minimal;
+// explicit (the workshop buttons) → exactly what was asked. The snapshot
+// records which one ran.
 export async function rebuildMap(
   env: Env,
   day: string,
   force = false,
   noHistory = false,
-  promptVariant: BrainPromptVariant = 'full',
+  promptVariant?: BrainPromptVariant,
 ): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
@@ -166,13 +168,15 @@ export async function rebuildMap(
     .all<{ name: string }>();
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
+  const variant = promptVariant ?? ((await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal');
+
   const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
   let proposed: ProposedBubble[];
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, input, promptVariant);
+      proposed = await llmBuildBubbles(env, input, variant);
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
@@ -269,7 +273,7 @@ export async function rebuildMap(
   await setState(
     db,
     'brain_last_input',
-    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: promptVariant, payload: input.payload }),
+    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: variant, payload: input.payload }),
   );
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
@@ -596,7 +600,8 @@ export function tierProminences(tiers: BrainTier[]): number[] {
     const n = counts.get(t)!;
     const k = seen.get(t) ?? 0;
     seen.set(t, k + 1);
-    return n === 1 ? top : top - ((top - bottom) * k) / (n - 1);
+    const p = n === 1 ? top : top - ((top - bottom) * k) / (n - 1);
+    return Math.round(p * 100) / 100; // clean two-decimal p — no float dust in the data
   });
 }
 
@@ -676,20 +681,22 @@ CONSTRUCTION follows the cluster's shape:
 - One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, direct invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when there's no visible first action; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
 - Rotation bubbles read as an offering, not an obligation — no chips.`;
 
-// The minimal variant: objective + contracts only, at roughly a fifth of the
-// full prompt's mass. The bet under test — the model's unforced judgment beats
-// rule-following, because rules invite performed compliance (the fabricated
-// "while you're squaring away plans" bridge) while the code layer now carries
-// every hard guarantee (same-day floor, tier bands, chip guarantee, counts).
-// Same input, same output contract; only the guidance differs. Keep exactly
-// one sentence of case law: resemblance alone is not a bond.
+// The minimal variant (the default): objective + contracts at roughly a fifth
+// of the full prompt's mass. The shootout showed the two perform equally —
+// rules invite performed compliance while the code layer carries every hard
+// guarantee (same-day floor, tier bands, chip guarantee, counts) — so the
+// smaller prompt wins on maintainability and echo surface. Guidance beyond
+// the contracts is bought back one observed regression at a time, stated as
+// objectives: resemblance is not a bond (fabricated-bridge gluing);
+// old/forgotten items gain importance and big items need lead time (the will
+// and the doctor vanishing); reuse vocabulary names (coined synonyms).
 const MINIMAL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you compose the day's map fresh from the user's items: a handful of bubbles, ordered loudest to quietest, that together say what matters today. Reply with ONLY a JSON object.
 
 THE GOAL: put items in one bubble when they genuinely go together — they'd be done in the same burst, they're part of the same real-world situation, or one depends on the other. Resemblance alone (same topic, same people, same date) is not a reason. Don't force weak groupings: single-item bubbles are fine, and so is a short day. You curate rather than inventory — quiet undated items can take turns across days, and the browse view holds everything — but every item marked due=today, due=...overdue, or happens=today must appear in some bubble.
 
 ${ITEM_FORMAT}
 
-TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
+TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, slipping=, recaptured=) matters MORE for it, not less — old is how forgotten looks. And big-effort items need lead time: give them attention well before their moment, not once it's urgent. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
@@ -697,7 +704,7 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid
 
 "firstStep": when one big or stalled thing needs a way in rather than volume, offer a short invitation asking the user for their own first move (their typed answer becomes a real item on the card). Never write the step's content yourself. Otherwise null.
 
-NAMING: reuse a name from recentNameVocabulary when the bubble is the same recurring situation; otherwise coin a short, concrete, human name.`;
+NAMING: if a bubble covers the same ground as a name in recentNameVocabulary, reuse that name exactly — a renamed recurring situation reads as a brand-new one and reshuffles the user's map. Coin a short, concrete, human name only for a genuinely new situation.`;
 
 export type BrainPromptVariant = 'full' | 'minimal';
 
