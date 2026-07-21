@@ -102,9 +102,14 @@ describe('resolveSentence — worker-side hygiene', () => {
     );
   });
 
-  it('accepts already-resolved member ids and enforces the chip cap', () => {
+  it('accepts already-resolved member ids; chips unlimited by default, capped on request', () => {
+    const all = new Set(['a', 'b', 'c', 'd']);
+    expect(resolveSentence('[1](a) [2](b) [3](c) [4](d)', new Map(), all)).toBe('[1](a) [2](b) [3](c) [4](d)');
+  });
+
+  it('an explicit maxChips still degrades the overflow to bold', () => {
     const members = new Set(['a', 'b', 'c', 'd']);
-    expect(resolveSentence('[1](a) [2](b) [3](c) [4](d)', new Map(), members)).toBe('[1](a) [2](b) [3](c) **4**');
+    expect(resolveSentence('[1](a) [2](b) [3](c) [4](d)', new Map(), members, 3)).toBe('[1](a) [2](b) [3](c) **4**');
   });
 
   it('leaves bold tokens alone', () => {

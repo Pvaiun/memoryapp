@@ -47,13 +47,14 @@ export function farTokens(segments: CardSegment[]): string[] {
 
 // Worker-side hygiene over the Brain's raw output: chip refs are short
 // aliases (i3) — resolve them to real item ids; a chip whose alias is
-// unknown, points outside the bubble, or exceeds the discipline cap (§2:
-// at most three actionables) degrades to a bold token, never breaks prose.
+// unknown or points outside the bubble degrades to a bold token, never
+// breaks prose. Chip count is the Brain's call (completing from the card
+// is the point); maxChips exists for callers that want a ceiling.
 export function resolveSentence(
   sentence: string,
   idByAlias: Map<string, string>,
   memberIds: Set<string>,
-  maxChips = 3,
+  maxChips = Infinity,
 ): string {
   let chips = 0;
   return sentence.replace(TOKEN_RE, (whole, bold: string | undefined, label: string, ref: string) => {
