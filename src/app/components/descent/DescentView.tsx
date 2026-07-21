@@ -1010,9 +1010,16 @@ export default function DescentView({
               <div className="dsc-ledger">
                 <svg className="dsc-ledger-ties" width="44" height={vh} aria-hidden>
                   {ledgerRows.map(
-                    ({ t, y, dotY }) =>
+                    ({ t, info, y, dotY }) =>
                       Math.abs(y - dotY) > 10 && (
-                        <line key={t.id} x1={GAUGE_INSET + 5} y1={dotY} x2={42} y2={y} />
+                        <line
+                          key={t.id}
+                          x1={GAUGE_INSET + 5}
+                          y1={dotY}
+                          x2={42}
+                          y2={y}
+                          style={{ stroke: info.accent, opacity: 0.45 }}
+                        />
                       ),
                   )}
                 </svg>
@@ -1030,7 +1037,9 @@ export default function DescentView({
                     >
                       {info.settled ? '✓ done' : info.status.label}
                     </span>
-                    <span className="dsc-ledger-name">{info.bubble.name}</span>
+                    <span className="dsc-ledger-name" style={{ color: info.settled ? undefined : info.accent }}>
+                      {info.bubble.name}
+                    </span>
                   </button>
                 ))}
               </div>

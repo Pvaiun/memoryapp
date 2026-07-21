@@ -252,7 +252,7 @@ FOR EACH ITEM emit:
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null. "atTime" is the stated time of day in the USER'S local 24h clock — whenever a recurring item names a time, it MUST land here ("every Thursday at 8pm" → {"freq":"weekly","interval":1,"byWeekday":[4],"atTime":"20:00"}; "take meds daily at 9" → {"freq":"daily","interval":1,"atTime":"09:00"}). A recurring DO's time belongs in cadence.atTime, never in deadlinePhrase.
 - "optionality": "must" | "nice" — must-do vs nice-to-do, inferred from phrasing ("maybe", "if I get to it" → "nice"). Orthogonal to priority.
 - "effort": "quick" | "medium" | "large" — coarse magnitude ("do taxes" is large, "call grandma" is quick).
-- "pingNatured": true if this DO is a nudge to do a small thing at a moment rather than a deliverable ("remind me to take the bins out" → true; "finish the report by Friday" → false). Only for DO.
+- "pingNatured": true ONLY when the user is asking to be nudged at a moment ("remind me to…", "don't let me forget to…") — the wish for a ping must be in their phrasing. A task is not ping-natured just because it is small or scheduled: "take out garbage every Thursday at 9:30" is a task with a schedule, "finish the report by Friday" is a deliverable — both false. Only for DO.
 - "eventAtPhrase": for HAPPEN, the date/time phrase (same rules as deadlinePhrase; a range like "July 20 to July 25" captures a multi-day event), else null.
 - "alertLeadMinutes": only if the user explicitly asked when to be alerted ("remind me the night before" → 720), else null.
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
