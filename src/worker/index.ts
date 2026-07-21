@@ -92,7 +92,7 @@ app.get('/api/debug/brain', async (c) => {
 app.get('/api/export', async (c) => {
   const db = c.env.DB;
   const [items, captures, themes, itemThemes, events, bubbles, bubbleItems, profiles, themeNotes] = await Promise.all([
-    db.prepare('SELECT id,type,title,raw_texts,status,deadline,deadline_hardness,cadence,optionality,effort,ping_natured,event_at,event_end,alert_lead_minutes,priority_base,priority_boost,boost_updated_at,user_priority,flavour_override,created_at,updated_at,last_touched_at,last_completed_at,completion_count,streak,last_surfaced_at,parse_confidence,capture_id FROM items').all(),
+    db.prepare('SELECT id,type,title,raw_texts,status,deadline,deadline_hardness,cadence,optionality,effort,ping_natured,event_at,event_end,alert_lead_minutes,priority_base,priority_boost,boost_updated_at,user_priority,flavour_override,created_at,updated_at,last_touched_at,last_completed_at,completion_count,streak,last_surfaced_at,parse_confidence,capture_id,affect_tags FROM items').all(),
     db.prepare('SELECT * FROM captures').all(),
     db.prepare('SELECT * FROM themes').all(),
     db.prepare('SELECT * FROM item_themes').all(),

@@ -20,6 +20,7 @@ function mkItem(over: Partial<ItemView>): ItemView {
     type: 'DO',
     title: over.title ?? id,
     rawTexts: [],
+    affects: [],
     status: 'active',
     deadline: null,
     deadlineHardness: null,

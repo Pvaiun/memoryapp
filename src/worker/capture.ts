@@ -1,4 +1,5 @@
-import type { CaptureResponse, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
+import type { AffectTag, CaptureResponse, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
+import { AFFECT_TAGS } from '../shared/types';
 import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
 import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
 import { heuristicParse } from '../shared/heuristicParse';
@@ -80,11 +81,17 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
     if (matched) {
       // Recapture-as-boost (§9.3): raise priority, append the new phrasing —
       // never synthesise a merged replacement. Visible + undoable (§10.1).
+      // Affect appends too: re-entering "I keep forgetting" twice is history
+      // worth counting, not a field worth overwriting.
       const rawTexts: RawText[] = [...matched.rawTexts, { ts: nowIso(), text: p.title }];
+      const affects = p.affect.length
+        ? [...matched.affects, ...p.affect.map((tag) => ({ tag, ts: nowIso() }))]
+        : matched.affects;
       await updateItemFields(db, matched.id, {
         priority_boost: matched.priorityBoost + RECAPTURE_BOOST,
         boost_updated_at: nowIso(),
         raw_texts: JSON.stringify(rawTexts),
+        affect_tags: affects.length ? JSON.stringify(affects) : null,
       });
       await syncFts(db, matched.id, matched.title, rawTexts.map((r) => r.text).join('\n'));
       await logEvent(db, 'ai', 'recaptured', {
@@ -129,6 +136,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
       parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
       captureId,
+      affects: p.affect.map((tag) => ({ tag, ts: nowIso() })),
       embedding: itemEmbedding,
     });
     const themes = await setItemThemes(db, id, p.themes, 'ai');
@@ -199,7 +207,8 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
 
 // ---------- The cheap-tier parse call ----------
 
-interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId'> {
+interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId' | 'affect'> {
+  affect?: string[];
   matchItemId: string | null;
   matchConfidence?: 'high' | 'low';
 }
@@ -248,6 +257,7 @@ FOR EACH ITEM emit:
 - "alertLeadMinutes": only if the user explicitly asked when to be alerted ("remind me the night before" → 720), else null.
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
 - "themes": 1-3 theme names. You are the librarian of an EMERGENT taxonomy: strongly prefer reusing an existing theme; coin a new short name (1-2 words, e.g. "Home", "Health", "Sarah") only when nothing fits. Multi-theme is encouraged when genuinely apt.
+- "affect": 0-2 tags from EXACTLY this list — the emotional colour the USER'S OWN PHRASING carries, never what the task's nature implies. nervous ("scared to", "anxious about it"); dreading ("ugh", "don't want to", annoyance); excited ("can't wait", "finally!"); someday (loose aspiration — "at some point", "one day", "eventually I want to"); for-someone (relational stakes — "promised Dad", "she really needs this", "the team's waiting on me"); guilty ("should have done this ages ago"); forgotten ("I keep forgetting"); important (speaker emphasis — "big deal", "really matters", "no excuses"); heavy (grief or weight — the phrasing is quiet about something hard). Most captures carry NO flavour: emit [] unless the phrasing plainly carries it, and prefer one tag. The natural stack is for-someone plus one other ("I promised her and I keep forgetting" → ["for-someone","forgotten"]).
 - "matchItemId": if this capture refers to the SAME thing as one of the existing candidate items (same referent/intent, phrasing-independent), that item's id — else null. BE CONSERVATIVE: a false merge is worse than a missed match. "Sarah likes soy milk" vs "Sarah hates soy milk" are DIFFERENT. Only match on high-confidence sameness.
 
 TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture was ambiguous, hard to segment, or you guessed on anything load-bearing.`;
@@ -290,6 +300,9 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
         : null,
     priority: p.priority === 'low' || p.priority === 'high' ? p.priority : 'medium',
     themes: Array.isArray(p.themes) ? p.themes.map(String).slice(0, 3) : [],
+    affect: Array.isArray(p.affect)
+      ? p.affect.filter((t): t is AffectTag => (AFFECT_TAGS as readonly string[]).includes(String(t))).slice(0, 2)
+      : [],
     matchItemId: p.matchItemId && candidates.some((c) => c.id === p.matchItemId) ? p.matchItemId : null,
   }));
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Cadence, Flavour, ItemView } from '../../shared/types';
+import type { AffectTag, Cadence, Flavour, ItemView } from '../../shared/types';
+import { AFFECT_TAGS } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { api } from '../api';
 
@@ -51,6 +52,7 @@ export default function ItemSheet({
   const [priorityTouched, setPriorityTouched] = useState(false);
   const [flavourOverride, setFlavourOverride] = useState<Flavour | ''>(item.flavourOverride ?? '');
   const [themes, setThemes] = useState(item.themes.map((t) => t.name).join(', '));
+  const [affects, setAffects] = useState<AffectTag[]>([...new Set((item.affects ?? []).map((a) => a.tag))]);
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -72,6 +74,7 @@ export default function ItemSheet({
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
+        affects,
       });
       onChanged(fresh);
       onClose();
@@ -256,6 +259,23 @@ export default function ItemSheet({
         <div className="field">
           <label>Themes (comma-separated)</label>
           <input value={themes} onChange={(e) => setThemes(e.target.value)} placeholder="Home, Health" />
+        </div>
+
+        <div className="field">
+          <label>Felt as (from your phrasing)</label>
+          <div className="seg wrap">
+            {AFFECT_TAGS.map((t) => (
+              <button
+                key={t}
+                className={affects.includes(t) ? 'on' : ''}
+                onClick={() =>
+                  setAffects((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+                }
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="sheet-actions">

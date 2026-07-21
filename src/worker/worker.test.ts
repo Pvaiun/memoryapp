@@ -198,6 +198,22 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('seen=today');
   });
 
+  it('affect history renders as felt= with counts spanning recaptures', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        affects: [
+          { tag: 'forgotten', ts: '2026-07-10T00:00:00Z' },
+          { tag: 'for-someone', ts: '2026-07-10T00:00:00Z' },
+          { tag: 'forgotten', ts: '2026-07-19T00:00:00Z' },
+        ],
+      } as unknown as ItemView,
+      now,
+    );
+    expect(line).toContain('felt=forgotten(x2),for-someone');
+    expect(brainItemLine(baseView, now)).not.toContain('felt=');
+  });
+
   it('recapture recency renders from the boost anchor; absent anchor stays bare', () => {
     const recaptured = {
       ...baseView,
