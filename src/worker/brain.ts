@@ -3,6 +3,8 @@ import { describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
+import { heuristicParse } from '../shared/heuristicParse';
+import { resolveDatePhrase } from '../shared/dates';
 import { embed } from './embeddings';
 import {
   getItem,
@@ -265,19 +267,30 @@ export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string)
     }
   }
 
+  // Invitations may ask for a WHEN ("Want to pick a night this week?"), so the
+  // answer goes through the same deterministic parse the recapture-undo path
+  // uses: "read Thursday evening" becomes a dated DO, not a dead label.
+  const now = new Date();
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const p = heuristicParse(title, now, tz).items[0];
+  const stepTitle = p?.title || title;
+
   const ts = nowIso();
   const itemId = await insertItem(db, {
     type: 'DO',
-    title,
+    title: stepTitle,
     rawText: { ts, text: title },
+    deadline: p?.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, now, tz)?.iso ?? null : null,
+    deadlineHardness: p?.deadlineHardness ?? null,
+    cadence: p?.cadence ?? null,
     effort: 'quick',
-    embedding: await embed(env, title),
+    embedding: await embed(env, stepTitle),
   });
   await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
   await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(ts, itemId).run();
   await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
 
-  const sentence = `${(bubble.sentence ?? '').trim()} First: [${title}](${itemId}).`.trim().slice(0, 700);
+  const sentence = `${(bubble.sentence ?? '').trim()} First: [${stepTitle}](${itemId}).`.trim().slice(0, 700);
   await db
     .prepare('UPDATE bubbles SET sentence = ?, reason = ?, first_step = NULL WHERE id = ?')
     .bind(sentence, stripSentence(sentence).slice(0, 300), bubbleId)
@@ -489,7 +502,7 @@ THE CARD GRAMMAR (only these two marks):
 CONSTRUCTION follows the cluster's shape:
 - Mixed cluster, few actionables → weave facts and 1-3 chips into one utterance.
 - 4+ near-identical siblings → speak of the batch collectively ("Five **holiday cards**, one sitting — Nan, Theo, June, the Walshes."). A progress pip-row renders automatically; never chip or enumerate the items as a list. Get any count you state from the member list, not from momentum.
-- One big amorphous thing with no date → a bare sentence, no chips, plus "firstStep": a short invitation, in your own voice, for the user to name their first ten-minute step ("Ten spare minutes would dent this — where would you begin?" — but write your own, matched to the thing). Their answer becomes a real item on the card. NEVER write the step's content yourself — the breakdown is theirs to make. firstStep is null in every other case.
+- One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, encouraging invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when it's big and formless; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. Shapes from other lives: a looming attic clear-out — "Which corner would you start with?"; a guitar gathering dust — "Want to pick a night this week?". The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
 - Rotation bubbles read as an offering, not an obligation ("Worth a glance: the **spare key** lives with **Marta downstairs**"), no chips.`;
 
   const { lines, idByAlias } = aliasItems(items, now);
