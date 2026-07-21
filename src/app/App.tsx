@@ -350,11 +350,12 @@ export default function App() {
   );
 
   // User-initiated re-run for bulk-import days: fold Captured Today into real
-  // bubbles now instead of waiting for tomorrow's first open.
-  const organizeNow = useCallback(async () => {
+  // bubbles now instead of waiting for tomorrow's first open. noHistory is the
+  // workshop variant — the Brain composes without yesterday's groupings.
+  const organizeNow = useCallback(async (noHistory = false) => {
     setBuilding(true);
     try {
-      setMap(await api.rebuildMap(true));
+      setMap(await api.rebuildMap(true, noHistory));
     } catch (err) {
       toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -550,7 +551,8 @@ export default function App() {
           nowView={nowView}
           onSetNowView={setNowView}
           onEnablePush={enablePush}
-          onRebuild={organizeNow}
+          onRebuild={() => organizeNow()}
+          onRebuildNoHistory={() => organizeNow(true)}
           onExport={exportAll}
           onCopyBrainSnapshot={copyBrainSnapshot}
           onClose={() => setSettingsOpen(false)}

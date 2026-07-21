@@ -98,7 +98,9 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // force: user-initiated re-run for a day that already has a map — the escape
 // hatch for bulk-import days when Captured Today piles up. The automatic
 // trigger stays strictly first-open-of-day (§9.1).
-export async function rebuildMap(env: Env, day: string, force = false): Promise<MapPayload> {
+// noHistory: workshop mode — the Brain composes without yesterday's groupings;
+// everything else (librarian, profile, name vocabulary) runs as normal.
+export async function rebuildMap(env: Env, day: string, force = false, noHistory = false): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
 
@@ -124,28 +126,30 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
 
   // Yesterday's bubbles — supplied separately, framed as "reuse only if apt" (§8.2).
-  const prevDay = await db
-    .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
-    .bind(day)
-    .first<{ day: string }>();
   let previous: { name: string; itemTitles: string[] }[] = [];
-  if (prevDay) {
-    const rows = await db
-      .prepare(
-        `SELECT b.name, i.title FROM bubbles b
-         JOIN bubble_items bi ON bi.bubble_id = b.id
-         JOIN items i ON i.id = bi.item_id
-         WHERE b.day = ?`,
-      )
-      .bind(prevDay.day)
-      .all<{ name: string; title: string }>();
-    const byName = new Map<string, string[]>();
-    for (const r of rows.results) {
-      const list = byName.get(r.name) ?? [];
-      list.push(r.title);
-      byName.set(r.name, list);
+  if (!noHistory) {
+    const prevDay = await db
+      .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
+      .bind(day)
+      .first<{ day: string }>();
+    if (prevDay) {
+      const rows = await db
+        .prepare(
+          `SELECT b.name, i.title FROM bubbles b
+           JOIN bubble_items bi ON bi.bubble_id = b.id
+           JOIN items i ON i.id = bi.item_id
+           WHERE b.day = ?`,
+        )
+        .bind(prevDay.day)
+        .all<{ name: string; title: string }>();
+      const byName = new Map<string, string[]>();
+      for (const r of rows.results) {
+        const list = byName.get(r.name) ?? [];
+        list.push(r.title);
+        byName.set(r.name, list);
+      }
+      previous = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
     }
-    previous = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
   }
 
   // Recent situation-name vocabulary (§9.2 naming): linguistic stability.
