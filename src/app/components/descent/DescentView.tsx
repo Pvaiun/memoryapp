@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import type { Bubble, ItemView } from '../../../shared/types';
+import {
+  anchorThemeName,
+  deriveConstruction,
+  deriveDeadlineNotch,
+  deriveSpanRail,
+  farTokens,
+  parseSentence,
+} from '../../../shared/cards';
+import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
+import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
 import {
@@ -53,11 +63,22 @@ const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
 const SETTLE_HYST = 30; // camera units of drift that still return backward
 
 const STORAGE_KEY = 'memory.descent.prev';
+const LEDGE_KEY_PREFIX = 'memory.descent.ledge.';
+// Focus owns the viewport (§6): anything deeper than half a spacing step has
+// already collapsed to its far form — rim color plus cropped bold tokens.
+// FAR_END stays under the spacing floor (engine MIN_SPACING) so a card at
+// the very next rest position is fully far — no double-exposure at rest.
+const FAR_START = 55; // d where the full body starts giving way
+const FAR_END = 130; // d where only the far strip remains
+// … and the horizon swallows the rest: only a few peeking edges stay legible.
+const HORIZON_START = 480;
+const HORIZON_END = 900;
 
 interface CardEls {
   root: HTMLButtonElement;
-  base: HTMLElement;
-  pigment: HTMLElement;
+  near: HTMLElement; // full body + ledge — fades and desaturates with depth
+  rim: HTMLElement; // theme accent spine — full saturation, opacity floor
+  far: HTMLElement; // cropped bold-token strip — the card's deep form
 }
 
 interface CardInfo {
@@ -66,6 +87,13 @@ interface CardInfo {
   doneCount: number;
   total: number;
   settled: boolean;
+  members: ItemView[];
+  construction: CardConstruction;
+  segments: CardSegment[];
+  far: string;
+  accent: string;
+  rail: SpanRailBrick | null;
+  notch: DeadlineNotchBrick | null;
 }
 
 interface Ripple {
@@ -95,12 +123,14 @@ export default function DescentView({
   day,
   builtAt,
   onOpen,
+  onToggleComplete,
 }: {
   bubbles: Bubble[];
   items: Record<string, ItemView>;
   day: string;
   builtAt: string | null;
   onOpen: (bubble: Bubble) => void;
+  onToggleComplete: (item: ItemView) => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -119,11 +149,31 @@ export default function DescentView({
   const track = useMemo(() => buildTrack(bubbles), [bubbles]);
   const range = useMemo(() => cameraRange(track), [track]);
   const infos = useMemo(() => {
+    const nowMs = Date.now();
     const m = new Map<string, CardInfo>();
     for (const b of bubbles) {
       const status = bubbleStatus(b, items);
       const { doneCount, total, allDone } = bubbleCounts(b, items);
-      m.set(b.id, { bubble: b, status, doneCount, total, settled: allDone });
+      const members = b.itemIds.map((id) => items[id]).filter(Boolean);
+      const construction = deriveConstruction(members, b.firstStep);
+      // Older maps have no sentence; the plain reason parses to one text run.
+      const segments = parseSentence(b.sentence || b.reason);
+      const tokens = farTokens(segments);
+      const themeName = anchorThemeName(members);
+      m.set(b.id, {
+        bubble: b,
+        status,
+        doneCount,
+        total,
+        settled: allDone,
+        members,
+        construction,
+        segments,
+        far: (tokens.length ? tokens : [b.name]).join(' · '),
+        accent: themeName ? themeColor(themeName) : 'hsl(222 15% 52%)',
+        rail: deriveSpanRail(members, nowMs),
+        notch: deriveDeadlineNotch(members, nowMs),
+      });
     }
     return m;
   }, [bubbles, items]);
@@ -193,8 +243,9 @@ export default function DescentView({
       }
       cardElsRef.current.set(id, {
         root: el,
-        base: el.querySelector<HTMLElement>('.dsc-base')!,
-        pigment: el.querySelector<HTMLElement>('.dsc-pigment')!,
+        near: el.querySelector<HTMLElement>('.dsc-near')!,
+        rim: el.querySelector<HTMLElement>('.dsc-rim')!,
+        far: el.querySelector<HTMLElement>('.dsc-far')!,
       });
     };
   }, []);
@@ -310,14 +361,24 @@ export default function DescentView({
 
         const settledMul = info?.settled ? 0.7 : 1;
         const sat = (info?.settled ? 0.8 : 1) * cues.saturation;
+        // The dolly is the disclosure (§6): ahead of focus the full body
+        // cross-fades into the far strip — rim + cropped bold tokens. The
+        // pass (d < 0) keeps the full form, exiting large under its ✓.
+        const farT = band(d, FAR_START, FAR_END);
 
         els.root.style.transform = `translate(-50%, -50%) translate3d(0, ${y.toFixed(2)}px, 0) scale(${s.toFixed(4)})`;
         els.root.style.opacity = pass.alpha.toFixed(3);
         els.root.style.pointerEvents = pass.alpha > 0.05 ? '' : 'none';
-        els.base.style.opacity = (cues.opacity * settledMul).toFixed(3);
-        els.base.style.filter = `saturate(${sat.toFixed(3)}) contrast(${cues.contrast.toFixed(3)})`;
-        // Status pigment is exempt: full saturation, opacity floor 0.85.
-        els.pigment.style.opacity = Math.max(cues.opacity, 0.85).toFixed(3);
+        els.near.style.opacity = (cues.opacity * settledMul * (1 - farT)).toFixed(3);
+        els.near.style.filter = `saturate(${sat.toFixed(3)}) contrast(${cues.contrast.toFixed(3)})`;
+        // chips only act at focus; a deep card's tap is "bring me there"
+        els.near.style.pointerEvents = farT > 0.3 ? 'none' : '';
+        const horizon = 1 - band(d, HORIZON_START, HORIZON_END);
+        els.far.style.opacity = (farT * Math.max(cues.opacity, 0.55) * horizon).toFixed(3);
+        // Theme pigment is exempt from depth cues (§5): full saturation with
+        // an opacity floor — but the rim belongs to the near form; at depth
+        // the far strip's own accent edge takes over as the rim color.
+        els.rim.style.opacity = (Math.max(cues.opacity, 0.85) * (1 - farT)).toFixed(3);
       }
 
       // ----- gauge: true scale, physical cursor -----
@@ -612,14 +673,15 @@ export default function DescentView({
     const next = new Map<string, string>();
     const newRipples: Ripple[] = [];
     for (const { t, info } of byTrack) {
-      const sig = `${info.status.tone}|${info.settled}`;
+      // doneCount in the signature: checking a chip pulses the bubble's dot
+      const sig = `${info.status.tone}|${info.settled}|${info.doneCount}`;
       next.set(t.id, sig);
       const prev = prevToneRef.current.get(t.id);
       if (prev !== undefined && prev !== sig && !reducedRef.current) {
         newRipples.push({
           key: rippleSeq++,
           y: dotYsRef.current[t.i] ?? yForP(t.p),
-          color: info.settled ? 'var(--good)' : info.status.color,
+          color: info.settled ? 'var(--good)' : info.accent,
         });
       }
     }
@@ -684,6 +746,42 @@ export default function DescentView({
       /* storage full/blocked — the rebuild story just won't animate */
     }
   }, [byTrack, track, day, builtAt]);
+
+  // ----- in-place actions (§7: chips act where they are read) -------------
+  const onChipTap = useCallback(
+    (e: ReactMouseEvent, item: ItemView) => {
+      // the chip captures its own tap; only body taps fall through to the sheet
+      e.stopPropagation();
+      onToggleComplete(item);
+    },
+    [onToggleComplete],
+  );
+
+  // First-step ledge (§3): the checked state is presentation-only — the big
+  // task itself stays open — so it lives per-day in localStorage, not the DB.
+  const ledgeKey = `${LEDGE_KEY_PREFIX}${day}`;
+  const [ledgeDone, setLedgeDone] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(ledgeKey) ?? '{}');
+    } catch {
+      return {};
+    }
+  });
+  const toggleLedge = useCallback(
+    (e: ReactMouseEvent, bubbleId: string) => {
+      e.stopPropagation();
+      setLedgeDone((prev) => {
+        const next = { ...prev, [bubbleId]: !prev[bubbleId] };
+        try {
+          localStorage.setItem(ledgeKey, JSON.stringify(next));
+        } catch {
+          /* private mode — the tick just won't persist */
+        }
+        return next;
+      });
+    },
+    [ledgeKey],
+  );
 
   // ----- ledger -----------------------------------------------------------
   const pickFromLedger = useCallback(
@@ -752,6 +850,43 @@ export default function DescentView({
 
   if (!bubbles.length) return null;
 
+  // The sentence is the card (§1): prose with live tokens. Bold tokens are
+  // the recognizable nouns; chips act in place; rotation carries no checkbox
+  // pressure, so its chips read as bold. A chip whose item vanished degrades
+  // to bold rather than breaking the utterance.
+  const renderSegments = (info: CardInfo) =>
+    info.segments.map((seg, i) => {
+      if (seg.kind === 'text') return <span key={i}>{seg.text}</span>;
+      if (seg.kind === 'bold')
+        return (
+          <b key={i} className="dsc-tok">
+            {seg.text}
+          </b>
+        );
+      const item = items[seg.itemId];
+      if (!item || info.bubble.kind === 'rotation')
+        return (
+          <b key={i} className="dsc-tok">
+            {seg.text}
+          </b>
+        );
+      const done = item.status === 'completed';
+      return (
+        <span
+          key={i}
+          role="checkbox"
+          aria-checked={done}
+          className={`dsc-chip-tok${done ? ' done' : ''}`}
+          onClick={(e) => onChipTap(e, item)}
+        >
+          <span className="dsc-box" aria-hidden>
+            {done ? '✓' : ''}
+          </span>
+          {seg.text}
+        </span>
+      );
+    });
+
   return (
     <div className="dsc-viewport" ref={viewportRef}>
       {vh > 0 && (
@@ -765,6 +900,9 @@ export default function DescentView({
                 {byTrack.map(({ t, info }) => {
                   const b = info.bubble;
                   const rotation = b.kind === 'rotation';
+                  const showLedge = info.construction === 'nudge' && b.firstStep && !info.settled;
+                  const stepDone = !!ledgeDone[b.id];
+                  const showCount = !rotation && !info.settled && !info.notch && info.total >= 2;
                   return (
                     <button
                       key={b.id}
@@ -775,33 +913,69 @@ export default function DescentView({
                           left: cx,
                           width: CARD_W,
                           zIndex: track.length - t.i,
-                          '--tile-accent': info.status.color,
+                          '--card-accent': info.accent,
                         } as CSSProperties
                       }
                       onClick={() => handleCardTap(b, t.zp)}
                     >
-                      <span className="dsc-base">
-                        <span className="dsc-top">
-                          <span className="dsc-name">{b.name}</span>
-                          <span className="dsc-count">
-                            {info.doneCount > 0
-                              ? `${info.doneCount}/${info.total}`
-                              : `${info.total} item${info.total === 1 ? '' : 's'}`}
+                      <span className="dsc-near">
+                        <span className="dsc-body">
+                          {info.rail && !info.settled && (
+                            <span className="dsc-rail" aria-hidden>
+                              <span
+                                className="dsc-rail-elapsed"
+                                style={{ width: `${(info.rail.todayFrac * 100).toFixed(1)}%` }}
+                              />
+                              <span
+                                className="dsc-rail-today"
+                                style={{ left: `${(info.rail.todayFrac * 100).toFixed(1)}%` }}
+                              />
+                            </span>
+                          )}
+                          {info.notch && !info.settled && <span className="dsc-notch">{info.notch.label}</span>}
+                          {showCount && (
+                            <span className="dsc-count">
+                              {info.doneCount}/{info.total}
+                            </span>
+                          )}
+                          <span className="dsc-sentence">
+                            {info.settled ? (
+                              <>
+                                <b className="dsc-tok">{b.name}</b> — handled.
+                              </>
+                            ) : (
+                              renderSegments(info)
+                            )}
                           </span>
+                          {info.settled && <span className="dsc-done">✓ done</span>}
+                          {info.construction === 'batch' && !info.settled && (
+                            <span className="dsc-pips" aria-hidden>
+                              {info.members.map((m) => (
+                                <span
+                                  key={m.id}
+                                  className={`dsc-pip${m.status === 'completed' ? ' filled' : ''}`}
+                                />
+                              ))}
+                            </span>
+                          )}
                         </span>
-                        <span className="dsc-chiprow">
-                          <span className={`status-chip dsc-ghost${info.status.tone === 'red' && !info.settled ? ' filled' : ''}`}>
-                            {info.settled ? 'done' : info.status.label}
+                        {showLedge && (
+                          <span
+                            role="checkbox"
+                            aria-checked={stepDone}
+                            className={`dsc-ledge${stepDone ? ' done' : ''}`}
+                            onClick={(e) => toggleLedge(e, b.id)}
+                          >
+                            <span className="dsc-box" aria-hidden>
+                              {stepDone ? '✓' : ''}
+                            </span>
+                            <span className="dsc-ledge-text">{b.firstStep}</span>
                           </span>
-                        </span>
-                        {b.reason && !info.settled && <span className="dsc-desc">{b.reason}</span>}
+                        )}
                       </span>
-                      <span className="dsc-pigment">
-                        <span
-                          className={`status-chip dsc-chip${info.settled ? ' done' : info.status.tone === 'red' ? ' filled' : ''}`}
-                        >
-                          {info.settled ? 'done' : info.status.label}
-                        </span>
+                      <span className="dsc-rim" aria-hidden />
+                      <span className="dsc-far" aria-hidden>
+                        {info.settled ? `✓ ${b.name}` : info.far}
                       </span>
                     </button>
                   );
@@ -836,9 +1010,10 @@ export default function DescentView({
                     style={{ top: y }}
                     onClick={() => pickFromLedger(t.zp)}
                   >
+                    {/* temporality stays a word, never a hue (§5) */}
                     <span
                       className="dsc-ledger-word"
-                      style={{ color: info.settled ? 'var(--good)' : info.status.color }}
+                      style={{ color: info.settled ? 'var(--good)' : 'var(--text-dim)' }}
                     >
                       {info.settled ? '✓ done' : info.status.label}
                     </span>
@@ -869,21 +1044,22 @@ export default function DescentView({
               </div>
             ))}
             {dotLayout.map(({ t, y }) => {
+              // Dots wear the card's theme hue (§5): the dot on the gauge IS
+              // the card's rim — one wayfinding system, no urgency encoding.
               const info = infos.get(t.id)!;
-              const red = info.status.tone === 'red' && !info.settled;
-              const dsize = red ? 7 : 5;
+              const dsize = 5;
               return (
                 <div
                   key={t.id}
                   ref={attachDot(t.id)}
-                  className={`dsc-gdot${info.settled ? ' settled' : ''}${red ? ' red' : ''}`}
+                  className={`dsc-gdot${info.settled ? ' settled' : ''}`}
                   style={{
                     top: y - dsize / 2,
                     left: GAUGE_INSET - dsize / 2,
                     width: dsize,
                     height: dsize,
-                    background: info.settled ? 'transparent' : info.status.color,
-                    borderColor: info.settled ? 'var(--good)' : info.status.color,
+                    background: info.settled ? 'transparent' : info.accent,
+                    borderColor: info.settled ? 'var(--good)' : info.accent,
                   }}
                 />
               );

@@ -51,105 +51,134 @@ function mkItem(over: Partial<ItemView>): ItemView {
   };
 }
 
-// The spec's sample day: cliff after the first card, mid-weight shelf, quiet tail.
-const defs: { name: string; p: number; reason: string; kind?: Bubble['kind']; items: ItemView[] }[] = [
+const theme = (name: string) => [{ id: `th-${name}`, name }];
+
+// The card-specimen day: every construction and brick — a woven card with
+// chips and a span rail, a batch with pips, a nudge with its ledge, a
+// deadline notch, a rotation frame, a settled card, and the same-p tie
+// cluster. Sentences are written in the card grammar against item ids.
+const defs: {
+  name: string;
+  p: number;
+  sentence: (ids: string[]) => string;
+  firstStep?: string;
+  kind?: Bubble['kind'];
+  items: ItemView[];
+}[] = [
   {
     name: "Sarah & Deidra's visit",
     p: 0.95,
-    reason: 'They arrive today — the flat needs to be ready before the afternoon.',
     items: [
-      mkItem({ title: 'Make up the spare bed', status: 'completed', lastCompletedAt: iso(now - 3600e3), completionCount: 1 }),
-      mkItem({ title: 'Buy breakfast things', eventAt: iso(now + 30 * 60e3), type: 'HAPPEN' }),
+      mkItem({ title: 'Clean the litter boxes', themes: theme('Home-Visitors') }),
+      mkItem({ title: 'Make up the guest room', themes: theme('Home-Visitors') }),
+      mkItem({
+        title: 'Sarah & Deidra staying',
+        type: 'HAPPEN',
+        eventAt: iso(now - 2 * 3600e3),
+        eventEnd: iso(now + 4 * DAY_MS),
+        themes: theme('Home-Visitors'),
+      }),
     ],
+    sentence: (ids) =>
+      `**Sarah & Deidra** arrive **today** through the **25th**, vegetarian this year — the [litter boxes](${ids[0]}) by noon, and the [guest room](${ids[1]}) before they land.`,
   },
   {
     name: 'Renew passport',
     p: 0.66,
-    reason: 'The renewal window closes soon and the form still needs photos.',
-    items: [mkItem({ title: 'Submit renewal form', deadline: iso(now + 5 * DAY_MS), deadlineHardness: 'hard' })],
-  },
-  {
-    name: "Water Jo's plants",
-    p: 0.58,
-    reason: "Jo's away until Sunday — the balcony pots dry out fast in July.",
-    items: [mkItem({ title: 'Water the balcony pots', deadline: iso(now + 2 * DAY_MS) })],
-  },
-  {
-    name: 'Call the doctor',
-    p: 0.55,
-    reason: 'Repeat prescription runs out at the end of the week.',
-    items: [mkItem({ title: 'Book the appointment', deadline: iso(now + 6 * DAY_MS) })],
+    items: [
+      mkItem({ title: 'Submit renewal form', deadline: iso(now + 5 * DAY_MS), deadlineHardness: 'hard', themes: theme('Admin') }),
+    ],
+    sentence: (ids) => `The [renewal form](${ids[0]}) still needs photos — the window closes **Friday**.`,
   },
   {
     name: 'New address',
     p: 0.45,
-    reason: 'Five services still point at the old flat.',
     items: [
-      mkItem({ title: 'Bank' }),
-      mkItem({ title: 'Electoral roll' }),
-      mkItem({ title: 'Dentist' }),
-      mkItem({ title: 'Payroll' }),
-      mkItem({ title: 'Insurance' }),
+      mkItem({ title: 'Bank', themes: theme('Move') }),
+      mkItem({ title: 'Electoral roll', themes: theme('Move') }),
+      mkItem({ title: 'Dentist', themes: theme('Move'), status: 'completed', lastCompletedAt: iso(now - 3600e3), completionCount: 1 }),
+      mkItem({ title: 'Payroll', themes: theme('Move') }),
+      mkItem({ title: 'Insurance', themes: theme('Move') }),
     ],
+    sentence: () => `Five **address updates**, one sitting — bank, electoral roll, dentist, payroll, insurance.`,
+  },
+  {
+    name: 'Make my will',
+    p: 0.42,
+    items: [mkItem({ title: 'Sort out the will', effort: 'large', themes: theme('Life-Admin') })],
+    sentence: () => `**The will** is still waiting on its **first step** — no date, nothing started.`,
+    firstStep: 'List your assets in a note — ten minutes.',
   },
   {
     name: 'Gym rhythm',
-    p: 0.42,
-    reason: 'Twice-a-week rhythm slipped during the move.',
-    items: [mkItem({ title: 'Gym session', cadence: { freq: 'weekly', interval: 1 }, neglected: true })],
+    p: 0.4,
+    items: [
+      mkItem({ title: 'Gym session', cadence: { freq: 'weekly', interval: 1 }, neglected: true, themes: theme('Health') }),
+    ],
+    sentence: (ids) => `The twice-a-week rhythm slipped in the move — a [gym session](${ids[0]}) today would restart it.`,
   },
   {
     name: 'Birthday gift for Mum',
     p: 0.38,
-    reason: 'Her birthday is Aug 2 — posting takes three days.',
-    items: [mkItem({ title: 'Choose and order the gift', eventAt: iso(now + 13 * DAY_MS), type: 'HAPPEN' })],
+    items: [
+      mkItem({ title: 'Choose and order the gift', deadline: iso(now + 9 * DAY_MS), themes: theme('Family') }),
+    ],
+    sentence: (ids) => `**Mum's birthday** is **Aug 2** and posting takes three days — [choose the gift](${ids[0]}) this week.`,
   },
   {
     name: 'Get driving sorted',
     p: 0.3,
-    reason: 'Theory test is booked for the 28th.',
-    items: [mkItem({ title: 'Theory test', eventAt: iso(now + 8 * DAY_MS), type: 'HAPPEN' })],
+    items: [mkItem({ title: 'Theory test', eventAt: iso(now + 8 * DAY_MS), type: 'HAPPEN', themes: theme('Driving') })],
+    sentence: () => `The **theory test** is booked for the **28th** — revision fits in the evenings.`,
   },
   // three EXACT-tie prominences — the same-p cluster case (gauge dots fan
   // around the shared value; ledger rows spread with hairline ties)
   {
-    name: 'Make my will',
+    name: 'Call the doctor',
     p: 0.2,
-    reason: 'Started the questionnaire; the draft is waiting.',
-    items: [mkItem({ title: 'Finish the questionnaire' })],
+    items: [
+      mkItem({ title: 'Book the appointment', deadline: iso(now + 4 * DAY_MS), deadlineHardness: 'hard', themes: theme('Health') }),
+    ],
+    sentence: (ids) => `Two-minute [call to the doctor](${ids[0]}) — the referral expires **Friday**.`,
   },
   {
     name: 'Play Pragmata',
     p: 0.2,
-    reason: 'Finished — settled.',
-    items: [mkItem({ title: 'Finish the campaign', status: 'completed', lastCompletedAt: iso(now - DAY_MS), completionCount: 1 })],
+    items: [
+      mkItem({ title: 'Finish the campaign', status: 'completed', lastCompletedAt: iso(now - DAY_MS), completionCount: 1, themes: theme('Fun') }),
+    ],
+    sentence: () => `**Pragmata** — the campaign wraps up tonight.`,
   },
   {
     name: 'Read Piranesi',
     p: 0.2,
-    reason: 'A chapter before bed keeps it moving.',
-    items: [mkItem({ title: 'Read a chapter', type: 'KNOW' })],
+    items: [mkItem({ title: 'Read a chapter', type: 'KNOW', themes: theme('Reading') })],
+    sentence: () => `A chapter of **Piranesi** before bed keeps it moving.`,
   },
   {
-    name: 'Rotation',
+    name: 'Keep in mind',
     p: 0.15,
     kind: 'rotation',
-    reason: 'Two quiet things worth a glance today.',
-    items: [mkItem({ title: 'Remember: bike lock code moved to notes', type: 'KNOW' })],
+    items: [mkItem({ title: 'Bike lock code moved to notes', type: 'KNOW', themes: theme('Home') })],
+    sentence: () => `Worth a glance: the **bike lock code** moved to **notes**.`,
   },
 ];
 
 const items: Record<string, ItemView> = {};
 const bubbles: Bubble[] = defs.map((d, i) => {
   for (const it of d.items) items[it.id] = it;
+  const ids = d.items.map((it) => it.id);
+  const sentence = d.sentence(ids);
   return {
     id: `bub${i}`,
     day: new Date(now).toISOString().slice(0, 10),
     name: d.name,
     kind: d.kind ?? 'situation',
     prominence: d.p,
-    reason: d.reason,
-    itemIds: d.items.map((it) => it.id),
+    reason: sentence.replace(/\*\*|\[|\]\([^)]*\)/g, ''),
+    sentence,
+    firstStep: d.firstStep ?? null,
+    itemIds: ids,
   };
 });
 

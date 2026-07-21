@@ -85,7 +85,13 @@ export interface Bubble {
   name: string;
   kind: 'situation' | 'rotation';
   prominence: number; // 0..1 — size on the map (§6)
-  reason: string; // Brain's one-line rationale, for transparency
+  reason: string; // plain-prose rationale (stripped sentence) for tiles/sheet
+  // The descent card's face (card design doc §1): one marked-up utterance —
+  // **bold** entity/date tokens, [label](itemId) actionable chips. Parsed by
+  // shared/cards.ts; empty string → the card falls back to `reason` as prose.
+  sentence: string;
+  // Nudge construction only (§3): the single first-step ledge action.
+  firstStep: string | null;
   itemIds: string[];
 }
 

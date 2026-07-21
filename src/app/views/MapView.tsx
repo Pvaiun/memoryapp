@@ -69,6 +69,7 @@ export default function MapView({
           day={map.day}
           builtAt={map.builtAt}
           onOpen={setOpenBubble}
+          onToggleComplete={onToggleComplete}
         />
         {bubbleSheet}
       </div>
