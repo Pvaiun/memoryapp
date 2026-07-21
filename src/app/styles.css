@@ -1062,10 +1062,10 @@ textarea:focus {
 .dsc-body {
   position: relative;
   display: block;
-  border-radius: var(--radius);
+  border-radius: 22px;
   border: 1px solid var(--line);
   background: var(--card);
-  padding: 13px 14px 12px 18px; /* left makes room for the rim */
+  padding: 20px 20px 18px 24px; /* left makes room for the rim */
   overflow: hidden; /* the span rail hugs the top edge */
 }
 /* theme accent (§5) — exactly three homes: rim, gauge dot, chip tint */
@@ -1074,16 +1074,17 @@ textarea:focus {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 3px;
-  border-radius: 3px 0 0 3px;
+  width: 4px;
+  border-radius: 4px 0 0 4px;
   background: var(--card-accent);
   pointer-events: none;
   will-change: opacity;
 }
+/* the Brain's words at reading size — the card is the day's one loud voice */
 .dsc-sentence {
   display: block;
-  font-size: 14.5px;
-  line-height: 1.55;
+  font-size: 18px;
+  line-height: 1.6;
   color: var(--text-dim);
 }
 .dsc-tok {
@@ -1094,10 +1095,10 @@ textarea:focus {
 .dsc-chip-tok {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: 1px 0;
-  padding: 2px 9px 2px 6px;
-  border-radius: 8px;
+  gap: 7px;
+  margin: 2px 0;
+  padding: 3px 12px 3px 8px;
+  border-radius: 11px;
   border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
   background: color-mix(in srgb, var(--card-accent) 13%, transparent);
   color: var(--text);
@@ -1113,14 +1114,14 @@ textarea:focus {
 }
 .dsc-box {
   flex: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
   border: 1.5px solid color-mix(in srgb, var(--card-accent) 65%, var(--text-faint));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   color: var(--good);
 }
@@ -1132,9 +1133,9 @@ textarea:focus {
 .dsc-rail {
   position: absolute;
   top: 0;
-  left: 16px;
-  right: 16px;
-  height: 3px;
+  left: 20px;
+  right: 20px;
+  height: 4px;
   border-radius: 0 0 2px 2px;
   background: var(--line-strong);
   pointer-events: none;
@@ -1173,9 +1174,9 @@ textarea:focus {
 /* count (§4): the one legacy channel — corner figure when progress exists */
 .dsc-count {
   position: absolute;
-  top: 9px;
-  right: 12px;
-  font-size: 10.5px;
+  top: 11px;
+  right: 15px;
+  font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
@@ -1202,14 +1203,14 @@ textarea:focus {
 .dsc-ledge {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 11px;
   margin-left: 20px;
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 13px 16px;
+  border-radius: 14px;
   border: 1px solid var(--line);
   background: var(--card);
-  font-size: 12.5px;
-  line-height: 1.35;
+  font-size: 14.5px;
+  line-height: 1.45;
   color: var(--text-dim);
   cursor: pointer;
 }
