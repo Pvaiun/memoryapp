@@ -56,7 +56,7 @@ import type { TrackCard } from './engine';
 // physical map (engine.puckP): cliffs make it fly, crammed shelves make
 // it crawl. The ledger opens over it with room for full names.
 
-const CARD_W = 272; // focus-tier card width — fully on-screen at 390
+const CARD_W = 288; // focus-tier card width — fully on-screen at 390, clear of the gauge lane
 const GAUGE_PAD = 14; // px above/below the scale ends
 const GAUGE_HIT = 24;
 const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
