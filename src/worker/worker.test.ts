@@ -135,6 +135,12 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
     expect(isTodayRelevant({ ...base, cadence: weeklyMon, createdAt: created }, now, tz)).toBe(true);
     expect(isTodayRelevant({ ...base, cadence: weeklyTue, createdAt: '2026-07-07T15:00:00Z' }, now, tz)).toBe(false);
   });
+  it('a weekly rhythm captured TODAY does not count today off its weekday (the check-in bug)', () => {
+    // "weekly on Sun at 11am" created this Monday: the anchor lands today but
+    // today is not a Sunday — the floor must not invent an occurrence.
+    const weeklySun: Cadence = { freq: 'weekly', interval: 1, byWeekday: [0], atTime: '11:00' };
+    expect(isTodayRelevant({ ...base, cadence: weeklySun, createdAt: '2026-07-20T06:00:00Z' }, now, tz)).toBe(false);
+  });
   it('the local day, not the UTC day, decides which occurrence is "today"', () => {
     // 03:30Z Tuesday is 23:30 Monday at UTC-4: a Monday 23:45 rhythm is still
     // ahead today; a Tuesday rhythm is still tomorrow.
