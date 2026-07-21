@@ -101,8 +101,7 @@ const defs: {
       mkItem({ title: 'Payroll', themes: theme('Move') }),
       mkItem({ title: 'Insurance', themes: theme('Move') }),
     ],
-    sentence: (ids) =>
-      `Five **address updates**, one sitting — the [bank](${ids[0]}), the [electoral roll](${ids[1]}), the [dentist](${ids[2]}), [payroll](${ids[3]}), and [insurance](${ids[4]}).`,
+    sentence: () => `Five **address updates**, one sitting — bank, electoral roll, dentist, payroll, insurance.`,
   },
   {
     name: 'Make my will',
