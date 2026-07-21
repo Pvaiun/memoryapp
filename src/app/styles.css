@@ -1273,8 +1273,7 @@ textarea:focus {
   font-size: 11px;
 }
 .dsc-footer {
-  /* below the lowered focal plane (engine FOCUS_FRAC) — clear of the card */
-  bottom: 3%;
+  bottom: 16%;
   font-size: 10px;
 }
 
