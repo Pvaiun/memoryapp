@@ -10,14 +10,13 @@
 // bottom edge as they pass. No lateral weave, no side exits.
 
 export const F = 380; // perspective focal constant — gentler falloff for readability
-export const DEPTH_RANGE = 1100; // p 0..1 → z 0..1100
-export const MIN_SPACING = 150; // pushdown floor between focal planes —
-// similar prominences stretch into an even, readable rhythm; real cliffs
-// still render proportionally bigger
+export const DEPTH_RANGE = 1600; // p 0..1 → z 0..1600 — wide enough that real
+// prominence cliffs render several times the spacing floor and are felt as travel
+export const MIN_SPACING = 140; // pushdown floor between focal planes —
+// similar prominences stretch to a readable step; real cliffs stay big
 export const SCROLL_FACTOR = 1.02; // scrollTop → camera units
 export const TOP_BEFORE = 320; // travel above card 0: the pulled-back overview
-export const BOTTOM_AFTER = 300; // travel past the last card: the empty "end of today" rest
-export const GAUGE_INSET = 12; // scale line sits at W − 12
+export const GAUGE_INSET = 12; // scale line sits 12px in from the gauge edge
 
 // Corridor geometry, as fractions of viewport height.
 export const VP_FRAC = 0.24; // vanishing line
@@ -52,7 +51,7 @@ export function buildTrack(bubbles: { id: string; prominence: number }[]): Track
 }
 
 // Camera ↔ scroll mapping. scrollTop 0 is the pulled-back overview; the
-// far end rests past the last focal plane (the day fully descended).
+// track hard-stops on the last focal plane — there is no travel past it.
 export interface CameraRange {
   cStart: number;
   cEnd: number;
@@ -61,20 +60,48 @@ export interface CameraRange {
 
 export function cameraRange(track: TrackCard[]): CameraRange {
   const cStart = track.length ? track[0].zp - TOP_BEFORE : 0;
-  const cEnd = track.length ? track[track.length - 1].zp + BOTTOM_AFTER : 0;
+  const cEnd = track.length ? track[track.length - 1].zp : 0;
   return { cStart, cEnd, maxScroll: Math.max(0, (cEnd - cStart) / SCROLL_FACTOR) };
 }
 
 export const cameraAt = (cStart: number, scrollTop: number) => cStart + scrollTop * SCROLL_FACTOR;
 export const scrollFor = (cStart: number, c: number) => (c - cStart) / SCROLL_FACTOR;
 
-// The gauge plots the display track: 0 at the loudest card, 1 at the
-// quietest, so dots match the travel between cards exactly.
-export function trackNorm(track: TrackCard[], zp: number): number {
-  if (track.length < 2) return 0;
-  const lo = track[0].zp;
-  const hi = track[track.length - 1].zp;
-  return clamp((zp - lo) / (hi - lo), 0, 1);
+// The gauge scale is fixed and true (linear in p, 1.0 at the top cap).
+// The puck rides it via a piecewise map: on a card's focal plane it sits
+// exactly on that card's true-p dot; between planes it sweeps at whatever
+// rate the physical gap dictates. A big prominence cliff makes the puck
+// fly across real scale distance; a crammed shelf makes it crawl — the
+// display spacing floor is felt on the instrument without falsifying it.
+export function puckP(track: TrackCard[], c: number): number {
+  if (!track.length) return 1;
+  const first = track[0];
+  if (c <= first.zp) {
+    // overview approach: top cap (1.0) → the first card's true p
+    const t = band(c, first.zp - TOP_BEFORE, first.zp);
+    return 1 - t * (1 - first.p);
+  }
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i];
+    const b = track[i + 1];
+    if (c <= b.zp) {
+      const t = (c - a.zp) / (b.zp - a.zp);
+      return a.p + t * (b.p - a.p);
+    }
+  }
+  return track[track.length - 1].p;
+}
+
+// Gauge-side dot collision: dots closer than 6px on the scale shift into
+// a second column, tied to true position by a hairline. Input ys must be
+// in track order (p desc → y ascending).
+export function gaugeColumns(ys: number[]): number[] {
+  const cols: number[] = [];
+  for (let i = 0; i < ys.length; i++) {
+    const prevClose = i > 0 && ys[i] - ys[i - 1] < 6;
+    cols.push(prevClose && cols[i - 1] === 0 ? 1 : 0);
+  }
+  return cols;
 }
 
 // Perspective scale. Grows past focus (the card sweeping under the
@@ -129,9 +156,9 @@ export function passState(d: number): PassState {
 
 export const CULL_BEHIND = -220; // pass complete → card culled
 
-// Card anatomy never collapses (at-a-glance rule: chip, name, count are
-// always present); only the description fades out with distance.
-export const descFade = (s: number) => band(s, 0.6, 0.7);
+// Card anatomy never changes with depth: one card, whole thing fades as
+// one — no lite vs full version. (Depth is carried by scale, position,
+// and the card-level cue table alone.)
 
 // Ledger fanning: rows closer than the gap push down, monotonic.
 export function fanRows(ys: number[], minGap = 26, maxY = Infinity): number[] {
@@ -146,6 +173,21 @@ export function fanRows(ys: number[], minGap = 26, maxY = Infinity): number[] {
   const over = out.length ? out[out.length - 1] - maxY : 0;
   if (over > 0) for (let i = 0; i < out.length; i++) out[i] -= over;
   return out;
+}
+
+// Directional settle: scrolling commits. Once the camera has moved more
+// than the hysteresis past a rest in its direction of travel, settling
+// resolves FORWARD in that direction — it never snaps back against the
+// way you scrolled. A small drift (≤ hysteresis) still returns.
+// `rests` must be ascending, in camera units.
+export function settleTarget(rests: number[], c: number, dir: 1 | -1, hysteresis = 30): number {
+  if (!rests.length) return c;
+  if (dir >= 0) {
+    for (const r of rests) if (r > c - hysteresis) return r;
+    return rests[rests.length - 1];
+  }
+  for (let i = rests.length - 1; i >= 0; i--) if (rests[i] < c + hysteresis) return rests[i];
+  return rests[0];
 }
 
 // The engaged card minimizes |d|.

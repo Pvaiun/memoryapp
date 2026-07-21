@@ -1011,12 +1011,13 @@ textarea:focus {
   overflow: hidden;
   background: var(--bg); /* flat — the indigo glow stays outside (§1) */
 }
+/* settling is our own directional snap (JS) — no CSS scroll-snap, so
+   momentum stays native and rest always resolves forward */
 .dsc-scroller {
   position: absolute;
   inset: 0;
   overflow-y: scroll;
   overscroll-behavior: contain;
-  scroll-snap-type: y mandatory;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -1025,12 +1026,6 @@ textarea:focus {
 }
 .dsc-spacer {
   position: relative;
-}
-.dsc-snap {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  scroll-snap-align: start;
 }
 .dsc-stage {
   position: sticky;
@@ -1131,8 +1126,8 @@ textarea:focus {
 .dsc-header,
 .dsc-footer {
   position: absolute;
-  left: 16px;
-  right: 40px;
+  left: 40px;
+  right: 16px;
   text-align: center;
   color: var(--text-faint);
   pointer-events: none;
@@ -1147,27 +1142,27 @@ textarea:focus {
   font-size: 10px;
 }
 
-/* ----- the gauge (§4) ----- */
+/* ----- the gauge: left edge, fixed true-p scale ----- */
 .dsc-gauge {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   cursor: pointer;
-  z-index: 13; /* above the ledger dim — the instrument never dims (§5) */
+  z-index: 13; /* above the ledger dim — the instrument never dims */
 }
 .dsc-gauge::before {
   /* legibility strip behind the widened instrument */
   content: '';
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
-  width: 44px;
-  background: linear-gradient(to left, rgba(11, 14, 23, 0.92) 40%, transparent);
+  width: 52px;
+  background: linear-gradient(to right, rgba(11, 14, 23, 0.92) 40%, transparent);
   opacity: 0;
   transition: opacity 240ms ease;
   pointer-events: none;
@@ -1178,20 +1173,20 @@ textarea:focus {
 }
 .dsc-scale {
   position: absolute;
-  right: 12px;
+  left: 12px;
   width: 1px;
   background: var(--line-strong);
 }
 .dsc-cap {
   position: absolute;
-  right: 9px;
+  left: 9px;
   width: 7px;
   height: 2px;
   background: var(--line-strong);
 }
 .dsc-tick {
   position: absolute;
-  right: 13px;
+  left: 13px;
   width: 3px;
   height: 1px;
   background: var(--line);
@@ -1199,6 +1194,25 @@ textarea:focus {
 .dsc-tick.major {
   width: 7px;
   background: var(--line-strong);
+}
+.dsc-glabel {
+  position: absolute;
+  left: 24px;
+  font-size: 8.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+}
+.gauge-active .dsc-glabel {
+  opacity: 1;
+  transition-duration: 120ms;
+}
+.dsc-ghair {
+  position: absolute;
+  height: 1px;
+  background: var(--line);
 }
 .dsc-gdot {
   position: absolute;
@@ -1219,7 +1233,7 @@ textarea:focus {
 .dsc-puck {
   position: absolute;
   top: -6px;
-  right: 1px;
+  left: 1px;
   width: 22px;
   height: 12px;
   border-radius: 6px;
@@ -1230,7 +1244,7 @@ textarea:focus {
 .dsc-readout {
   position: absolute;
   top: 0;
-  right: 32px;
+  left: 30px;
   font-size: 10px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -1261,13 +1275,12 @@ textarea:focus {
   opacity: 0.5;
   transition-duration: 120ms;
 }
-/* single expanding ring on a data delta (§4a) */
+/* single expanding ring on a data delta (§4a) — centered on the scale line */
 .dsc-ripple {
   position: absolute;
   width: 12px;
   height: 12px;
-  margin: -6px -6px 0 0;
-  transform: translateX(50%);
+  margin: -6px 0 0 -6px;
   border-radius: 50%;
   border: 1.5px solid currentColor;
   pointer-events: none;
@@ -1275,11 +1288,11 @@ textarea:focus {
 }
 @keyframes dsc-ripple {
   from {
-    transform: translateX(50%) scale(0.3);
+    transform: scale(0.3);
     opacity: 0.9;
   }
   to {
-    transform: translateX(50%) scale(2);
+    transform: scale(2);
     opacity: 0;
   }
 }
@@ -1297,14 +1310,14 @@ textarea:focus {
     opacity: 0;
   }
 }
-/* left-side panel: full names get the room they need; the gauge stays
-   live on the right, above the dim */
+/* left-side panel: full names get the room they need; rows start past
+   the gauge, which stays live above the dim */
 .dsc-ledger {
   position: absolute;
   top: 0;
   left: 0;
   bottom: 0;
-  width: min(78%, 300px);
+  width: min(82%, 320px);
   z-index: 12;
   pointer-events: none;
   background: linear-gradient(to right, rgba(11, 14, 23, 0.97) 62%, transparent);
@@ -1318,7 +1331,7 @@ textarea:focus {
 }
 .dsc-ledger-row {
   position: absolute;
-  left: 16px;
+  left: 44px;
   right: 24px;
   transform: translateY(-50%);
   display: flex;
@@ -1350,6 +1363,7 @@ textarea:focus {
 /* ----- reduced motion (§8) ----- */
 @media (prefers-reduced-motion: reduce) {
   .dsc-gauge::before,
+  .dsc-glabel,
   .dsc-readout,
   .dsc-leader line {
     transition-duration: 150ms;
