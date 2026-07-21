@@ -53,7 +53,14 @@ export function neglectedByDays(
 // anchor = the first/reference occurrence (eventAt for HAPPEN, createdAt for DO).
 export function nextOccurrence(cadence: Cadence, anchorIso: string, from: Date): Date {
   const anchor = new Date(anchorIso);
-  if (anchor.getTime() >= from.getTime()) return anchor;
+  // The anchor is a reference point, not automatically an occurrence: a
+  // "weekly on Sun" DO created on a Tuesday anchors at that Tuesday, and
+  // short-circuiting on it would invent a Tuesday occurrence. Only return the
+  // anchor directly when it matches the cadence's own pattern.
+  const anchorOnPattern =
+    (cadence.freq !== 'weekly' || !cadence.byWeekday?.length || cadence.byWeekday.includes(anchor.getDay())) &&
+    (cadence.freq !== 'monthly' || !cadence.byMonthDay || anchor.getDate() === cadence.byMonthDay);
+  if (anchor.getTime() >= from.getTime() && anchorOnPattern) return anchor;
   const interval = Math.max(1, cadence.interval || 1);
 
   if (cadence.freq === 'daily') {

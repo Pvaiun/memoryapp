@@ -97,6 +97,14 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
     const next = nextOccurrence(daily, '2026-07-10T09:00:00Z', new Date('2026-07-20T12:00:00Z'));
     expect(next.toISOString()).toBe('2026-07-22T09:00:00.000Z');
   });
+  it('an off-pattern anchor is a reference point, not an occurrence', () => {
+    // "weekly on Sunday" anchored at a Tuesday (item created that day): the
+    // next occurrence is Sunday, not the anchor itself echoed back.
+    const weeklySun: Cadence = { freq: 'weekly', interval: 1, byWeekday: [0] };
+    const next = nextOccurrence(weeklySun, '2026-07-21T15:00:00Z', new Date('2026-07-21T04:00:00Z'));
+    expect(next.getDay()).toBe(0);
+    expect(next.getTime()).toBeGreaterThan(new Date('2026-07-25T00:00:00Z').getTime());
+  });
   it('occurrencesBetween respects the window', () => {
     const daily: Cadence = { freq: 'daily', interval: 1 };
     const occ = occurrencesBetween(daily, '2026-07-01T08:00:00Z', new Date('2026-07-20T00:00:00Z'), new Date('2026-07-23T00:00:00Z'));
