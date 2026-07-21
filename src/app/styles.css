@@ -1264,15 +1264,19 @@ textarea:focus {
 /* far form (§6): a peeking top edge — rim color + cropped bold tokens */
 .dsc-far {
   position: absolute;
-  top: 0;
+  /* centered on the card's focal plane — the root centers on the (hidden)
+     near form's height, so a top-anchored strip would float off-plane by
+     half a card and the gauge leader would point at nothing */
+  top: 50%;
+  transform: translateY(-50%);
   left: 0;
   right: 0;
-  padding: 5px 10px 6px 12px;
-  border-radius: 9px;
+  padding: 7px 13px 8px 15px;
+  border-radius: 11px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--card-accent);
   background: var(--card);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
   white-space: nowrap;

@@ -70,8 +70,8 @@ const STORAGE_KEY = 'memory.descent.prev';
 const FAR_START = 55; // d where the full body starts giving way
 const FAR_END = 130; // d where only the far strip remains
 // … and the horizon swallows the rest: only a few peeking edges stay legible.
-const HORIZON_START = 480;
-const HORIZON_END = 900;
+const HORIZON_START = 650;
+const HORIZON_END = 1500;
 
 interface CardEls {
   root: HTMLButtonElement;

@@ -49,11 +49,11 @@ describe('buildTrack', () => {
     expect(track.map((t) => t.id)).toEqual(['c', 'a', 'b']);
   });
 
-  it('renders real cliffs several times the spacing floor — depth is felt', () => {
+  it('renders real cliffs well past the spacing floor — depth is felt', () => {
     const track = buildTrack(SAMPLE);
     const cliff = track[1].zp - track[0].zp; // 0.95 → 0.66
     expect(cliff).toBeCloseTo(0.29 * DEPTH_RANGE); // 464 — untouched
-    expect(cliff / MIN_SPACING).toBeGreaterThan(3);
+    expect(cliff / MIN_SPACING).toBeGreaterThan(2);
   });
 
   it('stretches close prominences to the spacing floor, monotonically', () => {

@@ -12,14 +12,16 @@
 export const F = 380; // perspective focal constant — gentler falloff for readability
 export const DEPTH_RANGE = 1600; // p 0..1 → z 0..1600 — wide enough that real
 // prominence cliffs render several times the spacing floor and are felt as travel
-export const MIN_SPACING = 140; // pushdown floor between focal planes —
-// similar prominences stretch to a readable step; real cliffs stay big
+export const MIN_SPACING = 200; // pushdown floor between focal planes —
+// similar prominences stretch to a readable step; real cliffs stay big.
+// Sized so the reading-scale focus card clears the next approaching strip.
 export const SCROLL_FACTOR = 1.02; // scrollTop → camera units
 export const TOP_BEFORE = 320; // travel above card 0: the pulled-back overview
 export const GAUGE_INSET = 12; // scale line sits 12px in from the gauge edge
 
 // Corridor geometry, as fractions of viewport height.
-export const VP_FRAC = 0.24; // vanishing line
+export const VP_FRAC = 0.12; // vanishing line — high, so the approach uses the
+// whole upper corridor instead of pooling mid-screen
 export const FOCUS_FRAC = 0.62; // focal plane — card center at focus
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
