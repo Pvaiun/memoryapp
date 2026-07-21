@@ -10,8 +10,9 @@
 // bottom edge as they pass. No lateral weave, no side exits.
 
 export const F = 380; // perspective focal constant — gentler falloff for readability
-export const DEPTH_RANGE = 1600; // p 0..1 → z 0..1600 — wide enough that real
-// prominence cliffs render several times the spacing floor and are felt as travel
+export const DEPTH_RANGE = 3200; // p 0..1 → z 0..3200 — wide enough that real
+// prominence cliffs render several times the spacing floor and are felt as travel;
+// the floor doesn't scale with this, so widening it grows cliffs, never shelves
 export const MIN_SPACING = 200; // pushdown floor between focal planes —
 // similar prominences stretch to a readable step; real cliffs stay big.
 // Sized so the reading-scale focus card clears the next approaching strip.

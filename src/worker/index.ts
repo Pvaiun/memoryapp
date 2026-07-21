@@ -60,13 +60,20 @@ app.get('/api/map', async (c) => {
 
 // First-open-of-day rebuild; the client shows a loading screen while this runs.
 // force=true is the user-initiated "Organize now" re-run (bulk-import days).
+// noHistory=true is the workshop variant: the Brain composes without
+// yesterday's groupings (librarian and profile still see full history).
 app.post('/api/map/rebuild', async (c) => {
-  const { day, tzOffsetMinutes, force } = await c.req.json<{ day: string; tzOffsetMinutes?: number; force?: boolean }>();
+  const { day, tzOffsetMinutes, force, noHistory } = await c.req.json<{
+    day: string;
+    tzOffsetMinutes?: number;
+    force?: boolean;
+    noHistory?: boolean;
+  }>();
   if (!day) return c.json({ error: 'day required' }, 400);
   if (typeof tzOffsetMinutes === 'number') {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
-  return c.json(await rebuildMap(c.env, day, !!force));
+  return c.json(await rebuildMap(c.env, day, !!force, !!noHistory));
 });
 
 // The user answers a bubble's break-it-down invitation (§9.2): their typed

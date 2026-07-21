@@ -22,6 +22,7 @@ export default function SettingsSheet({
   onSetNowView,
   onEnablePush,
   onRebuild,
+  onRebuildNoHistory,
   onExport,
   onCopyBrainSnapshot,
   onClose,
@@ -31,6 +32,7 @@ export default function SettingsSheet({
   onSetNowView: (v: NowView) => void;
   onEnablePush: () => void;
   onRebuild: () => void;
+  onRebuildNoHistory: () => void;
   onExport: () => void;
   onCopyBrainSnapshot: () => void;
   onClose: () => void;
@@ -109,6 +111,16 @@ export default function SettingsSheet({
           >
             Rebuild map now
             <small>Re-runs the Brain for today — clusters, summaries, profile</small>
+          </button>
+          <button
+            className="settings-btn"
+            onClick={() => {
+              onClose();
+              onRebuildNoHistory();
+            }}
+          >
+            Rebuild map now — no history
+            <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
           </button>
           {!pushOn && (
             <button

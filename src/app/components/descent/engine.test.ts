@@ -52,7 +52,7 @@ describe('buildTrack', () => {
   it('renders real cliffs well past the spacing floor — depth is felt', () => {
     const track = buildTrack(SAMPLE);
     const cliff = track[1].zp - track[0].zp; // 0.95 → 0.66
-    expect(cliff).toBeCloseTo(0.29 * DEPTH_RANGE); // 464 — untouched
+    expect(cliff).toBeCloseTo(0.29 * DEPTH_RANGE); // 928 — untouched
     expect(cliff / MIN_SPACING).toBeGreaterThan(2);
   });
 
@@ -62,7 +62,7 @@ describe('buildTrack', () => {
       expect(track[i].zp - track[i - 1].zp).toBeGreaterThanOrEqual(MIN_SPACING - 1e-9);
       expect(track[i].zp).toBeGreaterThanOrEqual((1 - track[i].p) * DEPTH_RANGE - 1e-9);
     }
-    // 0.58 → 0.55 is a 48-unit true gap: inflates to exactly the floor
+    // 0.58 → 0.55 is a 96-unit true gap: inflates to exactly the floor
     expect(track[3].zp - track[2].zp).toBeCloseTo(MIN_SPACING);
   });
 
