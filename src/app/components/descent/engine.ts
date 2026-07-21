@@ -5,9 +5,9 @@
 //
 // v2 model (product feedback 2026-07-20): cards are horizontally centered
 // in a tilt-shift corridor. Depth recedes upward — deep cards sit small
-// near a vanishing line in the upper third, descend and grow as they
-// approach, reach focus in the lower-middle, then sweep down off the
-// bottom edge as they pass. No lateral weave, no side exits.
+// near a vanishing line just under the top edge, descend and grow as they
+// approach, reach focus in the lower part of the viewport, then sweep down
+// off the bottom edge as they pass. No lateral weave, no side exits.
 
 export const F = 380; // perspective focal constant — gentler falloff for readability
 export const DEPTH_RANGE = 1600; // p 0..1 → z 0..1600 — wide enough that real
@@ -18,9 +18,13 @@ export const SCROLL_FACTOR = 1.02; // scrollTop → camera units
 export const TOP_BEFORE = 320; // travel above card 0: the pulled-back overview
 export const GAUGE_INSET = 12; // scale line sits 12px in from the gauge edge
 
-// Corridor geometry, as fractions of viewport height.
-export const VP_FRAC = 0.24; // vanishing line
-export const FOCUS_FRAC = 0.62; // focal plane — card center at focus
+// Corridor geometry, as fractions of viewport height. The band spans
+// nearly the whole viewport: deep cards hang just under the top edge and
+// the focal plane sits low, so the corridor doesn't waste vertical space
+// (scale never reaches 0, so the deepest visible card rests a little
+// below VP_FRAC — the vanishing line itself is asymptotic).
+export const VP_FRAC = 0.1; // vanishing line
+export const FOCUS_FRAC = 0.76; // focal plane — card center at focus
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 // 0 at lo, 1 at hi, linear between.
