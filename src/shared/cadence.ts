@@ -120,6 +120,47 @@ export function occurrencesBetween(cadence: Cadence, anchorIso: string, from: Da
   return out;
 }
 
+// Recurring DOs anchor at cadence.atTime, a wall-clock "HH:MM" in the USER'S
+// timezone. The occurrence walk must run in that frame: a Thursday-8pm rhythm
+// at UTC-4 lands on Friday 00:00 UTC, so matching byWeekday against UTC days
+// (or treating "20:00" as UTC) would drift the ping by hours or a whole day.
+// These helpers shift into the user frame, walk, and shift the result back.
+function localAtTimeAnchor(cadence: Cadence, createdAtIso: string, tzMs: number): Date {
+  const [h, m] = (cadence.atTime ?? '00:00').split(':').map(Number);
+  const local = new Date(new Date(createdAtIso).getTime() + tzMs);
+  local.setUTCHours(h, m, 0, 0);
+  return local;
+}
+
+export function nextAtTimeOccurrence(
+  cadence: Cadence,
+  createdAtIso: string,
+  from: Date,
+  tzOffsetMinutes = 0,
+): Date {
+  const tzMs = tzOffsetMinutes * 60_000;
+  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
+  const occ = nextOccurrence(cadence, anchor.toISOString(), new Date(from.getTime() + tzMs));
+  return new Date(occ.getTime() - tzMs);
+}
+
+export function atTimeOccurrencesBetween(
+  cadence: Cadence,
+  createdAtIso: string,
+  from: Date,
+  to: Date,
+  tzOffsetMinutes = 0,
+): Date[] {
+  const tzMs = tzOffsetMinutes * 60_000;
+  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
+  return occurrencesBetween(
+    cadence,
+    anchor.toISOString(),
+    new Date(from.getTime() + tzMs),
+    new Date(to.getTime() + tzMs),
+  ).map((d) => new Date(d.getTime() - tzMs));
+}
+
 function startOfWeek(d: Date): Date {
   const s = new Date(d);
   s.setHours(0, 0, 0, 0);
@@ -127,23 +168,32 @@ function startOfWeek(d: Date): Date {
   return s;
 }
 
-// Human-readable cadence, for the UI.
+// Human-readable cadence, for the UI. atTime is user-local wall clock, so it
+// renders directly with no timezone conversion.
 export function describeCadence(cadence: Cadence): string {
   const interval = Math.max(1, cadence.interval || 1);
   const every = interval === 1 ? 'every' : `every ${interval}`;
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const at = cadence.atTime ? ` at ${describeAtTime(cadence.atTime)}` : '';
   switch (cadence.freq) {
     case 'daily':
-      return interval === 1 ? 'daily' : `every ${interval} days`;
+      return (interval === 1 ? 'daily' : `every ${interval} days`) + at;
     case 'weekly':
       if (cadence.byWeekday?.length) {
         const days = cadence.byWeekday.map((d) => WEEKDAYS[d]).join(', ');
-        return interval === 1 ? `weekly on ${days}` : `${every} weeks on ${days}`;
+        return (interval === 1 ? `weekly on ${days}` : `${every} weeks on ${days}`) + at;
       }
-      return interval === 1 ? 'weekly' : `every ${interval} weeks`;
+      return (interval === 1 ? 'weekly' : `every ${interval} weeks`) + at;
     case 'monthly':
-      return interval === 1 ? 'monthly' : `every ${interval} months`;
+      return (interval === 1 ? 'monthly' : `every ${interval} months`) + at;
     case 'yearly':
-      return interval === 1 ? 'yearly' : `every ${interval} years`;
+      return (interval === 1 ? 'yearly' : `every ${interval} years`) + at;
   }
+}
+
+export function describeAtTime(atTime: string): string {
+  const [h, m] = atTime.split(':').map(Number);
+  const ampm = h >= 12 ? 'pm' : 'am';
+  const hr = ((h + 11) % 12) + 1;
+  return m ? `${hr}:${String(m).padStart(2, '0')}${ampm}` : `${hr}${ampm}`;
 }

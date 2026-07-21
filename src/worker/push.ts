@@ -1,4 +1,4 @@
-import { nextOccurrence } from '../shared/cadence';
+import { nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import type { Effort } from '../shared/types';
 import type { Env } from './env';
 import { getState, listItems, logEvent, newId, nowIso } from './db';
@@ -94,11 +94,9 @@ export function computeDueAlerts(
     }
 
     // Recurring DOs anchored to a time of day — per occurrence, native (§11.4).
+    // atTime is user-local; the occurrence walk runs in the user's frame.
     if (item.type === 'DO' && !item.deadline && item.cadence?.atTime) {
-      const [h, m] = item.cadence.atTime.split(':').map(Number);
-      const anchor = new Date(item.createdAt);
-      anchor.setUTCHours(h, m, 0, 0);
-      const occurrence = nextOccurrence(item.cadence, anchor.toISOString(), new Date(nowMs - 10 * 60_000));
+      const occurrence = nextAtTimeOccurrence(item.cadence, item.createdAt, new Date(nowMs - 10 * 60_000), tzOffsetMinutes);
       const occMs = occurrence.getTime();
       if (nowMs >= occMs && nowMs < occMs + 10 * 60_000) {
         alerts.push({

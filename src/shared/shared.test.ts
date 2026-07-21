@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { isNeglected, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -105,6 +105,25 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
   it('describes cadences', () => {
     expect(describeCadence({ freq: 'daily', interval: 1 })).toBe('daily');
     expect(describeCadence({ freq: 'weekly', interval: 1, byWeekday: [1] })).toContain('Mon');
+  });
+  it('describes the anchor time in the user clock', () => {
+    expect(describeCadence({ freq: 'weekly', interval: 1, byWeekday: [4], atTime: '20:00' })).toBe('weekly on Thu at 8pm');
+    expect(describeCadence({ freq: 'daily', interval: 1, atTime: '09:30' })).toBe('daily at 9:30am');
+  });
+  it('walks atTime occurrences in the user frame, returning UTC instants', () => {
+    // "every Thursday at 8pm" at UTC-4: local Thursday 20:00 is Friday 00:00
+    // UTC — the walk must match byWeekday against LOCAL days, not UTC days.
+    const weekly: Cadence = { freq: 'weekly', interval: 1, byWeekday: [4], atTime: '20:00' };
+    const next = nextAtTimeOccurrence(weekly, '2026-07-01T12:00:00Z', new Date('2026-07-20T00:00:00Z'), -240);
+    expect(next.toISOString()).toBe('2026-07-24T00:00:00.000Z');
+    const occ = atTimeOccurrencesBetween(
+      weekly,
+      '2026-07-01T12:00:00Z',
+      new Date('2026-07-20T00:00:00Z'),
+      new Date('2026-08-03T00:00:00Z'),
+      -240,
+    );
+    expect(occ.map((d) => d.toISOString())).toEqual(['2026-07-24T00:00:00.000Z', '2026-07-31T00:00:00.000Z']);
   });
 });
 
@@ -234,5 +253,18 @@ describe('heuristic fallback parser', () => {
     const r = heuristicParse('call the dentist\nSarah is allergic to nuts', ref, 0);
     expect(r.items.length).toBe(2);
     expect(r.confidence).toBe('low');
+  });
+  it('anchors a recurring DO to its stated clock time', () => {
+    const r = heuristicParse('take out garbage every thursday at 8:00 pm', ref, -240);
+    expect(r.items[0].type).toBe('DO');
+    expect(r.items[0].cadence).toEqual({ freq: 'weekly', interval: 1, byWeekday: [4], atTime: '20:00' });
+    // The time lives in the cadence, not a one-shot deadline; the title keeps
+    // neither the date phrase nor a dangling "every".
+    expect(r.items[0].deadlinePhrase).toBeNull();
+    expect(r.items[0].title).toBe('Take out garbage');
+  });
+  it('a recurring DO without a stated time gets no atTime', () => {
+    const r = heuristicParse('water the plants every monday', ref, 0);
+    expect(r.items[0].cadence).toEqual({ freq: 'weekly', interval: 1, byWeekday: [1] });
   });
 });

@@ -61,7 +61,7 @@ function cleanTitle(text: string): string {
   t = t.replace(/^(remind me to|remember to|don'?t forget to|remember that|note that|note:|todo:?)\s*/i, '');
   // Tidy the seam left where a date phrase was removed mid-sentence:
   // "do taxes by , really important" → "do taxes, really important".
-  t = t.replace(/\s+(at|on|by|before|until|from)(\s+(the|a|an|this|next))?\s*(?=[,.;]|$)/gi, '');
+  t = t.replace(/\s+(at|on|by|before|until|from|every|each)(\s+(the|a|an|this|next))?\s*(?=[,.;]|$)/gi, '');
   t = t.replace(/\s*,\s*,/g, ',').replace(/^[\s,.;]+|[\s,.;]+$/g, '');
   t = t.replace(/\s+/g, ' ').trim();
   return t.length ? t[0].toUpperCase() + t.slice(1) : text.trim();
@@ -82,7 +82,15 @@ export function heuristicParse(raw: string, ref: Date, tzOffsetMinutes?: number)
     }
     const datePhrase = chronoResults.length ? chronoResults[0].text : null;
     const type = inferType(text, !!datePhrase);
-    const cadence = type === 'KNOW' ? null : parseCadencePhrase(text);
+    let cadence = type === 'KNOW' ? null : parseCadencePhrase(text);
+    // A recurring DO with a stated clock time ("every Thursday at 8pm") anchors
+    // its occurrences there. chrono's components are wall-clock as written —
+    // exactly the user-local "HH:MM" cadence.atTime wants.
+    if (cadence && chronoResults.length && chronoResults[0].start.isCertain('hour')) {
+      const h = chronoResults[0].start.get('hour') ?? 0;
+      const m = chronoResults[0].start.get('minute') ?? 0;
+      cadence = { ...cadence, atTime: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` };
+    }
     const ping = PING_CUES.test(text) && !LARGE_EFFORT_CUES.test(text);
     return {
       type,

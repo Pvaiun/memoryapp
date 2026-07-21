@@ -68,6 +68,22 @@ describe('Layer-1 punctual push (§11.4)', () => {
     const items = [{ ...baseItem, status: 'completed', deadline: '2026-07-20T18:00:00Z', deadlineHardness: 'hard' }];
     expect(computeDueAlerts(items, new Date('2026-07-20T17:00:00Z'))).toHaveLength(0);
   });
+
+  it('recurring DO pings at its atTime in the USER timezone, not UTC', () => {
+    // "every Thursday at 8pm" at UTC-4 → occurrences at Fridays 00:00 UTC.
+    const items = [
+      {
+        ...baseItem,
+        cadence: { freq: 'weekly' as const, interval: 1, byWeekday: [4], atTime: '20:00' },
+      },
+    ];
+    // Thu Jul 23 2026 20:02 local = Fri Jul 24 00:02 UTC — inside the 10min window.
+    const a = computeDueAlerts(items, new Date('2026-07-24T00:02:00Z'), -240);
+    expect(a).toHaveLength(1);
+    expect(a[0].occurrenceKey).toBe('2026-07-24T00:00:00.000Z');
+    // 20:02 UTC the same Thursday is only 16:02 local — nothing due yet.
+    expect(computeDueAlerts(items, new Date('2026-07-23T20:02:00Z'), -240)).toHaveLength(0);
+  });
 });
 
 describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
