@@ -62,20 +62,31 @@ app.get('/api/map', async (c) => {
 // force=true is the user-initiated "Organize now" re-run (bulk-import days).
 // noHistory=true is the workshop variant: the Brain composes without
 // yesterday's groupings (librarian and profile still see full history).
-// minimalPrompt=true runs the shootout prompt (objective + contracts only).
+// promptVariant pins a specific Brain prompt for this run (workshop buttons);
+// omitted, the stored preference decides (the morning-prompt toggle).
 app.post('/api/map/rebuild', async (c) => {
-  const { day, tzOffsetMinutes, force, noHistory, minimalPrompt } = await c.req.json<{
+  const { day, tzOffsetMinutes, force, noHistory, promptVariant } = await c.req.json<{
     day: string;
     tzOffsetMinutes?: number;
     force?: boolean;
     noHistory?: boolean;
-    minimalPrompt?: boolean;
+    promptVariant?: 'full' | 'minimal';
   }>();
   if (!day) return c.json({ error: 'day required' }, 400);
   if (typeof tzOffsetMinutes === 'number') {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
-  return c.json(await rebuildMap(c.env, day, !!force, !!noHistory, minimalPrompt ? 'minimal' : 'full'));
+  const variant = promptVariant === 'full' || promptVariant === 'minimal' ? promptVariant : undefined;
+  return c.json(await rebuildMap(c.env, day, !!force, !!noHistory, variant));
+});
+
+// Which Brain prompt the morning rebuild uses — the workshop shootout's
+// longitudinal arm. Stored server-side so first-open-of-day picks it up.
+app.post('/api/settings/brain-prompt', async (c) => {
+  const { variant } = await c.req.json<{ variant: string }>();
+  if (variant !== 'full' && variant !== 'minimal') return c.json({ error: 'variant must be "full" or "minimal"' }, 400);
+  await setState(c.env.DB, 'brain_prompt_variant', variant);
+  return c.json({ ok: true, variant });
 });
 
 // The user answers a bubble's break-it-down invitation (§9.2): their typed
@@ -219,6 +230,7 @@ app.get('/api/status', async (c) => {
     brainModel: c.env.BRAIN_MODEL,
     mapDay: await getState(db, 'map_day'),
     mapBuiltAt: await getState(db, 'map_built_at'),
+    brainPrompt: (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal',
   });
 });
 
