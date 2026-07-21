@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
-import { brainSnapshot, getMap, rebuildMap } from './brain';
+import { addFirstStep, brainSnapshot, getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, listItems, setState, toItemView } from './db';
@@ -67,6 +67,16 @@ app.post('/api/map/rebuild', async (c) => {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
   return c.json(await rebuildMap(c.env, day, !!force));
+});
+
+// The user answers a bubble's break-it-down invitation (§9.2): their typed
+// step becomes a real item on the card. Returns the updated map.
+app.post('/api/bubbles/:id/first-step', async (c) => {
+  const { title } = await c.req.json<{ title: string }>();
+  if (!title?.trim()) return c.json({ error: 'empty step' }, 400);
+  const payload = await addFirstStep(c.env, c.req.param('id'), title);
+  if (!payload) return c.json({ error: 'bubble not found' }, 404);
+  return c.json(payload);
 });
 
 // Brain workshop snapshot: the exact input the Brain sees + the current map

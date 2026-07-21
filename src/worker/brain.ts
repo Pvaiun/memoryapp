@@ -3,13 +3,17 @@ import { describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
+import { embed } from './embeddings';
 import {
+  getItem,
   getState,
+  insertItem,
   listItems,
   listThemes,
   logEvent,
   newId,
   nowIso,
+  setItemThemes,
   setState,
   toItemView,
 } from './db';
@@ -232,6 +236,57 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   return getMap(env, day);
 }
 
+// A bubble's break-it-down invitation, answered (§9.2 nudge): the Brain only
+// invites; the step's content is the user's. Their typed step becomes a real
+// quick DO — inheriting the bubble members' themes, joining the bubble, and
+// appearing on the card as a chip — and the invitation clears.
+export async function addFirstStep(env: Env, bubbleId: string, rawTitle: string): Promise<MapPayload | null> {
+  const db = env.DB;
+  // The title lands inside the card grammar as [title](id) — strip the four
+  // marker characters so a stray bracket can't break the sentence markup.
+  const title = rawTitle.replace(/[[\]()*]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!title) return null;
+
+  const bubble = await db
+    .prepare('SELECT id, day, sentence FROM bubbles WHERE id = ?')
+    .bind(bubbleId)
+    .first<{ id: string; day: string; sentence: string | null }>();
+  if (!bubble) return null;
+
+  const memberRows = await db
+    .prepare('SELECT item_id FROM bubble_items WHERE bubble_id = ?')
+    .bind(bubbleId)
+    .all<{ item_id: string }>();
+  const themeNames: string[] = [];
+  for (const m of memberRows.results) {
+    const member = await getItem(db, m.item_id);
+    for (const t of member?.themes ?? []) {
+      if (!themeNames.includes(t.name)) themeNames.push(t.name);
+    }
+  }
+
+  const ts = nowIso();
+  const itemId = await insertItem(db, {
+    type: 'DO',
+    title,
+    rawText: { ts, text: title },
+    effort: 'quick',
+    embedding: await embed(env, title),
+  });
+  await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
+  await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(ts, itemId).run();
+  await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
+
+  const sentence = `${(bubble.sentence ?? '').trim()} First: [${title}](${itemId}).`.trim().slice(0, 700);
+  await db
+    .prepare('UPDATE bubbles SET sentence = ?, reason = ?, first_step = NULL WHERE id = ?')
+    .bind(sentence, stripSentence(sentence).slice(0, 300), bubbleId)
+    .run();
+  await logEvent(db, 'user', 'first_step_added', { itemId, bubbleId, payload: { title } });
+
+  return getMap(env, bubble.day);
+}
+
 // Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
 // or happening today must reach the map no matter what the Brain decides.
 // Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
@@ -282,7 +337,17 @@ export function brainItemLine(i: ItemView, now: Date): string {
     parts.push('new');
   }
   const recaptures = Math.max(0, i.rawTexts.length - 1);
-  if (recaptures > 0) parts.push(`recaptured=${recaptures}`);
+  if (recaptures > 0) {
+    // Recency is the loud half of the signal: a recapture last night reads
+    // very differently from one three weeks ago. Data only — what to do with
+    // it stays the Brain's call.
+    let when = '';
+    if (i.boostUpdatedAt) {
+      const d = Math.round((now.getTime() - new Date(i.boostUpdatedAt).getTime()) / 86_400_000);
+      when = `(${d <= 0 ? 'today' : `${d}d-ago`})`;
+    }
+    parts.push(`recaptured=${recaptures}${when}`);
+  }
   const themes = i.themes.length ? ` [${i.themes.map((t) => t.name).join(', ')}]` : '';
   return `${i.type} "${i.title}"${themes} ${parts.join(' ')}`;
 }
@@ -393,7 +458,7 @@ ORGANIZING PRINCIPLE: a bubble is a SITUATION or context — the moment the user
 
 PROMINENCE (0.05–1.0) is the scarce resource, not inclusion. There is no cap on bubbles; the map scrolls. Anything important gets a slot even if small. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "do taxes" outranks "call grandma" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A hard deadline today/overdue → prominence near 1.0. A visitor four weeks out → a small persistent dot (~0.1–0.2).
 
-ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N means the user re-entered it N times (behavioural salience).
+ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience).
 
 NON-NEGOTIABLE — TODAY'S DATED ITEMS: every item marked due=today, due=...overdue, or happens=today MUST appear in some bubble. Low priority, optionality, a soft deadline, or profile impressions make a same-day item's bubble SMALLER (≥0.3), never absent; must-do or hard-deadline same-day items sit ≥0.5. Missing a same-day item is this app's cardinal failure.
 
@@ -418,7 +483,7 @@ THE CARD GRAMMAR (only these two marks):
 CONSTRUCTION follows the cluster's shape:
 - Mixed cluster, few actionables → weave facts and 1-3 chips into one utterance.
 - 4+ near-identical siblings → speak of the batch collectively ("Six **address updates**, one sitting — license, bank, work, government."). A progress pip-row renders automatically; never chip or enumerate the items as a list.
-- One big amorphous thing with no date → a bare sentence, no chips, plus "firstStep": ONE concrete ten-minute action ("List your assets in a note — ten minutes."). firstStep is null in every other case.
+- One big amorphous thing with no date → a bare sentence, no chips, plus "firstStep": a short invitation, in your own voice, for the user to name their first ten-minute step ("Name the first ten minutes — what would you start with?"). Their answer becomes a real item on the card. NEVER write the step's content yourself — the breakdown is theirs to make. firstStep is null in every other case.
 - Rotation bubbles read as an offering, not an obligation ("Worth a glance: **umbrellas** live in the **front closet**"), no chips.`;
 
   const { lines, idByAlias } = aliasItems(items, now);
@@ -645,14 +710,36 @@ export function compactEventLines(
   return lines;
 }
 
+// Only in-world signals reach the profile builder — the user living their
+// life, not operating the app. Edits, re-themes, and the librarian's own
+// restructures are filtered out at the source: a profile once described the
+// AI's theme merges as the user's filing habit, and capture then filed new
+// items to match — a feedback loop no prompt instruction reliably prevents.
+// 'created'/'rejected' stay: they feed the draft-churn collapse, and a
+// slow-burn rejection (deciding against a thing) is an in-world signal.
+export const PROFILE_EVENT_TYPES = [
+  'captured',
+  'created',
+  'recaptured',
+  'completed',
+  'completion_reverted',
+  'rejected',
+  'push_sent',
+  'first_step_added',
+];
+
 async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   const db = env.DB;
   if (!llmAvailable(env)) return getState(db, 'profile_text');
 
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const events = await db
-    .prepare('SELECT ts, actor, type, item_id, payload FROM events WHERE ts >= ? ORDER BY ts LIMIT 1500')
-    .bind(since)
+    .prepare(
+      `SELECT ts, actor, type, item_id, payload FROM events
+       WHERE ts >= ? AND type IN (${PROFILE_EVENT_TYPES.map(() => '?').join(',')})
+       ORDER BY ts LIMIT 1500`,
+    )
+    .bind(since, ...PROFILE_EVENT_TYPES)
     .all<{ ts: string; actor: string; type: string; item_id: string | null; payload: string }>();
   if (!events.results.length) return getState(db, 'profile_text');
 
@@ -662,14 +749,13 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) about the USER'S LIFE PATTERNS, for two readers.
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) about the USER'S LIFE PATTERNS, for one reader: the Brain, which builds the daily "what matters now" map.
 
-For the Brain (surfacing): when they check in and complete things; which themes or kinds of items get done promptly, which linger or get quietly ignored; what activity spikes before events; situation names they respond to.
-For Smart Capture (parsing): filing direction (which themes they consolidate toward when re-theming), priority adjustments they repeatedly make, splitting corrections, how they phrase dates and times.
+Describe the user IN THE WORLD, never the user operating the app: when they check in and get things done; which kinds of items get completed promptly and which linger untouched or keep slipping; what they're chronically late on; what activity spikes before real-world events; which pushes get acted on; what they keep coming back to (recaptures).
 
-DO NOT profile app-administration mechanics. Rapid capture→edit→reject cycles, setup sessions, and repeated tweaking while getting an item right are the user OPERATING the app, not living their life — lines marked draft_discarded or (xN) are exactly that churn, pre-collapsed; at most read a filing preference from them, never a verdict on the content. NEVER conclude that a kind of item is a draft, unwanted, or likely to be rejected — wantedness is not yours to judge, and the Brain is forbidden from acting on such claims.
+DO NOT profile app-administration mechanics: how they file, phrase, edit, or reorganize is out of scope — no reader of this profile acts on it, and describing it crowds out the life patterns that matter. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line. NEVER conclude that a kind of item is a draft, unwanted, or likely to be rejected — wantedness is not yours to judge, and the Brain is forbidden from acting on such claims.
 
-Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours judgement, it never gates decisions. No JSON, just the prose.`;
+Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 
   // Deterministically compressed: one line per event, churn collapsed.
   const lines = compactEventLines(events.results, titleById);
@@ -711,17 +797,53 @@ async function librarianPass(env: Env): Promise<void> {
 
   const counts = await db
     .prepare(
-      `SELECT t.id, t.name, COUNT(it.item_id) as n FROM themes t
+      `SELECT t.id, t.name, COUNT(i.id) as n FROM themes t
        LEFT JOIN item_themes it ON it.theme_id = t.id
+       LEFT JOIN items i ON i.id = it.item_id AND i.status = 'active'
        WHERE t.deleted_at IS NULL GROUP BY t.id`,
     )
     .all<{ id: string; name: string; n: number }>();
 
-  const system = `You are the librarian of an emergent theme taxonomy in a personal memory app. Given themes and their item counts, propose AT MOST 3 conservative restructures that make the taxonomy calmer: merge near-duplicate or too-small themes into a better home, or rename an awkward name. Do nothing if the taxonomy is fine — an empty list is a good answer. Reply ONLY JSON: {"ops":[{"op":"merge","fromId":str,"intoId":str,"note":"one-line rationale"}|{"op":"rename","id":str,"newName":str,"note":str}]}`;
+  // Ground the call in what's actually filed: names alone once made the
+  // librarian merge two unrelated 1-item person themes it couldn't see into.
+  const titleRows = await db
+    .prepare(
+      `SELECT it.theme_id, i.title FROM item_themes it
+       JOIN items i ON i.id = it.item_id AND i.status = 'active'
+       ORDER BY i.created_at DESC`,
+    )
+    .all<{ theme_id: string; title: string }>();
+  const titlesByTheme = new Map<string, string[]>();
+  for (const r of titleRows.results) {
+    const list = titlesByTheme.get(r.theme_id) ?? [];
+    if (list.length < 8) list.push(r.title);
+    titlesByTheme.set(r.theme_id, list);
+  }
+
+  // Its own recent restructure notes, read back — context to notice churn
+  // (a theme it merged away that promptly grew back earned its place).
+  const noteRows = await db
+    .prepare('SELECT ts, note FROM theme_notes WHERE ts >= ? ORDER BY ts DESC LIMIT 20')
+    .bind(new Date(Date.now() - 14 * 86_400_000).toISOString())
+    .all<{ ts: string; note: string }>();
+
+  const system = `You are the librarian of an emergent theme taxonomy in a personal memory app. Given each theme with its active-item count and a sample of its items' titles, propose conservative restructures ONLY where the titles themselves establish it: merge two themes when their items are plainly the same subject, or rename a theme whose name misdescribes its items.
+
+THE NORMAL ANSWER IS NO CHANGES. This runs every day and the taxonomy belongs to the user: a small or specific theme is not a problem to fix, so never merge themes just for being small, and never infer a relationship the titles don't show (two one-item themes about different people are different themes). recentRestructures lists your own recent operations — if the user re-created or re-split something you merged, leave it alone; it has earned its place.
+
+At most 3 ops. Reply ONLY JSON: {"ops":[{"op":"merge","fromId":str,"intoId":str,"note":"one-line rationale"}|{"op":"rename","id":str,"newName":str,"note":str}]}`;
 
   const out = await anthropicJson<{
     ops: ({ op: 'merge'; fromId: string; intoId: string; note: string } | { op: 'rename'; id: string; newName: string; note: string })[];
-  }>(env, env.CAPTURE_MODEL, system, JSON.stringify({ themes: counts.results }));
+  }>(
+    env,
+    env.CAPTURE_MODEL,
+    system,
+    JSON.stringify({
+      themes: counts.results.map((t) => ({ id: t.id, name: t.name, count: t.n, titles: titlesByTheme.get(t.id) ?? [] })),
+      recentRestructures: noteRows.results.map((r) => `${r.ts.slice(0, 10)} ${r.note}`),
+    }),
+  );
 
   for (const op of (out.ops ?? []).slice(0, 3)) {
     if (op.op === 'merge') {

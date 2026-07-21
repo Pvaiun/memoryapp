@@ -92,7 +92,8 @@ export interface Bubble {
   // **bold** entity/date tokens, [label](itemId) actionable chips. Parsed by
   // shared/cards.ts; empty string → the card falls back to `reason` as prose.
   sentence: string;
-  // Nudge construction only (§3): the single first-step ledge action.
+  // Nudge construction only (§3): the Brain's break-it-down invitation. The
+  // user's answer becomes a real item on the card, and this clears to null.
   firstStep: string | null;
   itemIds: string[];
 }

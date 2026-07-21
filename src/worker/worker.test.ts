@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
-import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant } from './brain';
+import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant, PROFILE_EVENT_TYPES } from './brain';
 import type { ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
@@ -193,6 +193,20 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('seen=today');
   });
 
+  it('recapture recency renders from the boost anchor; absent anchor stays bare', () => {
+    const recaptured = {
+      ...baseView,
+      rawTexts: [{ ts: '', text: 'a' }, { ts: '', text: 'b' }],
+    } as unknown as ItemView;
+    expect(brainItemLine({ ...recaptured, boostUpdatedAt: '2026-07-19T05:00:00Z' } as ItemView, now)).toContain(
+      'recaptured=1(1d-ago)',
+    );
+    expect(brainItemLine({ ...recaptured, boostUpdatedAt: '2026-07-20T09:00:00Z' } as ItemView, now)).toContain(
+      'recaptured=1(today)',
+    );
+    expect(brainItemLine(recaptured, now)).toMatch(/recaptured=1$/);
+  });
+
   it('aliasItems maps short ids back to real ids', () => {
     const { lines, idByAlias } = aliasItems([baseView, { ...baseView, id: 'y' } as ItemView], now);
     expect(lines[0].startsWith('i1 ')).toBe(true);
@@ -253,6 +267,18 @@ describe('compactEventLines — churn compression for the profile builder', () =
     );
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('(x2)');
+  });
+
+  it('the profile builder sees in-world events only — no app-admin mechanics', () => {
+    for (const t of ['captured', 'recaptured', 'completed', 'push_sent']) {
+      expect(PROFILE_EVENT_TYPES).toContain(t);
+    }
+    // The librarian's restructures and the user's filing/editing gestures must
+    // never reach the profile — describing them as habits fed capture a
+    // self-reinforcing "consolidate everything" signal.
+    for (const t of ['edited', 're_themed', 'theme_merged', 'theme_renamed', 'map_rebuilt']) {
+      expect(PROFILE_EVENT_TYPES).not.toContain(t);
+    }
   });
 
   it('slow-burn rejections are NOT draft churn', () => {

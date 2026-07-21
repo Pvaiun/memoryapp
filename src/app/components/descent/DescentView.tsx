@@ -63,7 +63,6 @@ const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
 const SETTLE_HYST = 30; // camera units of drift that still return backward
 
 const STORAGE_KEY = 'memory.descent.prev';
-const LEDGE_KEY_PREFIX = 'memory.descent.ledge.';
 // Focus owns the viewport (§6): anything deeper than half a spacing step has
 // already collapsed to its far form — rim color plus cropped bold tokens.
 // FAR_END stays under the spacing floor (engine MIN_SPACING) so a card at
@@ -124,6 +123,7 @@ export default function DescentView({
   builtAt,
   onOpen,
   onToggleComplete,
+  onAddFirstStep,
 }: {
   bubbles: Bubble[];
   items: Record<string, ItemView>;
@@ -131,6 +131,7 @@ export default function DescentView({
   builtAt: string | null;
   onOpen: (bubble: Bubble) => void;
   onToggleComplete: (item: ItemView) => void;
+  onAddFirstStep?: (bubbleId: string, title: string) => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -757,31 +758,25 @@ export default function DescentView({
     [onToggleComplete],
   );
 
-  // First-step ledge (§3): the checked state is presentation-only — the big
-  // task itself stays open — so it lives per-day in localStorage, not the DB.
-  const ledgeKey = `${LEDGE_KEY_PREFIX}${day}`;
-  const [ledgeDone, setLedgeDone] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(ledgeKey) ?? '{}');
-    } catch {
-      return {};
-    }
-  });
-  const toggleLedge = useCallback(
-    (e: ReactMouseEvent, bubbleId: string) => {
-      e.stopPropagation();
-      setLedgeDone((prev) => {
-        const next = { ...prev, [bubbleId]: !prev[bubbleId] };
-        try {
-          localStorage.setItem(ledgeKey, JSON.stringify(next));
-        } catch {
-          /* private mode — the tick just won't persist */
-        }
-        return next;
-      });
-    },
-    [ledgeKey],
-  );
+  // First-step ledge (§3): the Brain's break-it-down invitation. Tapping opens
+  // the composer; the typed step becomes a real item on the card (the server
+  // clears firstStep and appends the step as a chip), so no local state to keep.
+  const [breakdownFor, setBreakdownFor] = useState<string | null>(null);
+  const [stepText, setStepText] = useState('');
+  const openBreakdown = useCallback((e: ReactMouseEvent, bubbleId: string) => {
+    e.stopPropagation();
+    setStepText('');
+    setBreakdownFor(bubbleId);
+  }, []);
+  const submitStep = useCallback(() => {
+    const title = stepText.trim();
+    if (!title || !breakdownFor) return;
+    // Optimistic close: the refreshed map swaps the invitation for the chip;
+    // on failure the invitation is still there to try again.
+    onAddFirstStep?.(breakdownFor, title);
+    setBreakdownFor(null);
+    setStepText('');
+  }, [stepText, breakdownFor, onAddFirstStep]);
 
   // ----- ledger -----------------------------------------------------------
   const pickFromLedger = useCallback(
@@ -901,7 +896,6 @@ export default function DescentView({
                   const b = info.bubble;
                   const rotation = b.kind === 'rotation';
                   const showLedge = info.construction === 'nudge' && b.firstStep && !info.settled;
-                  const stepDone = !!ledgeDone[b.id];
                   const showCount = !rotation && !info.settled && !info.notch && info.total >= 2;
                   return (
                     <button
@@ -960,14 +954,9 @@ export default function DescentView({
                           )}
                         </span>
                         {showLedge && (
-                          <span
-                            role="checkbox"
-                            aria-checked={stepDone}
-                            className={`dsc-ledge${stepDone ? ' done' : ''}`}
-                            onClick={(e) => toggleLedge(e, b.id)}
-                          >
+                          <span role="button" className="dsc-ledge" onClick={(e) => openBreakdown(e, b.id)}>
                             <span className="dsc-box" aria-hidden>
-                              {stepDone ? '✓' : ''}
+                              ＋
                             </span>
                             <span className="dsc-ledge-text">{b.firstStep}</span>
                           </span>
@@ -990,6 +979,30 @@ export default function DescentView({
           <svg className="dsc-leader" width={vw} height={vh} aria-hidden>
             <line ref={leaderRef} x1={0} y1={0} x2={0} y2={0} />
           </svg>
+
+          {breakdownFor && (
+            <>
+              <div className="dsc-dim" onClick={() => setBreakdownFor(null)} />
+              <div className="dsc-breakdown">
+                <div className="dsc-breakdown-invite">{infos.get(breakdownFor)?.bubble.firstStep}</div>
+                <div className="dsc-breakdown-row">
+                  <input
+                    autoFocus
+                    value={stepText}
+                    placeholder="The first ten minutes…"
+                    onChange={(e) => setStepText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitStep();
+                      if (e.key === 'Escape') setBreakdownFor(null);
+                    }}
+                  />
+                  <button disabled={!stepText.trim()} onClick={submitStep}>
+                    Add
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
           {ledgerOpen && (
             <>

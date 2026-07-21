@@ -107,7 +107,7 @@ const defs: {
     p: 0.42,
     items: [mkItem({ title: 'Sort out the will', effort: 'large', themes: theme('Life-Admin') })],
     sentence: () => `**The will** is still waiting on its **first step** — no date, nothing started.`,
-    firstStep: 'List your assets in a note — ten minutes.',
+    firstStep: 'Name the first ten minutes — what would you start with?',
   },
   {
     name: 'Gym rhythm',

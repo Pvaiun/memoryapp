@@ -1116,8 +1116,7 @@ textarea:focus {
   line-height: 1;
   color: var(--good);
 }
-.dsc-chip-tok.done .dsc-box,
-.dsc-ledge.done .dsc-box {
+.dsc-chip-tok.done .dsc-box {
   border-color: var(--line-strong);
 }
 /* span rail (§4): duration on the card's top edge, today-marked —
@@ -1190,7 +1189,8 @@ textarea:focus {
 .dsc-pip.filled {
   background: color-mix(in srgb, var(--card-accent) 70%, transparent);
 }
-/* first-step ledge (§3): one small door under a nudge, never a list */
+/* first-step ledge (§3): one small door under a nudge, never a list —
+   now the Brain's break-it-down invitation; tapping opens the composer */
 .dsc-ledge {
   display: flex;
   align-items: center;
@@ -1205,9 +1205,52 @@ textarea:focus {
   color: var(--text-dim);
   cursor: pointer;
 }
-.dsc-ledge.done .dsc-ledge-text {
-  text-decoration: line-through;
-  color: var(--text-faint);
+/* break-it-down composer: the invitation answered in place, user's words */
+.dsc-breakdown {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 28%;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  animation: dsc-fade 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dsc-breakdown-invite {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.dsc-breakdown-row {
+  display: flex;
+  gap: 8px;
+}
+.dsc-breakdown-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+.dsc-breakdown-row button {
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 650;
+  cursor: pointer;
+}
+.dsc-breakdown-row button:disabled {
+  opacity: 0.45;
 }
 /* far form (§6): a peeking top edge — rim color + cropped bold tokens */
 .dsc-far {
