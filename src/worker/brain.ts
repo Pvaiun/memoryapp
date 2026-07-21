@@ -158,10 +158,13 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
     .all<{ name: string }>();
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
+  const input = brainInput(day, items, previous, nameVocabulary, profileText, now);
   let proposed: ProposedBubble[];
+  let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, day, items, previous, nameVocabulary, profileText);
+      proposed = await llmBuildBubbles(env, input);
+      mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
       proposed = fallbackBubbles(items, now);
@@ -237,6 +240,9 @@ export async function rebuildMap(env: Env, day: string, force = false, noHistory
 
   await setState(db, 'map_day', day);
   await setState(db, 'map_built_at', ts);
+  // What the Brain was actually called with — the debug snapshot's source of
+  // truth (a fresh reconstruction would drift and hide noHistory/fallback runs).
+  await setState(db, 'brain_last_input', JSON.stringify({ day, builtAt: ts, mode, noHistory, payload: input.payload }));
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
@@ -457,35 +463,16 @@ export function aliasItems(items: ItemView[], now: Date): { lines: string[]; idB
 }
 
 // Debug snapshot for workshopping the Brain (§9.2 tuning loop): the exact
-// input the Brain would see right now, paired with the current map output.
-// Compact by construction — no raw log, no embeddings, no captures.
+// input the Brain was called with on the last rebuild (stored at build time,
+// never reconstructed — reconstruction drifts as items change and lies about
+// noHistory/fallback runs), paired with the current map output.
 export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
   const db = env.DB;
-  const now = new Date();
-  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
 
-  const nameRows = await db
-    .prepare('SELECT DISTINCT name FROM bubbles ORDER BY created_at DESC LIMIT 40')
-    .all<{ name: string }>();
-
-  const prevDay = await db
-    .prepare('SELECT day FROM bubbles WHERE day < ? ORDER BY day DESC LIMIT 1')
-    .bind(day)
-    .first<{ day: string }>();
-  let previouslyShown: { name: string; itemTitles: string[] }[] = [];
-  if (prevDay) {
-    const rows = await db
-      .prepare(
-        `SELECT b.name, i.title FROM bubbles b
-         JOIN bubble_items bi ON bi.bubble_id = b.id
-         JOIN items i ON i.id = bi.item_id WHERE b.day = ?`,
-      )
-      .bind(prevDay.day)
-      .all<{ name: string; title: string }>();
-    const byName = new Map<string, string[]>();
-    for (const r of rows.results) byName.set(r.name, [...(byName.get(r.name) ?? []), r.title]);
-    previouslyShown = [...byName.entries()].map(([name, itemTitles]) => ({ name, itemTitles }));
-  }
+  const stored = await getState(db, 'brain_last_input');
+  const last = stored
+    ? (JSON.parse(stored) as { day: string; builtAt: string; mode: string; noHistory: boolean; payload: unknown })
+    : null;
 
   const bubbleRows = await db
     .prepare('SELECT id, name, kind, prominence, sentence, first_step FROM bubbles WHERE day = ? ORDER BY prominence DESC')
@@ -504,13 +491,11 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
   return {
     kind: 'memory-brain-snapshot',
     day,
-    builtAt: await getState(db, 'map_built_at'),
-    input: {
-      items: aliasItems(items, now).lines,
-      userProfile: await getState(db, 'profile_text'),
-      recentNameVocabulary: nameRows.results.map((r) => r.name),
-      previouslyShown_reuseOnlyIfStillApt: previouslyShown,
-    },
+    builtAt: last?.builtAt ?? (await getState(db, 'map_built_at')),
+    // How the last build ran: llm vs fallback, and whether yesterday's
+    // groupings were withheld (the no-history workshop rebuild).
+    build: last ? { day: last.day, mode: last.mode, noHistory: last.noHistory } : null,
+    input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
     output: bubbleRows.results.map((b) => ({
       name: b.name,
       kind: b.kind,
@@ -534,16 +519,38 @@ interface ProposedBubble {
 
 // ---------- The top-tier Brain call (§9.2) ----------
 
-async function llmBuildBubbles(
-  env: Env,
+// The exact user-side payload the Brain is called with. Built once per
+// rebuild, sent to the model, and persisted verbatim (brain_last_input) so
+// the debug snapshot reports what the Brain actually saw — a reconstruction
+// drifts as items change and lies about withheld history.
+export interface BrainInput {
+  payload: Record<string, unknown>;
+  idByAlias: Map<string, string>;
+}
+
+export function brainInput(
   day: string,
   items: ItemView[],
   previous: { name: string; itemTitles: string[] }[],
   nameVocabulary: string[],
   profileText: string | null,
-): Promise<ProposedBubble[]> {
-  const now = new Date();
+  now: Date,
+): BrainInput {
+  const { lines, idByAlias } = aliasItems(items, now);
+  return {
+    payload: {
+      today: day,
+      weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
+      items: lines,
+      userProfile: profileText,
+      recentNameVocabulary: nameVocabulary,
+      previouslyShown_reuseOnlyIfStillApt: previous,
+    },
+    idByAlias,
+  };
+}
 
+async function llmBuildBubbles(env: Env, input: BrainInput): Promise<ProposedBubble[]> {
   const system = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
 ORGANIZING PRINCIPLE: a bubble is a reason to act as one unit — build from what today's items actually offer, never from a template. Reasons that recur: an approaching event that just needs seeing; dated must-dos; a handful of small DOs that could fall in one burst because they share a context ("while the kettle boils", "one errand loop"), whatever their topics; one big amorphous thing plus its break-it-down invitation; a couple of facts worth keeping warm. Most days only some of these exist, and some days the right card fits none of these shapes — if a grouping has a clear reason to act as one unit, compose it. Never force a kind onto a day that doesn't contain it, and never pad the map to have one of each. What you don't build: time-buckets ("due this week" is sorting, not acting) and theme-groupings (the browse view owns those). Yours is activation: this user starts hard and, once started, keeps going — one good bundle turns a single activation into several completions, where five separate small cards would each demand their own.
@@ -582,15 +589,8 @@ CONSTRUCTION follows the cluster's shape:
 - One big or long-stalled thing with no date → a bare sentence, no chips, plus "firstStep": a short, direct invitation in your own voice, shaped by what would unstick THIS thing. Ask for a breakdown when it's big and formless; ask for a when, when the user plainly wants it and just never starts; ask for the tiny first move when it's obvious. Shapes from other lives: a looming attic clear-out — "Which corner would you start with?"; a guitar gathering dust — "Want to pick a night this week?". The user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). NEVER write the step's content yourself. firstStep is null in every other case.
 - Rotation bubbles read as an offering, not an obligation ("Worth a glance: the **spare key** lives with **Marta downstairs**"), no chips.`;
 
-  const { lines, idByAlias } = aliasItems(items, now);
-  const user = JSON.stringify({
-    today: day,
-    weekday: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${day}T12:00:00Z`).getUTCDay()],
-    items: lines,
-    userProfile: profileText,
-    recentNameVocabulary: nameVocabulary,
-    previouslyShown_reuseOnlyIfStillApt: previous,
-  });
+  const { idByAlias } = input;
+  const user = JSON.stringify(input.payload);
 
   const out = await anthropicJson<{ bubbles: ProposedBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
   return (out.bubbles ?? [])
