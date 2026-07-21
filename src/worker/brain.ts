@@ -112,16 +112,10 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
     console.error('profile recompute failed', err);
     profileText = await getState(db, 'profile_text');
   }
-  // The librarian tidies once per day, on the first-open rebuild only. A
-  // forced re-run is about folding new captures into bubbles — and since the
-  // librarian can only merge/rename (never split), re-running it mid-day
-  // can't repair anything, only churn the taxonomy again.
-  if (!force) {
-    try {
-      await librarianPass(env);
-    } catch (err) {
-      console.error('librarian pass failed', err);
-    }
+  try {
+    await librarianPass(env);
+  } catch (err) {
+    console.error('librarian pass failed', err);
   }
 
   const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
