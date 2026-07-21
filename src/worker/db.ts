@@ -86,7 +86,7 @@ export function toItemView(item: Item, now: Date): ItemView {
   };
 }
 
-async function themesForItems(db: D1Database, itemIds: string[]): Promise<Map<string, Theme[]>> {
+export async function themesForItems(db: D1Database, itemIds: string[]): Promise<Map<string, Theme[]>> {
   const map = new Map<string, Theme[]>();
   if (!itemIds.length) return map;
   // D1 bind-parameter limit is generous, but chunk to stay safe.

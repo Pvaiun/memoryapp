@@ -1001,9 +1001,6 @@ textarea:focus {
   height: 100%;
   min-height: 0;
 }
-.descent-wrap .captured-today {
-  margin: 8px 16px 4px;
-}
 .dsc-viewport {
   position: relative;
   flex: 1;
@@ -1230,6 +1227,60 @@ textarea:focus {
   pointer-events: none;
   will-change: opacity;
 }
+/* ----- the surface: captures the Brain hasn't weighed ----- */
+/* Above the vanishing point, above depth zero — structurally unprocessed,
+   never labelled so. The rAF loop drives opacity/translate: present in the
+   overview, sliding off as the dolly dives. No header, no chrome; an empty
+   surface renders as nothing. */
+.dsc-surface {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0; /* first frame fills in real values */
+  z-index: 30; /* over the far strips it tucks toward, under the gauge */
+  will-change: transform, opacity;
+}
+/* hollow sliver: far-form geometry, but the rim is dotted — the visual
+   voice of "not yet woven", rhyming with rotation's dashed offering — and
+   the text is the user's own capture verbatim */
+.dsc-surf {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 5px 10px 6px 12px;
+  border-radius: 9px;
+  border: 1px dotted var(--line-strong);
+  border-left: 3px dotted color-mix(in srgb, var(--surf-accent) 60%, transparent);
+  background: var(--bg); /* hollow — no card fill, just occlusion */
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+}
+/* flight receipt: a filed capture flying from the capture bar into its
+   bubble — created imperatively, removed on landing */
+.dsc-flight {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 230px;
+  padding: 5px 10px 6px 12px;
+  border-radius: 9px;
+  border: 1px dotted var(--line-strong);
+  border-left: 3px solid var(--surf-accent, var(--accent));
+  background: var(--card);
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 10;
+}
+
 /* rotation (§4): dashed frame — offered for a glance, never owed */
 .dsc-card.rotation .dsc-body,
 .dsc-card.rotation .dsc-far {
@@ -1329,6 +1380,15 @@ textarea:focus {
 .dsc-tick.major {
   width: 7px;
   background: var(--line-strong);
+}
+/* surface ticks: floating captures, above the cap and OFF the scale —
+   unweighed items have no place on a prominence axis */
+.dsc-stick {
+  position: absolute;
+  left: 10px;
+  width: 5px;
+  height: 1.5px;
+  background: var(--text-faint);
 }
 .dsc-glabel {
   position: absolute;

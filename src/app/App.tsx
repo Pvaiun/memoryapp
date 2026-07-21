@@ -37,7 +37,16 @@ interface Toast {
   action?: { label: string; fn: () => void };
 }
 
+// A pending fly-into-bubble receipt (surface spec): a capture filed into a
+// live bubble animates from the capture bar to that bubble in the corridor.
+export interface Flight {
+  key: number;
+  bubbleId: string;
+  text: string;
+}
+
 let toastSeq = 1;
+let flightSeq = 1;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('map');
@@ -68,6 +77,10 @@ export default function App() {
   const [captureText, setCaptureText] = useState('');
   const [capturing, setCapturing] = useState(false);
   const [pushOn, setPushOn] = useState<boolean | null>(null);
+  // Flight receipts play once the review sheet is out of the way — the
+  // corridor has to be visible for the animation to be a receipt at all.
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const pendingFlightsRef = useRef<Flight[]>([]);
   const [locked, setLocked] = useState(false);
   const [listening, setListening] = useState(false);
   const captureRef = useRef<HTMLTextAreaElement>(null);
@@ -122,6 +135,14 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [loadMap]);
+
+  // Flights are one-shot: clear shortly after handing them to the corridor so
+  // a later remount of the view can never replay a stale receipt.
+  useEffect(() => {
+    if (!flights.length) return;
+    const t = setTimeout(() => setFlights([]), 3000);
+    return () => clearTimeout(t);
+  }, [flights]);
 
   useEffect(() => {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) {
@@ -184,18 +205,40 @@ export default function App() {
     setCaptureText('');
     try {
       const res = await api.capture(text);
-      // New items land in Captured Today instantly (§9.1).
+      // Unfiled items float on the surface instantly (§9.1's deterministic
+      // bucket); filed ones join their bubble — count and sheet are live,
+      // the sentence stays a morning snapshot.
+      const filedBy = new Map((res.filed ?? []).map((f) => [f.itemId, f.bubbleId]));
       setMap((m) => {
         if (!m) return m;
         const items = { ...m.items };
         for (const it of res.created) items[it.id] = it;
         for (const b of res.boosted) items[b.item.id] = b.item;
+        const bubbles = m.bubbles.map((b) => {
+          const add = res.created
+            .filter((it) => filedBy.get(it.id) === b.id && !b.itemIds.includes(it.id))
+            .map((it) => it.id);
+          return add.length ? { ...b, itemIds: [...b.itemIds, ...add] } : b;
+        });
         return {
           ...m,
           items,
-          capturedToday: [...res.created.map((i) => i.id), ...m.capturedToday],
+          bubbles,
+          capturedToday: [
+            ...res.created.filter((i) => !filedBy.has(i.id)).map((i) => i.id),
+            ...m.capturedToday,
+          ],
         };
       });
+      pendingFlightsRef.current = pendingFlightsRef.current.concat(
+        (res.filed ?? []).map((f) => {
+        const boost = res.boosted.find((b) => b.item.id === f.itemId);
+        const made = res.created.find((i) => i.id === f.itemId);
+        // The flight carries the user's words verbatim, never a rewrite.
+          const text = boost?.appendedText ?? made?.rawTexts[0]?.text ?? made?.title ?? '';
+          return { key: flightSeq++, bubbleId: f.bubbleId, text };
+        }),
+      );
       setRefreshKey((k) => k + 1);
       // Review is part of the flow (user decision): every capture ends at the
       // review sheet. Items are already created; dismissing accepts as-is.
@@ -461,6 +504,7 @@ export default function App() {
           <MapView
             map={map}
             nowView={nowView}
+            flights={flights}
             onOpenItem={setOpenItem}
             onToggleComplete={toggleComplete}
             onOrganizeNow={organizeNow}
@@ -546,7 +590,13 @@ export default function App() {
           onOpenItem={setOpenItem}
           onToggleComplete={toggleComplete}
           onUndoBoost={undoBoost}
-          onClose={() => setReview(null)}
+          onClose={() => {
+            setReview(null);
+            if (pendingFlightsRef.current.length) {
+              setFlights(pendingFlightsRef.current);
+              pendingFlightsRef.current = [];
+            }
+          }}
         />
       )}
 

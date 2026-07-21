@@ -16,6 +16,7 @@ import {
   nowIso,
   setItemThemes,
   syncFts,
+  themesForItems,
   toItemView,
   updateItemFields,
 } from './db';
@@ -141,7 +142,19 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
     if (item) created.push(toItemView(item, now));
   }
 
-  // 5. Nudge only when the parse warrants it (§10.1).
+  // 5. File into the live map where the tag is unambiguous (surface spec):
+  //    a capture carrying an existing bubble's theme joins that bubble NOW —
+  //    membership only (count + sheet are live; the sentence is a morning
+  //    snapshot, never rewritten mid-day). Everything else floats on the
+  //    surface until tomorrow's Brain pass. Advisory: failure never blocks.
+  let filed: CaptureResponse['filed'] = [];
+  try {
+    filed = await fileIntoLiveMap(db, created, boosted, captureId);
+  } catch (err) {
+    console.error('capture filing failed', err);
+  }
+
+  // 6. Nudge only when the parse warrants it (§10.1).
   const nudge: CaptureResponse['nudge'] = boosted.length
     ? 'merge'
     : parsed.items.length > 1
@@ -150,7 +163,113 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         ? 'low-confidence'
         : null;
 
-  return { captureId, rawText: req.text, created, boosted, nudge };
+  return { captureId, rawText: req.text, created, boosted, filed, nudge };
+}
+
+// ---------- capture-time filing (surface spec) ----------
+
+export interface FilingBubble {
+  id: string;
+  kind: string;
+  prominence: number;
+  memberIds: string[];
+  memberPrimaryThemes: string[]; // themes[0] per member, holes dropped
+}
+
+// Majority-of-first-themes, first-seen wins ties — the same anchor rule the
+// card's theme accent uses (shared/cards.ts anchorThemeName), so a capture
+// files into exactly the bubble whose rim already wears its hue.
+function anchorOfThemes(names: string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
+  let best: string | null = null;
+  let bestN = 0;
+  for (const n of names) {
+    const c = counts.get(n)!;
+    if (c > bestN) {
+      best = n;
+      bestN = c;
+    }
+  }
+  return best;
+}
+
+// The tag must be unambiguous to file: one of the item's themes IS a live
+// situation bubble's anchor theme (case-insensitive). Rotation bubbles never
+// receive captures — rehearsal is an offering, not a filing home. Prefer the
+// item's foremost matching theme, then the louder bubble.
+export function fileTarget(itemThemes: string[], bubbles: FilingBubble[]): string | null {
+  const wanted = itemThemes.map((t) => t.toLowerCase());
+  let best: { id: string; themeIdx: number; prominence: number } | null = null;
+  for (const b of bubbles) {
+    if (b.kind !== 'situation') continue;
+    const anchor = anchorOfThemes(b.memberPrimaryThemes);
+    if (!anchor) continue;
+    const idx = wanted.indexOf(anchor.toLowerCase());
+    if (idx < 0) continue;
+    if (!best || idx < best.themeIdx || (idx === best.themeIdx && b.prominence > best.prominence)) {
+      best = { id: b.id, themeIdx: idx, prominence: b.prominence };
+    }
+  }
+  return best?.id ?? null;
+}
+
+async function fileIntoLiveMap(
+  db: D1Database,
+  created: ItemView[],
+  boosted: { item: ItemView; appendedText: string }[],
+  captureId: string,
+): Promise<{ itemId: string; bubbleId: string }[]> {
+  if (!created.length && !boosted.length) return [];
+  const mapDay = await getState(db, 'map_day');
+  if (!mapDay) return [];
+
+  const rows = await db
+    .prepare(
+      'SELECT b.id, b.kind, b.prominence, bi.item_id FROM bubbles b JOIN bubble_items bi ON bi.bubble_id = b.id WHERE b.day = ?',
+    )
+    .bind(mapDay)
+    .all<{ id: string; kind: string; prominence: number; item_id: string }>();
+  if (!rows.results.length) return [];
+
+  const themeMap = await themesForItems(db, [...new Set(rows.results.map((r) => r.item_id))]);
+  const byBubble = new Map<string, FilingBubble>();
+  for (const r of rows.results) {
+    const b = byBubble.get(r.id) ?? {
+      id: r.id,
+      kind: r.kind,
+      prominence: r.prominence,
+      memberIds: [],
+      memberPrimaryThemes: [],
+    };
+    b.memberIds.push(r.item_id);
+    const primary = themeMap.get(r.item_id)?.[0]?.name;
+    if (primary) b.memberPrimaryThemes.push(primary);
+    byBubble.set(r.id, b);
+  }
+  const bubbles = [...byBubble.values()];
+
+  const filed: { itemId: string; bubbleId: string }[] = [];
+
+  // A boost's item may already be woven in — report its home so the client
+  // can play the receipt; no membership change needed.
+  for (const b of boosted) {
+    const home = bubbles
+      .filter((x) => x.memberIds.includes(b.item.id))
+      .sort((x, y) => y.prominence - x.prominence)[0];
+    if (home) filed.push({ itemId: b.item.id, bubbleId: home.id });
+  }
+
+  for (const item of created) {
+    const target = fileTarget(item.themes.map((t) => t.name), bubbles);
+    if (!target) continue;
+    await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(target, item.id).run();
+    // It reached the map today — record that for tomorrow's "seen=" signal.
+    await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(nowIso(), item.id).run();
+    await logEvent(db, 'ai', 'filed', { itemId: item.id, bubbleId: target, payload: { captureId } });
+    filed.push({ itemId: item.id, bubbleId: target });
+  }
+  return filed;
 }
 
 // Undo a recapture-merge (§10.3): revert the boost AND split the appended

@@ -153,5 +153,10 @@ export interface CaptureResponse {
   rawText: string; // echoed for the review sheet
   created: ItemView[];
   boosted: { item: ItemView; appendedText: string }[]; // recapture merges, each undoable
+  // Captures woven into a live bubble at capture time (surface spec): a
+  // created item theme-filed into today's map, or a boost whose item already
+  // lives in a bubble. Filed captures never float on the surface; the client
+  // plays the fly-into-bubble receipt for each entry.
+  filed: { itemId: string; bubbleId: string }[];
   nudge: 'split' | 'low-confidence' | 'merge' | null;
 }

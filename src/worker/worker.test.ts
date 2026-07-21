@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
 import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant } from './brain';
+import { fileTarget, type FilingBubble } from './capture';
 import type { ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
@@ -278,6 +279,55 @@ describe('extractJson robustness', () => {
   it('parses JSON embedded in prose with nested braces and strings', () => {
     const text = 'Sure! {"items":[{"title":"say \\"hi\\" {ok}","n":2}],"confidence":"high"} hope that helps';
     expect(extractJson<{ items: unknown[] }>(text).items).toHaveLength(1);
+  });
+});
+
+describe('fileTarget — capture-time filing into the live map (surface spec)', () => {
+  const bubble = (
+    id: string,
+    kind: string,
+    prominence: number,
+    memberPrimaryThemes: string[],
+  ): FilingBubble => ({ id, kind, prominence, memberIds: [], memberPrimaryThemes });
+
+  it('files into the situation bubble whose anchor theme matches, case-insensitively', () => {
+    const bubbles = [
+      bubble('visit', 'situation', 0.9, ['Sarah and Deidra Visit', 'Sarah and Deidra Visit', 'Home']),
+      bubble('admin', 'situation', 0.6, ['Admin']),
+    ];
+    expect(fileTarget(['sarah and deidra visit'], bubbles)).toBe('visit');
+  });
+
+  it('anchor is the majority of member primary themes, first-seen on ties', () => {
+    const bubbles = [bubble('b1', 'situation', 0.5, ['Move', 'Health'])];
+    expect(fileTarget(['Move'], bubbles)).toBe('b1'); // tie → first-seen 'Move' anchors
+    expect(fileTarget(['Health'], bubbles)).toBeNull();
+  });
+
+  it('never files into a rotation bubble', () => {
+    const bubbles = [bubble('rot', 'rotation', 0.15, ['Friends'])];
+    expect(fileTarget(['Friends'], bubbles)).toBeNull();
+  });
+
+  it('prefers the foremost matching item theme, then the louder bubble', () => {
+    const bubbles = [
+      bubble('quiet', 'situation', 0.2, ['Friends']),
+      bubble('loud', 'situation', 0.8, ['Home']),
+    ];
+    // 'Friends' comes first in the item's themes → the quiet bubble wins
+    expect(fileTarget(['Friends', 'Home'], bubbles)).toBe('quiet');
+    // equal theme rank → prominence decides
+    const tied = [
+      bubble('quiet', 'situation', 0.2, ['Friends']),
+      bubble('loud', 'situation', 0.8, ['Friends']),
+    ];
+    expect(fileTarget(['Friends'], tied)).toBe('loud');
+  });
+
+  it('floats (returns null) when nothing matches — the surface is the default', () => {
+    expect(fileTarget(['Reading'], [bubble('b1', 'situation', 0.5, ['Move'])])).toBeNull();
+    expect(fileTarget([], [bubble('b1', 'situation', 0.5, ['Move'])])).toBeNull();
+    expect(fileTarget(['Anything'], [])).toBeNull();
   });
 });
 
