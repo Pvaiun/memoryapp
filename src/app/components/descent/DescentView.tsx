@@ -46,8 +46,8 @@ import type { TrackCard } from './engine';
 // scrolled, never back.
 //
 // Spatially: cards are horizontally centered. Depth recedes upward — deep
-// cards hang small near a vanishing line in the upper third, descend and
-// grow as the camera approaches, reach focus in the lower-middle, then
+// cards hang small near a vanishing line just under the top edge, descend
+// and grow as the camera approaches, reach focus low in the viewport, then
 // sweep down off the bottom edge as they pass. The card is one thing at
 // every depth — same anatomy, fading as a whole.
 //
