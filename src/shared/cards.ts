@@ -24,7 +24,9 @@ export function parseSentence(sentence: string): CardSegment[] {
   for (const m of sentence.matchAll(TOKEN_RE)) {
     if (m.index! > last) out.push({ kind: 'text', text: sentence.slice(last, m.index) });
     if (m[1] !== undefined) out.push({ kind: 'bold', text: m[1] });
-    else out.push({ kind: 'chip', text: m[2], itemId: m[3] });
+    // The grammar has no nesting, but models write [Ask **Kyle**](i9) anyway —
+    // the markers must never reach the screen.
+    else out.push({ kind: 'chip', text: m[2].replace(/\*\*/g, ''), itemId: m[3] });
     last = m.index! + m[0].length;
   }
   if (last < sentence.length) out.push({ kind: 'text', text: sentence.slice(last) });
