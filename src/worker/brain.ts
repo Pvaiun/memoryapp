@@ -1,5 +1,6 @@
 import type { Bubble, ItemView, MapPayload } from '../shared/types';
 import { describeCadence, neglectedByDays } from '../shared/cadence';
+import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import {
@@ -31,7 +32,16 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   const bubbleRows = await db
     .prepare('SELECT * FROM bubbles WHERE day = ? ORDER BY prominence DESC')
     .bind(day)
-    .all<{ id: string; day: string; name: string; kind: string; prominence: number; reason: string }>();
+    .all<{
+      id: string;
+      day: string;
+      name: string;
+      kind: string;
+      prominence: number;
+      reason: string;
+      sentence: string;
+      first_step: string | null;
+    }>();
   const memberRows = await db
     .prepare('SELECT bi.bubble_id, bi.item_id FROM bubble_items bi JOIN bubbles b ON b.id = bi.bubble_id WHERE b.day = ?')
     .bind(day)
@@ -55,6 +65,8 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
     kind: b.kind as Bubble['kind'],
     prominence: b.prominence,
     reason: b.reason,
+    sentence: b.sentence ?? '',
+    firstStep: b.first_step ?? null,
     // Completing an item updates the map in place (grey/remove, §9.1) —
     // completed members stay listed; the client renders them greyed.
     itemIds: (members.get(b.id) ?? []).filter((id) => views[id]),
@@ -161,9 +173,23 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
     const memberIds = b.itemIds.filter((id) => validIds.has(id));
     if (!memberIds.length) continue;
     const bubbleId = newId();
+    // Chips referencing items that fell out of the member list degrade to bold.
+    const sentence = resolveSentence(b.sentence, new Map(), new Set(memberIds)).slice(0, 600);
     await db
-      .prepare('INSERT INTO bubbles (id, day, name, kind, prominence, reason, created_at) VALUES (?,?,?,?,?,?,?)')
-      .bind(bubbleId, day, b.name.slice(0, 80), b.kind, clamp(b.prominence, 0.05, 1), b.reason.slice(0, 300), nowIso())
+      .prepare(
+        'INSERT INTO bubbles (id, day, name, kind, prominence, reason, sentence, first_step, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      )
+      .bind(
+        bubbleId,
+        day,
+        b.name.slice(0, 80),
+        b.kind,
+        clamp(b.prominence, 0.05, 1),
+        (b.reason || stripSentence(sentence)).slice(0, 300),
+        sentence,
+        b.firstStep ? b.firstStep.slice(0, 160) : null,
+        nowIso(),
+      )
       .run();
     for (const itemId of memberIds) {
       await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
@@ -178,9 +204,12 @@ export async function rebuildMap(env: Env, day: string, force = false): Promise<
   const missed = items.filter((i) => !surfacedIds.has(i.id) && isTodayRelevant(i, now, tz));
   if (missed.length) {
     const bubbleId = newId();
+    const sentence = composeSentence(missed, now).slice(0, 600);
     await db
-      .prepare('INSERT INTO bubbles (id, day, name, kind, prominence, reason, created_at) VALUES (?,?,?,?,?,?,?)')
-      .bind(bubbleId, day, 'Also today', 'situation', 0.8, summarizeItems(missed, now).slice(0, 300), nowIso())
+      .prepare(
+        'INSERT INTO bubbles (id, day, name, kind, prominence, reason, sentence, first_step, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      )
+      .bind(bubbleId, day, 'Also today', 'situation', 0.8, stripSentence(sentence).slice(0, 300), sentence, null, nowIso())
       .run();
     for (const item of missed) {
       await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, item.id).run();
@@ -302,9 +331,9 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
   }
 
   const bubbleRows = await db
-    .prepare('SELECT id, name, kind, prominence, reason FROM bubbles WHERE day = ? ORDER BY prominence DESC')
+    .prepare('SELECT id, name, kind, prominence, sentence, first_step FROM bubbles WHERE day = ? ORDER BY prominence DESC')
     .bind(day)
-    .all<{ id: string; name: string; kind: string; prominence: number; reason: string }>();
+    .all<{ id: string; name: string; kind: string; prominence: number; sentence: string; first_step: string | null }>();
   const memberRows = await db
     .prepare(
       `SELECT bi.bubble_id, i.title FROM bubble_items bi
@@ -329,7 +358,8 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
       name: b.name,
       kind: b.kind,
       prominence: b.prominence,
-      reason: b.reason,
+      sentence: b.sentence,
+      firstStep: b.first_step,
       items: members.get(b.id) ?? [],
     })),
   };
@@ -340,6 +370,8 @@ interface ProposedBubble {
   kind: 'situation' | 'rotation';
   prominence: number;
   reason: string;
+  sentence: string;
+  firstStep: string | null;
   itemIds: string[];
 }
 
@@ -375,9 +407,19 @@ PREVIOUSLY SHOWN (yesterday) is provided ONLY as optional reference — reuse a 
 
 Do not force every item into the map — the browse view holds everything; you curate. Items may appear in more than one bubble only when genuinely central to both; prefer one home. Every bubble needs at least one item.
 
-OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"reason":str,"itemIds":[short ids like "i3" from the item lines]}]}
+OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"reason" is the card's face text — a single glanceable line telling the user what's inside and when it matters, WITHOUT tapping. Concrete contents + dates, e.g. "Dentist Tue 3pm; taxes due Aug 15" or "6 address updates, none scheduled yet". When one thing should genuinely come first (it gates the others, or its timing demands it), recommend the order plainly ("sunscreen before Friday, the rest can wait"). Never repeat the bubble name, never explain the grouping, never meta-commentary.`;
+"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance saying why this bubble matters TODAY: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
+
+THE CARD GRAMMAR (only these two marks):
+- **bold** the recognizable nouns — people, entities, dates ("**Sarah & Deidra** arrive **today** through the **25th**"). At distance the card crops to its bold tokens alone, so they must scan as a fragment.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place ("the [litter boxes](i4) by noon"). At most 2-3 chips per card; the phrase must read naturally inside the sentence.
+
+CONSTRUCTION follows the cluster's shape:
+- Mixed cluster, few actionables → weave facts and 1-3 chips into one utterance.
+- 4+ near-identical siblings → speak of the batch collectively ("Six **address updates**, one sitting — license, bank, work, government."). A progress pip-row renders automatically; never chip or enumerate the items as a list.
+- One big amorphous thing with no date → a bare sentence, no chips, plus "firstStep": ONE concrete ten-minute action ("List your assets in a note — ten minutes."). firstStep is null in every other case.
+- Rotation bubbles read as an offering, not an obligation ("Worth a glance: **umbrellas** live in the **front closet**"), no chips.`;
 
   const { lines, idByAlias } = aliasItems(items, now);
   const user = JSON.stringify({
@@ -392,34 +434,61 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","prominence":num,"
   const out = await anthropicJson<{ bubbles: ProposedBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
   return (out.bubbles ?? [])
     .filter((b) => b && b.name && Array.isArray(b.itemIds))
-    .map((b) => ({
-      name: String(b.name),
-      kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
-      prominence: typeof b.prominence === 'number' ? b.prominence : 0.4,
-      reason: String(b.reason ?? ''),
+    .map((b) => {
       // Aliases back to real ids; unknown aliases drop (validated again upstream).
-      itemIds: b.itemIds.map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean),
-    }));
+      const itemIds = b.itemIds.map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean);
+      // Chip refs in the sentence resolve the same way; strays degrade to bold.
+      const sentence = resolveSentence(String(b.sentence ?? b.reason ?? ''), idByAlias, new Set(itemIds));
+      const firstStep = typeof b.firstStep === 'string' && b.firstStep.trim() ? b.firstStep.trim() : null;
+      return {
+        name: String(b.name),
+        kind: b.kind === 'rotation' ? 'rotation' as const : 'situation' as const,
+        prominence: typeof b.prominence === 'number' ? b.prominence : 0.4,
+        reason: stripSentence(sentence),
+        sentence,
+        firstStep,
+        itemIds,
+      };
+    });
 }
 
 // ---------- Deterministic fallback map (no LLM configured) ----------
 
-// Compact card-face summary: first titles with their dates, "+N more".
-function summarizeItems(items: ItemView[], now: Date): string {
-  const short = (iso: string): string => {
-    const days = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
-    if (days < 0) return `${-days}d overdue`;
-    if (days === 0) return 'today';
-    if (days === 1) return 'tomorrow';
-    if (days < 7) return new Date(iso).toLocaleDateString('en', { weekday: 'short' });
-    return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
-  };
-  const parts = items.slice(0, 2).map((i) => {
+function shortDate(iso: string, now: Date): string {
+  const days = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+  if (days < 0) return `${-days}d overdue`;
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days < 7) return new Date(iso).toLocaleDateString('en', { weekday: 'short' });
+  return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+}
+
+// Card-grammar sentence without an LLM: active DOs become chips (max 3),
+// everything else bold titles, dates bold — mechanical but in register.
+function composeSentence(items: ItemView[], now: Date, lead = ''): string {
+  let chips = 0;
+  const parts = items.slice(0, 3).map((i) => {
     const when = i.deadline ?? i.eventAt;
-    return when ? `${i.title} (${short(when)})` : i.title;
+    const date = when ? ` **${shortDate(when, now)}**` : '';
+    if (i.type === 'DO' && i.status === 'active' && chips < 3) {
+      chips += 1;
+      return `[${i.title}](${i.id})${date ? ` by${date}` : ''}`;
+    }
+    return `**${i.title}**${date}`;
   });
-  const extra = items.length - parts.length;
-  return parts.join(' · ') + (extra > 0 ? ` · +${extra} more` : '');
+  const extra = items.length - Math.min(items.length, 3);
+  return `${lead}${parts.join(', ')}${extra > 0 ? ` — and **${extra} more** in the sheet` : ''}.`;
+}
+
+function proposed(
+  name: string,
+  kind: 'situation' | 'rotation',
+  prominence: number,
+  sentence: string,
+  items: ItemView[],
+  firstStep: string | null = null,
+): ProposedBubble {
+  return { name, kind, prominence, reason: stripSentence(sentence), sentence, firstStep, itemIds: items.map((i) => i.id) };
 }
 
 function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
@@ -429,48 +498,34 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
   );
   if (dueSoon.length) {
     const soonest = Math.min(...dueSoon.map((i) => new Date(i.deadline!).getTime() - now.getTime()));
-    bubbles.push({
-      name: 'Due soon',
-      kind: 'situation',
-      prominence: soonest < 86_400_000 ? 0.95 : 0.7,
-      reason: summarizeItems(dueSoon, now),
-      itemIds: dueSoon.map((i) => i.id),
-    });
+    bubbles.push(
+      proposed('Due soon', 'situation', soonest < 86_400_000 ? 0.95 : 0.7, composeSentence(dueSoon, now), dueSoon),
+    );
   }
   const neglected = items.filter((i) => i.neglected && !dueSoon.includes(i));
   if (neglected.length) {
-    bubbles.push({
-      name: 'Rhythms to pick back up',
-      kind: 'situation',
-      prominence: 0.5,
-      reason: summarizeItems(neglected, now),
-      itemIds: neglected.map((i) => i.id),
-    });
+    bubbles.push(
+      proposed(
+        'Rhythms to pick back up',
+        'situation',
+        0.5,
+        composeSentence(neglected, now, 'The rhythm slipped — '),
+        neglected,
+      ),
+    );
   }
   const upcoming = items.filter(
     (i) => i.type === 'HAPPEN' && i.eventAt && new Date(i.eventAt).getTime() > now.getTime() - 86_400_000 &&
       new Date(i.eventAt).getTime() - now.getTime() < 14 * 86_400_000,
   );
   if (upcoming.length) {
-    bubbles.push({
-      name: 'Coming up',
-      kind: 'situation',
-      prominence: 0.55,
-      reason: summarizeItems(upcoming, now),
-      itemIds: upcoming.map((i) => i.id),
-    });
+    bubbles.push(proposed('Coming up', 'situation', 0.55, composeSentence(upcoming, now), upcoming));
   }
   const important = items.filter(
     (i) => i.effectivePriority >= 0.65 && !dueSoon.includes(i) && !neglected.includes(i) && !upcoming.includes(i) && i.type !== 'KNOW',
   );
   if (important.length) {
-    bubbles.push({
-      name: 'Important',
-      kind: 'situation',
-      prominence: 0.45,
-      reason: summarizeItems(important, now),
-      itemIds: important.map((i) => i.id),
-    });
+    bubbles.push(proposed('Important', 'situation', 0.45, composeSentence(important, now), important));
   }
   // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen
   // KNOWs. Reference facts (low priority, never recaptured) stay out — they
@@ -485,13 +540,15 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
     })
     .slice(0, 3);
   if (knows.length) {
-    bubbles.push({
-      name: 'Keep in mind',
-      kind: 'rotation',
-      prominence: 0.12,
-      reason: summarizeItems(knows, now),
-      itemIds: knows.map((i) => i.id),
-    });
+    bubbles.push(
+      proposed(
+        'Keep in mind',
+        'rotation',
+        0.12,
+        `Worth a glance: ${knows.map((i) => `**${i.title}**`).join(' · ')}.`,
+        knows,
+      ),
+    );
   }
   return bubbles;
 }

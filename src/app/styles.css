@@ -1033,7 +1033,7 @@ textarea:focus {
   overflow: hidden;
 }
 
-/* ----- cards ----- */
+/* ----- cards: the sentence is the card (card design doc §1-§6) ----- */
 .dsc-card {
   position: absolute;
   top: 0;
@@ -1044,82 +1044,217 @@ textarea:focus {
   will-change: transform, opacity;
   contain: layout style;
 }
-.dsc-base {
+/* near form: the full utterance + bricks; fades/desaturates with depth */
+.dsc-near {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
+  will-change: opacity, filter;
+}
+.dsc-body {
+  position: relative;
+  display: block;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--card);
-  padding: 12px 14px;
-  will-change: opacity, filter;
+  padding: 13px 14px 12px 18px; /* left makes room for the rim */
+  overflow: hidden; /* the span rail hugs the top edge */
 }
-/* name rides the card's top edge so the receding stack's peeking slivers
-   read as a list of names — the at-a-glance rule */
-.dsc-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 20px;
+/* theme accent (§5) — exactly three homes: rim, gauge dot, chip tint */
+.dsc-rim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+  background: var(--card-accent);
+  pointer-events: none;
+  will-change: opacity;
 }
-.dsc-ghost {
-  visibility: hidden; /* reserves the chip's slot; the live chip is pigment */
+.dsc-sentence {
+  display: block;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
 }
-.dsc-chiprow {
-  display: flex;
-  min-height: 19px;
-  margin-top: 2px;
+.dsc-tok {
+  font-weight: 700;
+  color: var(--text);
 }
+/* actionable chip: a word that hits like a button (§7) */
+.dsc-chip-tok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0;
+  padding: 2px 9px 2px 6px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--card-accent) 13%, transparent);
+  color: var(--text);
+  font-weight: 650;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.dsc-chip-tok.done {
+  text-decoration: line-through;
+  color: var(--text-faint);
+  border-color: var(--line);
+  background: transparent;
+}
+.dsc-box {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--card-accent) 65%, var(--text-faint));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--good);
+}
+.dsc-chip-tok.done .dsc-box,
+.dsc-ledge.done .dsc-box {
+  border-color: var(--line-strong);
+}
+/* span rail (§4): duration on the card's top edge, today-marked —
+   inset past the corner radius so the whole track survives the clip */
+.dsc-rail {
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 3px;
+  border-radius: 0 0 2px 2px;
+  background: var(--line-strong);
+  pointer-events: none;
+}
+.dsc-rail-elapsed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--card-accent) 55%, transparent);
+}
+.dsc-rail-today {
+  position: absolute;
+  top: -1px;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: var(--text);
+}
+/* deadline notch (§4): corner countdown for hard dates */
+.dsc-notch {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 3px 9px 4px;
+  border-radius: 0 var(--radius) 0 10px;
+  background: color-mix(in srgb, var(--card-accent) 20%, transparent);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+/* count (§4): the one legacy channel — corner figure when progress exists */
 .dsc-count {
-  font-size: 11px;
+  position: absolute;
+  top: 9px;
+  right: 12px;
+  font-size: 10.5px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   white-space: nowrap;
 }
-.dsc-name {
+/* pip row (§3): batch size + progress, wordless */
+.dsc-pips {
+  display: flex;
+  gap: 5px;
+  margin-top: 9px;
+}
+.dsc-pip {
   flex: 1;
-  min-width: 0;
-  font-size: 16px;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  max-width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.dsc-pip.filled {
+  background: color-mix(in srgb, var(--card-accent) 70%, transparent);
+}
+/* first-step ledge (§3): one small door under a nudge, never a list */
+.dsc-ledge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 20px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.dsc-ledge.done .dsc-ledge-text {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+/* far form (§6): a peeking top edge — rim color + cropped bold tokens */
+.dsc-far {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 5px 10px 6px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--card-accent);
+  background: var(--card);
+  font-size: 12.5px;
+  font-weight: 700;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.dsc-desc {
-  font-size: 12.5px;
-  line-height: 1.4;
-  color: var(--text-dim);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-/* status pigment layer (§1): full saturation at any depth, floor 0.85 */
-.dsc-pigment {
-  position: absolute;
-  inset: 0;
+  opacity: 0;
   pointer-events: none;
   will-change: opacity;
 }
-.dsc-pigment .dsc-chip {
-  position: absolute;
-  top: 34px;
-  left: 14px;
-}
-.dsc-card.rotation .dsc-base {
+/* rotation (§4): dashed frame — offered for a glance, never owed */
+.dsc-card.rotation .dsc-body,
+.dsc-card.rotation .dsc-far {
   border-style: dashed;
+  border-left-style: solid;
   background: transparent;
 }
-.dsc-card.rotation .dsc-name {
-  font-weight: 600;
+.dsc-card.rotation .dsc-tok,
+.dsc-card.rotation .dsc-far {
+  font-weight: 650;
   color: var(--text-dim);
 }
-.dsc-card.settled .dsc-name {
+/* settled (§8): dimmed, ✓ done, no rationale */
+.dsc-card.settled .dsc-sentence {
+  color: var(--text-faint);
+}
+.dsc-card.settled .dsc-tok {
   color: var(--text-dim);
+}
+.dsc-done {
+  display: inline-block;
+  margin-top: 7px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--good);
 }
 
 /* ----- screen-space lines at the ends (§6) ----- */
@@ -1220,9 +1355,6 @@ textarea:focus {
 }
 .dsc-gdot.settled {
   background: transparent !important;
-}
-.dsc-gdot.red {
-  box-shadow: 0 0 6px 1.5px rgba(240, 112, 140, 0.45);
 }
 /* hollow ring — the camera marker never covers a card dot */
 .dsc-puck {
