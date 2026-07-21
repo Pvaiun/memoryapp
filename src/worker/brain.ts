@@ -1,5 +1,5 @@
-import type { Bubble, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeCadence, neglectedByDays } from '../shared/cadence';
+import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
+import { describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -348,7 +348,15 @@ export async function addFirstStep(
 // or happening today must reach the map no matter what the Brain decides.
 // Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
 export function isTodayRelevant(
-  i: { status: string; deadline: string | null; eventAt: string | null; eventEnd: string | null },
+  i: {
+    status: string;
+    deadline: string | null;
+    eventAt: string | null;
+    eventEnd: string | null;
+    cadence?: Cadence | null;
+    createdAt?: string;
+    lastCompletedAt?: string | null;
+  },
   now: Date,
   tzOffsetMinutes: number,
 ): boolean {
@@ -362,6 +370,23 @@ export function isTodayRelevant(
     const at = new Date(i.eventAt).getTime();
     const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
     if (at < dayEndUtc && end >= dayStartUtc) return true; // spans some part of today
+  }
+  // Recurring rhythms: a cadence whose next occurrence lands today counts.
+  // Without this, a "daily at 7pm" DO has neither deadline nor eventAt and the
+  // floor silently excludes it — the exact hole that dropped a daily task.
+  if (i.cadence) {
+    // Already completed within the user-local today → the floor releases
+    // until tomorrow's occurrence.
+    if (i.lastCompletedAt) {
+      const done = new Date(i.lastCompletedAt).getTime();
+      if (done >= dayStartUtc && done < dayEndUtc) return false;
+    }
+    const from = new Date(dayStartUtc);
+    const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
+    const occ = i.cadence.atTime
+      ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
+      : nextOccurrence(i.cadence, anchor, from);
+    if (occ.getTime() < dayEndUtc) return true;
   }
   return false;
 }
