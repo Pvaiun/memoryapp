@@ -1,5 +1,5 @@
 import type { Cadence, Flavour, ItemView } from '../shared/types';
-import { cadencePeriodMs, occurrencesBetween } from '../shared/cadence';
+import { atTimeOccurrencesBetween, cadencePeriodMs, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase } from '../shared/dates';
 import type { Env } from './env';
 import { embed } from './embeddings';
@@ -8,6 +8,7 @@ import {
   cosine,
   embeddingToBlob,
   getItem,
+  getState,
   listItems,
   logEvent,
   nowIso,
@@ -203,6 +204,7 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
   const from = new Date(fromIso);
   const to = new Date(toIso);
   const items = await listItems(db, { statuses: ['active', 'completed'] });
+  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const entries: CalendarEntry[] = [];
   const used = new Set<string>();
 
@@ -233,11 +235,10 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
         entries.push({ itemId: item.id, date: item.deadline, kind: 'deadline' });
         used.add(item.id);
       }
-      // Recurring DOs with a time anchor also render per-occurrence.
+      // Recurring DOs with a time anchor also render per-occurrence. atTime is
+      // user-local, so the occurrence walk runs in the user's frame.
       if (item.cadence?.atTime) {
-        for (const occ of occurrencesBetween(item.cadence, item.createdAt, from, to)) {
-          const [h, m] = item.cadence.atTime.split(':').map(Number);
-          occ.setUTCHours(h, m, 0, 0);
+        for (const occ of atTimeOccurrencesBetween(item.cadence, item.createdAt, from, to, tz)) {
           entries.push({ itemId: item.id, date: occ.toISOString(), kind: 'occurrence' });
           used.add(item.id);
         }

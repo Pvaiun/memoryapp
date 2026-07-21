@@ -22,7 +22,9 @@ export interface Cadence {
   interval: number; // every N freq units, >= 1
   byWeekday?: number[]; // 0=Sun..6=Sat, for weekly
   byMonthDay?: number; // 1..31, for monthly
-  // Optional anchor time-of-day for HAPPEN recurrences, "HH:MM" 24h local.
+  // Optional anchor time-of-day, "HH:MM" 24h in the USER'S timezone. Recurring
+  // DOs ping and render per-occurrence at this time (§11.4); occurrence math
+  // goes through the atTime helpers in cadence.ts, which handle the tz shift.
   atTime?: string;
 }
 
