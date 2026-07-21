@@ -92,16 +92,64 @@ export function puckP(track: TrackCard[], c: number): number {
   return track[track.length - 1].p;
 }
 
-// Gauge-side dot collision: dots closer than 6px on the scale shift into
-// a second column, tied to true position by a hairline. Input ys must be
-// in track order (p desc → y ascending).
-export function gaugeColumns(ys: number[]): number[] {
-  const cols: number[] = [];
-  for (let i = 0; i < ys.length; i++) {
-    const prevClose = i > 0 && ys[i] - ys[i - 1] < 6;
-    cols.push(prevClose && cols[i - 1] === 0 ? 1 : 0);
+// Minimal-separation layout for positions on the scale (gauge dots, ledger
+// rows). Equal or near-equal values fan out symmetrically AROUND their true
+// position — the cluster stays centered on the value it represents — and
+// only a cluster that hits a scale end shifts, never the whole list.
+// Classic 1-D constraint relaxation: greedily merge overlapping clusters,
+// each laid out at `gap` around its (unclamped) centroid, clamped to
+// [lo, hi] at the end. Deterministic; order-preserving.
+export function spreadPositions(ys: number[], gap: number, lo = -Infinity, hi = Infinity): number[] {
+  interface Group {
+    sum: number; // of true centers
+    n: number;
   }
-  return cols;
+  const groups: Group[] = [];
+  const center = (g: Group) => g.sum / g.n;
+  const start = (g: Group) => center(g) - ((g.n - 1) * gap) / 2;
+  const end = (g: Group) => center(g) + ((g.n - 1) * gap) / 2;
+  for (const y of ys) {
+    groups.push({ sum: y, n: 1 });
+    // merge while the newest group crowds its predecessor
+    while (groups.length > 1) {
+      const b = groups[groups.length - 1];
+      const a = groups[groups.length - 2];
+      if (start(b) - end(a) >= gap) break;
+      groups.pop();
+      groups.pop();
+      groups.push({ sum: a.sum + b.sum, n: a.n + b.n });
+    }
+  }
+  const out: number[] = [];
+  for (const g of groups) {
+    // clamp the whole group inside the scale, preferring the low end
+    let s = start(g);
+    if (end(g) > hi) s -= end(g) - hi;
+    if (s < lo) s = lo;
+    for (let i = 0; i < g.n; i++) out.push(s + i * gap);
+  }
+  return out;
+}
+
+// Puck y through the RESOLVED dot layout: on a card's focal plane the puck
+// sits exactly on that card's (possibly spread) dot; between planes it
+// interpolates at the rate the physical gap dictates; above the first card
+// it eases down from the top cap. `ys` must be resolved dot positions in
+// track order; `topY` is the scale's p=1.0 cap.
+export function puckYAt(track: TrackCard[], c: number, ys: number[], topY: number): number {
+  if (!track.length || !ys.length) return topY;
+  const first = track[0];
+  if (c <= first.zp) {
+    const t = band(c, first.zp - TOP_BEFORE, first.zp);
+    return topY + t * (ys[0] - topY);
+  }
+  for (let i = 0; i < track.length - 1; i++) {
+    if (c <= track[i + 1].zp) {
+      const t = (c - track[i].zp) / (track[i + 1].zp - track[i].zp);
+      return ys[i] + t * (ys[i + 1] - ys[i]);
+    }
+  }
+  return ys[ys.length - 1];
 }
 
 // Perspective scale. Grows past focus (the card sweeping under the
@@ -159,21 +207,6 @@ export const CULL_BEHIND = -220; // pass complete → card culled
 // Card anatomy never changes with depth: one card, whole thing fades as
 // one — no lite vs full version. (Depth is carried by scale, position,
 // and the card-level cue table alone.)
-
-// Ledger fanning: rows closer than the gap push down, monotonic.
-export function fanRows(ys: number[], minGap = 26, maxY = Infinity): number[] {
-  const out: number[] = [];
-  let prev = -Infinity;
-  for (const y of ys) {
-    const fy = Math.max(y, prev + minGap);
-    prev = fy;
-    out.push(fy);
-  }
-  // If the fan ran past the bottom, shift everything up uniformly.
-  const over = out.length ? out[out.length - 1] - maxY : 0;
-  if (over > 0) for (let i = 0; i < out.length; i++) out[i] -= over;
-  return out;
-}
 
 // Directional settle: scrolling commits. Once the camera has moved more
 // than the hysteresis past a rest in its direction of travel, settling
