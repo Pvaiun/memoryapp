@@ -1209,11 +1209,6 @@ textarea:focus {
   opacity: 1;
   transition-duration: 120ms;
 }
-.dsc-ghair {
-  position: absolute;
-  height: 1px;
-  background: var(--line);
-}
 .dsc-gdot {
   position: absolute;
   border-radius: 50%;
@@ -1328,6 +1323,16 @@ textarea:focus {
     transform: translateX(-28px);
     opacity: 0;
   }
+}
+/* hairline from a displaced row back to its true dot */
+.dsc-ledger-ties {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.dsc-ledger-ties line {
+  stroke: var(--line);
+  stroke-width: 1;
 }
 .dsc-ledger-row {
   position: absolute;

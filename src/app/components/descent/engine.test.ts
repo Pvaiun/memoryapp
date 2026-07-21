@@ -10,15 +10,15 @@ import {
   DEPTH_RANGE,
   depthCues,
   engagedIndex,
-  fanRows,
   FOCUS_FRAC,
-  gaugeColumns,
   MIN_SPACING,
   passState,
   puckP,
+  puckYAt,
   scaleFor,
   scrollFor,
   settleTarget,
+  spreadPositions,
   TOP_BEFORE,
   VP_FRAC,
 } from './engine';
@@ -198,18 +198,79 @@ describe('the pass (vertical exit)', () => {
   });
 });
 
+describe('spreadPositions — equal values fan around their true position', () => {
+  it('leaves well-spaced values untouched', () => {
+    expect(spreadPositions([10, 40, 90], 8)).toEqual([10, 40, 90]);
+  });
+
+  it('spreads an exact-tie trio symmetrically around the shared value', () => {
+    expect(spreadPositions([100, 100, 100], 8)).toEqual([92, 100, 108]);
+  });
+
+  it('keeps order and minimum gap for near-ties, centered on the cluster', () => {
+    const out = spreadPositions([100, 102, 104], 10);
+    expect(out).toEqual([92, 102, 112]); // centered on mean 102
+    for (let i = 1; i < out.length; i++) expect(out[i] - out[i - 1]).toBeGreaterThanOrEqual(10);
+  });
+
+  it('merges chained clusters instead of cascading them downward', () => {
+    const out = spreadPositions([100, 100, 106, 106], 8);
+    // one merged cluster centered on 103
+    expect(out).toEqual([91, 99, 107, 115]);
+  });
+
+  it('shifts only the edge cluster when it hits a bound — not the whole list', () => {
+    const out = spreadPositions([20, 196, 196, 196], 8, 10, 200);
+    expect(out[0]).toBe(20); // untouched
+    expect(out[3]).toBeLessThanOrEqual(200);
+    expect(out[1]).toBeCloseTo(out[3] - 16);
+  });
+
+  it('is deterministic and order-preserving', () => {
+    const ys = [50, 50, 50, 50, 300];
+    const a = spreadPositions(ys, 8, 0, 400);
+    expect(a).toEqual(spreadPositions(ys, 8, 0, 400));
+    for (let i = 1; i < a.length; i++) expect(a[i]).toBeGreaterThan(a[i - 1]);
+  });
+});
+
+describe('puckYAt — puck rides the resolved dot layout', () => {
+  const track = buildTrack([
+    { id: 'a', prominence: 0.9 },
+    { id: 'b', prominence: 0.3 },
+    { id: 'c', prominence: 0.3 },
+    { id: 'd', prominence: 0.3 },
+  ]);
+  const ys = [50, 392, 400, 408]; // b/c/d fanned around a shared true y
+
+  it('lands exactly on each resolved dot at its focal plane', () => {
+    track.forEach((t, idx) => {
+      expect(puckYAt(track, t.zp, ys, 10)).toBeCloseTo(ys[idx]);
+    });
+  });
+
+  it('eases from the top cap onto the first dot through the overview', () => {
+    expect(puckYAt(track, track[0].zp - TOP_BEFORE, ys, 10)).toBe(10);
+    const mid = puckYAt(track, track[0].zp - TOP_BEFORE / 2, ys, 10);
+    expect(mid).toBeGreaterThan(10);
+    expect(mid).toBeLessThan(50);
+  });
+
+  it('interpolates between resolved dots across a physical gap', () => {
+    const midC = (track[1].zp + track[2].zp) / 2;
+    expect(puckYAt(track, midC, ys, 10)).toBeCloseTo((392 + 400) / 2);
+  });
+
+  it('holds the last dot at the bottom stop', () => {
+    expect(puckYAt(track, track[3].zp + 999, ys, 10)).toBe(408);
+  });
+});
+
 describe('gauge and ledger helpers', () => {
   it('engaged card minimizes |d|', () => {
     const track = buildTrack(SAMPLE);
     expect(engagedIndex(track, track[0].zp)).toBe(0);
     expect(engagedIndex(track, track[4].zp + 10)).toBe(4);
-  });
-  it('shifts colliding gauge dots into a second column, alternating', () => {
-    expect(gaugeColumns([10, 13, 15, 40])).toEqual([0, 1, 0, 0]);
-    expect(gaugeColumns([10, 20, 30])).toEqual([0, 0, 0]);
-  });
-  it('fans ledger rows to a minimum gap without reordering', () => {
-    expect(fanRows([10, 12, 80], 26)).toEqual([10, 36, 80]);
   });
   it('band is a clamped linear ramp', () => {
     expect(band(5, 0, 10)).toBe(0.5);

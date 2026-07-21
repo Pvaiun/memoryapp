@@ -15,14 +15,14 @@ import {
   easeDolly,
   easeSnap,
   engagedIndex,
-  fanRows,
   GAUGE_INSET,
-  gaugeColumns,
   passState,
   puckP,
+  puckYAt,
   scaleFor,
   scrollFor,
   settleTarget,
+  spreadPositions,
   TOP_BEFORE,
 } from './engine';
 import type { TrackCard } from './engine';
@@ -321,8 +321,11 @@ export default function DescentView({
       }
 
       // ----- gauge: true scale, physical cursor -----
+      // The puck rides the RESOLVED dot layout, so it lands exactly on a
+      // card's dot even when equal prominences fanned the cluster apart;
+      // the readout still reports interpolated true p.
       const p = puckP(tr, c);
-      const puckY = GAUGE_PAD + (1 - p) * (h - 2 * GAUGE_PAD);
+      const puckY = puckYAt(tr, c, dotYsRef.current, GAUGE_PAD);
       if (puckRef.current) puckRef.current.style.transform = `translateY(${puckY.toFixed(1)}px)`;
       if (readoutRef.current) {
         readoutRef.current.style.transform = `translateY(${(puckY - 7).toFixed(1)}px)`;
@@ -459,7 +462,7 @@ export default function DescentView({
       const rect = viewportRef.current!.getBoundingClientRect();
       const y = e.clientY - rect.top;
       const c = cameraAt(rangeRef.current.cStart, scroller.scrollTop);
-      const puckY = yForP(puckP(trackRef.current, c));
+      const puckY = puckYAt(trackRef.current, c, dotYsRef.current, GAUGE_PAD);
       const scrubbing = Math.abs(y - puckY) < 16;
       const timer = window.setTimeout(() => {
         // long-press: toggle the ledger, cancel any pending tap/scrub
@@ -472,7 +475,7 @@ export default function DescentView({
       gaugeStateRef.current = { id: e.pointerId, y0: y, moved: false, scrubbing, timer };
       (e.target as Element).setPointerCapture(e.pointerId);
     },
-    [cancelDolly, markActivity, vh, yForP],
+    [cancelDolly, markActivity, vh],
   );
 
   const gaugePointerMove = useCallback(
@@ -511,23 +514,29 @@ export default function DescentView({
       const y = e.clientY - rect.top;
       const c = cameraAt(rangeRef.current.cStart, scroller.scrollTop);
       if (!st.moved) {
-        // tap: dolly to the card whose dot is nearest the tapped p
+        // tap: dolly to the card whose RESOLVED dot is nearest the tap —
+        // in a fanned tie cluster each dot is individually reachable
         setLedgerOpen(false);
-        const pTap = pForY(y);
         const tr = trackRef.current;
-        const target = tr.reduce(
-          (best, t) => (Math.abs(t.p - pTap) < Math.abs(best.p - pTap) ? t : best),
-          tr[0],
-        );
-        const dist = Math.abs(target.zp - c);
-        dollyTo(scrollForPlane(target.zp), dist > 500 ? 560 : 420, easeDolly);
+        const ys = dotYsRef.current;
+        let target = tr[0];
+        let bestDist = Infinity;
+        tr.forEach((t, idx) => {
+          const dist = Math.abs((ys[idx] ?? yForP(t.p)) - y);
+          if (dist < bestDist) {
+            bestDist = dist;
+            target = t;
+          }
+        });
+        const camDist = Math.abs(target.zp - c);
+        dollyTo(scrollForPlane(target.zp), camDist > 500 ? 560 : 420, easeDolly);
       } else if (st.scrubbing) {
         // scrub released: come to rest on a card, never between
         const target = nearestPlane(c);
         if (target) dollyTo(scrollForPlane(target.zp), 180, easeSnap);
       }
     },
-    [dollyTo, markActivity, nearestPlane, pForY, scrollForPlane],
+    [dollyTo, markActivity, nearestPlane, scrollForPlane, yForP],
   );
 
   // ----- scroll / touch wiring -------------------------------------------
@@ -609,7 +618,7 @@ export default function DescentView({
       if (prev !== undefined && prev !== sig && !reducedRef.current) {
         newRipples.push({
           key: rippleSeq++,
-          y: yForP(t.p),
+          y: dotYsRef.current[t.i] ?? yForP(t.p),
           color: info.settled ? 'var(--good)' : info.status.color,
         });
       }
@@ -643,7 +652,8 @@ export default function DescentView({
         const prevP = stored!.byName[info.bubble.name];
         if (!dot) continue;
         if (prevP !== undefined && Math.abs(prevP - t.p) > 0.002) {
-          const dy = yForP(prevP) - yForP(t.p);
+          // slide from yesterday's true-p position to today's resolved dot
+          const dy = yForP(prevP) - (dotYsRef.current[t.i] ?? yForP(t.p));
           dot.animate(
             [{ transform: `translateY(${dy.toFixed(1)}px)` }, { transform: 'translateY(0)' }],
             { duration: 600, delay: t.i * 40, easing: 'ease-in-out', fill: 'backwards' },
@@ -696,19 +706,41 @@ export default function DescentView({
     return out;
   }, []);
 
+  // Dots at true p, then equal/near-equal prominences fan out symmetrically
+  // AROUND their true position (single column, cluster centered on the
+  // value it represents, clamped at the scale ends).
   const dotLayout = useMemo(() => {
     if (!vh) return [];
-    const ys = track.map((t) => yForP(t.p));
-    const cols = gaugeColumns(ys);
-    return track.map((t, idx) => ({ t, y: ys[idx], col: cols[idx] }));
+    const ys = spreadPositions(
+      track.map((t) => yForP(t.p)),
+      8,
+      GAUGE_PAD,
+      vh - GAUGE_PAD,
+    );
+    return track.map((t, idx) => ({ t, y: ys[idx] }));
   }, [track, vh, yForP]);
 
+  // resolved dot ys for the frame loop (puck riding, leader geometry)
+  const dotYsRef = useRef<number[]>([]);
+  dotYsRef.current = useMemo(() => dotLayout.map((d) => d.y), [dotLayout]);
+
+  // Ledger rows: same centered spread with a readable gap; a row displaced
+  // from its dot keeps a hairline tie back to it.
   const ledgerRows = useMemo(() => {
     if (!vh || !ledgerOpen) return [];
-    const ys = track.map((t) => yForP(t.p));
-    const fanned = fanRows(ys, 30, vh - GAUGE_PAD);
-    return track.map((t, idx) => ({ t, info: infos.get(t.id)!, y: fanned[idx] }));
-  }, [track, infos, vh, ledgerOpen, yForP]);
+    const ys = spreadPositions(
+      track.map((t) => yForP(t.p)),
+      30,
+      GAUGE_PAD + 8,
+      vh - GAUGE_PAD - 8,
+    );
+    return track.map((t, idx) => ({
+      t,
+      info: infos.get(t.id)!,
+      y: ys[idx],
+      dotY: dotLayout[idx]?.y ?? ys[idx],
+    }));
+  }, [track, infos, vh, ledgerOpen, yForP, dotLayout]);
 
   const dateLine = useMemo(() => {
     const d = new Date();
@@ -789,6 +821,14 @@ export default function DescentView({
             <>
               <div className="dsc-dim" onClick={() => setLedgerOpen(false)} />
               <div className="dsc-ledger">
+                <svg className="dsc-ledger-ties" width="44" height={vh} aria-hidden>
+                  {ledgerRows.map(
+                    ({ t, y, dotY }) =>
+                      Math.abs(y - dotY) > 10 && (
+                        <line key={t.id} x1={GAUGE_INSET + 5} y1={dotY} x2={42} y2={y} />
+                      ),
+                  )}
+                </svg>
                 {ledgerRows.map(({ t, info, y }) => (
                   <button
                     key={t.id}
@@ -828,28 +868,24 @@ export default function DescentView({
                 {p === 1 ? '1.0' : p === 0 ? '0' : `.${p * 100}`}
               </div>
             ))}
-            {dotLayout.map(({ t, y, col }) => {
+            {dotLayout.map(({ t, y }) => {
               const info = infos.get(t.id)!;
               const red = info.status.tone === 'red' && !info.settled;
               const dsize = red ? 7 : 5;
               return (
-                <div key={t.id}>
-                  {col === 1 && (
-                    <div className="dsc-ghair" style={{ top: y, left: GAUGE_INSET, width: 6 }} />
-                  )}
-                  <div
-                    ref={attachDot(t.id)}
-                    className={`dsc-gdot${info.settled ? ' settled' : ''}${red ? ' red' : ''}`}
-                    style={{
-                      top: y - dsize / 2,
-                      left: GAUGE_INSET - dsize / 2 + (col === 1 ? 6 : 0),
-                      width: dsize,
-                      height: dsize,
-                      background: info.settled ? 'transparent' : info.status.color,
-                      borderColor: info.settled ? 'var(--good)' : info.status.color,
-                    }}
-                  />
-                </div>
+                <div
+                  key={t.id}
+                  ref={attachDot(t.id)}
+                  className={`dsc-gdot${info.settled ? ' settled' : ''}${red ? ' red' : ''}`}
+                  style={{
+                    top: y - dsize / 2,
+                    left: GAUGE_INSET - dsize / 2,
+                    width: dsize,
+                    height: dsize,
+                    background: info.settled ? 'transparent' : info.status.color,
+                    borderColor: info.settled ? 'var(--good)' : info.status.color,
+                  }}
+                />
               );
             })}
             {ripples.map((r) => (

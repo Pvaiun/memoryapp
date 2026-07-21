@@ -110,21 +110,23 @@ const defs: { name: string; p: number; reason: string; kind?: Bubble['kind']; it
     reason: 'Theory test is booked for the 28th.',
     items: [mkItem({ title: 'Theory test', eventAt: iso(now + 8 * DAY_MS), type: 'HAPPEN' })],
   },
+  // three EXACT-tie prominences — the same-p cluster case (gauge dots fan
+  // around the shared value; ledger rows spread with hairline ties)
   {
     name: 'Make my will',
-    p: 0.28,
+    p: 0.2,
     reason: 'Started the questionnaire; the draft is waiting.',
     items: [mkItem({ title: 'Finish the questionnaire' })],
   },
   {
     name: 'Play Pragmata',
-    p: 0.25,
+    p: 0.2,
     reason: 'Finished — settled.',
     items: [mkItem({ title: 'Finish the campaign', status: 'completed', lastCompletedAt: iso(now - DAY_MS), completionCount: 1 })],
   },
   {
     name: 'Read Piranesi',
-    p: 0.18,
+    p: 0.2,
     reason: 'A chapter before bed keeps it moving.',
     items: [mkItem({ title: 'Read a chapter', type: 'KNOW' })],
   },
