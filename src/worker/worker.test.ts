@@ -150,9 +150,14 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     neglected: false,
   } as unknown as ItemView;
 
-  it('a bare item writes only type, title, prio, and new — no null boilerplate', () => {
+  it('a bare item writes only type, title, age, prio, and new — no null boilerplate', () => {
     const line = brainItemLine(baseView, now);
-    expect(line).toBe('DO "Call grandma" prio=0.5 new');
+    expect(line).toBe('DO "Call grandma" age=19d prio=0.5 new');
+  });
+
+  it('items captured today omit age', () => {
+    const line = brainItemLine({ ...baseView, createdAt: '2026-07-20T09:00:00Z' } as ItemView, now);
+    expect(line).not.toContain('age=');
   });
 
   it('the Pragmata case carries its deviations compactly', () => {
