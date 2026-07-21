@@ -7,7 +7,6 @@ import { anthropicJson, llmAvailable } from './ai';
 import { embed } from './embeddings';
 import {
   getItem,
-  getState,
   insertItem,
   listThemes,
   logEvent,
@@ -212,8 +211,11 @@ async function llmParse(
   tzOffsetMinutes: number | undefined,
   candidates: Item[],
 ): Promise<ParseResult> {
+  // Deliberately profile-free: capture's filing signal is the current theme
+  // list plus the capture text itself. Feeding the behavioural profile here
+  // once laundered the librarian's merges into "the user prefers broad
+  // umbrellas" and skewed filing to match.
   const themes = await listThemes(env.DB);
-  const profile = await getState(env.DB, 'profile_text');
 
   const localDate = tzOffsetMinutes !== undefined ? new Date(ref.getTime() + tzOffsetMinutes * 60_000) : ref;
   const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][localDate.getUTCDay()];
@@ -259,7 +261,6 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
       title: c.title,
       phrasings: c.rawTexts.map((r) => r.text).slice(-3),
     })),
-    userProfileNotes: profile ?? null,
   });
 
   // Generous output budget: a bulk-pasted list can segment into dozens of items.

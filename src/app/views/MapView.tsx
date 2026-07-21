@@ -12,12 +12,14 @@ export default function MapView({
   onOpenItem,
   onToggleComplete,
   onOrganizeNow,
+  onAddFirstStep,
 }: {
   map: MapPayload;
   nowView: NowView;
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
   onOrganizeNow: () => void;
+  onAddFirstStep?: (bubbleId: string, title: string) => void;
 }) {
   const [openBubble, setOpenBubble] = useState<Bubble | null>(null);
 
@@ -70,6 +72,7 @@ export default function MapView({
           builtAt={map.builtAt}
           onOpen={setOpenBubble}
           onToggleComplete={onToggleComplete}
+          onAddFirstStep={onAddFirstStep}
         />
         {bubbleSheet}
       </div>

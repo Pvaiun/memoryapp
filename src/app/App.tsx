@@ -332,6 +332,20 @@ export default function App() {
     [loadMap, toast],
   );
 
+  // A bubble's break-it-down invitation, answered: the typed step becomes a
+  // real item and the server returns the map with the new chip in place.
+  const addFirstStep = useCallback(
+    async (bubbleId: string, title: string) => {
+      try {
+        setMap(await api.addFirstStep(bubbleId, title));
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        toast(`Couldn't add the step: ${err instanceof Error ? err.message : err}`);
+      }
+    },
+    [toast],
+  );
+
   // User-initiated re-run for bulk-import days: fold Captured Today into real
   // bubbles now instead of waiting for tomorrow's first open.
   const organizeNow = useCallback(async () => {
@@ -464,6 +478,7 @@ export default function App() {
             onOpenItem={setOpenItem}
             onToggleComplete={toggleComplete}
             onOrganizeNow={organizeNow}
+            onAddFirstStep={addFirstStep}
           />
         )}
         {tab === 'browse' && (

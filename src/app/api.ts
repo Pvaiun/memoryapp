@@ -73,6 +73,9 @@ export const api = {
       body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force }),
     }),
 
+  addFirstStep: (bubbleId: string, title: string) =>
+    req<MapPayload>(`/api/bubbles/${bubbleId}/first-step`, { method: 'POST', body: JSON.stringify({ title }) }),
+
   exportAll: () => req<Record<string, unknown>>('/api/export'),
 
   brainSnapshot: () => req<Record<string, unknown>>('/api/debug/brain'),
