@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Cadence, Flavour, ItemView } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
+import { isDoneForNow } from '../../shared/cadence';
 import { api, themeColor, FLAVOUR_ICONS } from '../api';
 
 // Browse (§6): the stable catalogue. Pure representation — no urgency, no
@@ -55,7 +56,11 @@ function anchorText(item: ItemView): string {
 }
 
 // Stable, stated order within a shelf: dated first (soonest first), then A–Z.
+// Done-for-today recurring items sink below the rest — state, not judgement.
 function catalogueOrder(a: ItemView, b: ItemView): number {
+  const doneA = isDoneForNow(a);
+  const doneB = isDoneForNow(b);
+  if (doneA !== doneB) return doneA ? 1 : -1;
   const ad = a.deadline ?? a.eventAt;
   const bd = b.deadline ?? b.eventAt;
   if (!!ad !== !!bd) return ad ? -1 : 1;
@@ -80,8 +85,11 @@ interface Section {
 
 function CatalogueRow({ item, onOpen }: { item: ItemView; onOpen: (item: ItemView) => void }) {
   const done = item.status === 'completed';
+  // A recurring DO checked off today (§ done-for-today): still active, so no
+  // strikethrough — the anchor column states the fact instead.
+  const doneNow = !done && isDoneForNow(item);
   return (
-    <div className={`cat-row${done ? ' done' : ''}`} onClick={() => onOpen(item)}>
+    <div className={`cat-row${done ? ' done' : ''}${doneNow ? ' done-today' : ''}`} onClick={() => onOpen(item)}>
       <span className="glyph">{FLAVOUR_ICONS[item.flavour]}</span>
       <span className={`title${item.flavour === 'Note' ? ' note' : ''}`}>{item.title}</span>
       <span className="dots">
@@ -89,7 +97,7 @@ function CatalogueRow({ item, onOpen }: { item: ItemView; onOpen: (item: ItemVie
           <i key={t.id} title={t.name} style={{ background: themeColor(t.name) }} />
         ))}
       </span>
-      <span className="when">{anchorText(item)}</span>
+      <span className="when">{doneNow ? `✓ ${anchorText(item)}` : anchorText(item)}</span>
     </div>
   );
 }

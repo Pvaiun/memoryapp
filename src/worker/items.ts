@@ -1,6 +1,6 @@
 import type { AffectTag, Cadence, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
-import { atTimeOccurrencesBetween, cadencePeriodMs, occurrencesBetween } from '../shared/cadence';
+import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase } from '../shared/dates';
 import type { Env } from './env';
 import { embed } from './embeddings';
@@ -9,7 +9,7 @@ import {
   cosine,
   embeddingToBlob,
   getItem,
-  getState,
+  getTzOffset,
   listItems,
   logEvent,
   nowIso,
@@ -26,6 +26,14 @@ export async function completeItem(env: Env, id: string): Promise<ItemView | nul
   const db = env.DB;
   const item = await getItem(db, id);
   if (!item || item.type !== 'DO') return null;
+  const tz = await getTzOffset(db);
+  // A recurring DO already done today can't be completed again — the second
+  // tap is the user toggling today's checkbox off, not a second completion.
+  // Guarding here (not just in the UI) is what stops a stale client from
+  // inflating completion_count and streak with repeat taps.
+  if (item.cadence && completedWithinSleepDay(item.lastCompletedAt, new Date(), tz)) {
+    return uncompleteItem(env, id);
+  }
   const ts = nowIso();
   // Streak (§7.2): consecutive completions within cadence rhythm; simple bump/reset.
   const withinRhythm =
@@ -42,25 +50,56 @@ export async function completeItem(env: Env, id: string): Promise<ItemView | nul
     // Completing clears accumulated recapture boost (§9.3).
     priority_boost: 0,
   });
-  await logEvent(db, 'user', 'completed', { itemId: id, payload: { before: { status: item.status }, after: { status: item.cadence ? 'active' : 'completed' } } });
+  // The before-snapshot carries the rhythm anchors so uncomplete can restore
+  // them instead of erasing history (§7.1: corrections compensate, not delete).
+  await logEvent(db, 'user', 'completed', {
+    itemId: id,
+    payload: {
+      before: { status: item.status, lastCompletedAt: item.lastCompletedAt, streak: item.streak },
+      after: { status: item.cadence ? 'active' : 'completed' },
+    },
+  });
   const fresh = await getItem(db, id);
-  return fresh ? toItemView(fresh, new Date()) : null;
+  return fresh ? toItemView(fresh, new Date(), tz) : null;
 }
 
 export async function uncompleteItem(env: Env, id: string): Promise<ItemView | null> {
   const db = env.DB;
   const item = await getItem(db, id);
   if (!item) return null;
+  // Undoing a completion shouldn't wipe the rhythm anchor: the latest
+  // 'completed' event's before-snapshot has the previous lastCompletedAt and
+  // streak. Legacy events without a snapshot fall back to the old clearing
+  // behaviour.
+  let prevCompletedAt: string | null = null;
+  let prevStreak: number | null = null;
+  if (item.lastCompletedAt) {
+    const ev = await db
+      .prepare("SELECT payload FROM events WHERE item_id = ? AND type = 'completed' ORDER BY ts DESC LIMIT 1")
+      .bind(id)
+      .first<{ payload: string }>();
+    if (ev) {
+      try {
+        const before = (JSON.parse(ev.payload) as { before?: { lastCompletedAt?: string | null; streak?: number } })
+          .before;
+        prevCompletedAt = before?.lastCompletedAt ?? null;
+        if (typeof before?.streak === 'number') prevStreak = before.streak;
+      } catch {
+        // Unparseable legacy payload — clear, as before.
+      }
+    }
+  }
   await updateItemFields(db, id, {
     status: 'active',
     completion_count: Math.max(0, item.completionCount - 1),
-    streak: Math.max(0, item.streak - 1),
-    last_completed_at: null,
+    streak: prevStreak ?? Math.max(0, item.streak - 1),
+    last_completed_at: prevCompletedAt,
   });
   // Immutable correction model (§7.1): a compensating "reverted" event.
   await logEvent(db, 'user', 'completion_reverted', { itemId: id, payload: { before: { status: item.status }, after: { status: 'active' } } });
+  const tz = await getTzOffset(db);
   const fresh = await getItem(db, id);
-  return fresh ? toItemView(fresh, new Date()) : null;
+  return fresh ? toItemView(fresh, new Date(), tz) : null;
 }
 
 // Reject/delete (§10.2): deletes that one item, everything else untouched.
@@ -169,7 +208,7 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   }
 
   const fresh = await getItem(db, id);
-  return fresh ? toItemView(fresh, new Date()) : null;
+  return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
 }
 
 // ---------- Browse (§6): stable, by theme, filterable by flavour ----------
@@ -181,8 +220,9 @@ export async function browse(env: Env): Promise<{
   const db = env.DB;
   const now = new Date();
   const items = await listItems(db, { statuses: ['active', 'completed'] });
+  const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
-  for (const i of items) views[i.id] = toItemView(i, now);
+  for (const i of items) views[i.id] = toItemView(i, now, tz);
 
   const rows = await db
     .prepare(
@@ -218,7 +258,7 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
   const from = new Date(fromIso);
   const to = new Date(toIso);
   const items = await listItems(db, { statuses: ['active', 'completed'] });
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const tz = await getTzOffset(db);
   const entries: CalendarEntry[] = [];
   const used = new Set<string>();
 
@@ -262,7 +302,7 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
 
   entries.sort((a, b) => a.date.localeCompare(b.date));
   const views: Record<string, ItemView> = {};
-  for (const item of items) if (used.has(item.id)) views[item.id] = toItemView(item, now);
+  for (const item of items) if (used.has(item.id)) views[item.id] = toItemView(item, now, tz);
   return { entries, items: views };
 }
 
@@ -310,12 +350,13 @@ export async function search(env: Env, query: string): Promise<{ itemIds: string
   if (!scores.size) return { itemIds: [], items: {} };
 
   const all = await listItems(db, { statuses: ['active', 'completed'] });
+  const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
   const ranked: { id: string; score: number }[] = [];
   for (const item of all) {
     const s = scores.get(item.id);
     if (s === undefined) continue;
-    const view = toItemView(item, now);
+    const view = toItemView(item, now, tz);
     views[item.id] = view;
     // Relevance, lightly lifted by priority and recency (§6).
     const recencyDays = (now.getTime() - new Date(item.lastTouchedAt).getTime()) / 86_400_000;

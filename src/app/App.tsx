@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ItemView, MapPayload } from '../shared/types';
 import type { CaptureResponse } from '../shared/types';
+import { isDoneForNow } from '../shared/cadence';
 import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
@@ -155,14 +156,22 @@ export default function App() {
   }, []);
 
   // Within-day changes are deterministic (§9.1): completing updates in place.
+  // A recurring DO is "done" per-occurrence: doneToday checks it off until the
+  // local-day rollover, and tapping again un-does today rather than
+  // double-counting the completion.
   const toggleComplete = useCallback(
     async (item: ItemView) => {
       try {
-        const res =
-          item.status === 'completed' ? await api.uncompleteItem(item.id) : await api.completeItem(item.id);
+        const wasDone = isDoneForNow(item);
+        const res = wasDone ? await api.uncompleteItem(item.id) : await api.completeItem(item.id);
         patchItemEverywhere(res.item);
-        if (item.status !== 'completed' && res.item.cadence) {
-          toast(`Done — rhythm kept${res.item.streak > 1 ? ` (${res.item.streak} in a row)` : ''}`);
+        if (!wasDone && res.item.cadence) {
+          const n = res.item.streak;
+          toast(
+            res.item.cadence.atTime
+              ? `Done for today${n > 1 ? ` — ${n} in a row` : ''}`
+              : `Rhythm kept${n > 1 ? ` (${n} in a row)` : ''}`,
+          );
         }
       } catch (err) {
         toast(`${err instanceof Error ? err.message : err}`);
