@@ -12,7 +12,7 @@ import {
   withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
-import { isDoneForNow } from '../../../shared/cadence';
+import { eventPassed, isDoneForNow } from '../../../shared/cadence';
 import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
@@ -89,6 +89,7 @@ interface CardInfo {
   doneCount: number;
   total: number;
   settled: boolean;
+  settledWord: 'handled' | 'passed';
   members: ItemView[];
   construction: CardConstruction;
   segments: CardSegment[];
@@ -154,14 +155,12 @@ export default function DescentView({
   const [ripples, setRipples] = useState<Ripple[]>([]);
 
   // ----- derived scene ---------------------------------------------------
-  const track = useMemo(() => buildTrack(bubbles), [bubbles]);
-  const range = useMemo(() => cameraRange(track), [track]);
   const infos = useMemo(() => {
     const nowMs = Date.now();
     const m = new Map<string, CardInfo>();
     for (const b of bubbles) {
       const status = bubbleStatus(b, items);
-      const { doneCount, total, allDone } = bubbleCounts(b, items);
+      const { doneCount, total, allDone } = bubbleCounts(b, items, nowMs);
       const members = b.itemIds.map((id) => items[id]).filter(Boolean);
       const construction = deriveConstruction(members, b.firstStep);
       // Older maps have no sentence; the plain reason parses to one text run.
@@ -178,6 +177,12 @@ export default function DescentView({
         doneCount,
         total,
         settled: allDone,
+        // A bubble that settled purely by the clock reads "passed", one the
+        // user actually worked reads "handled".
+        settledWord:
+          allDone && members.length > 0 && members.every((x) => !isDoneForNow(x) && eventPassed(x, nowMs))
+            ? 'passed'
+            : 'handled',
         members,
         construction,
         segments,
@@ -189,6 +194,14 @@ export default function DescentView({
     }
     return m;
   }, [bubbles, items]);
+  // Resolution is depth (user decision): a settled bubble gives up its Brain
+  // prominence and rests at p 0 — the bottom of the gauge, the deep end of
+  // the corridor — instead of holding its slot in the day all afternoon.
+  const track = useMemo(
+    () => buildTrack(bubbles.map((b) => (infos.get(b.id)?.settled ? { id: b.id, prominence: 0 } : b))),
+    [bubbles, infos],
+  );
+  const range = useMemo(() => cameraRange(track), [track]);
   const byTrack = useMemo(
     () => track.map((t) => ({ t, info: infos.get(t.id)! })).filter((x) => x.info),
     [track, infos],
@@ -214,6 +227,10 @@ export default function DescentView({
   // ----- imperative registries -------------------------------------------
   const cardElsRef = useRef(new Map<string, CardEls>());
   const dotElsRef = useRef(new Map<string, HTMLElement>());
+  // settle-sink animations: id → glide start; the target is always the
+  // card's CURRENT track plane, so mid-flight reflows stay drift-corrected
+  const zpAnimsRef = useRef(new Map<string, { from: number; t0: number; dur: number }>());
+  const dotSlidePendingRef = useRef(false);
   const engagedIdRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const gaugeActiveUntilRef = useRef(0);
@@ -351,11 +368,24 @@ export default function DescentView({
         if (Math.abs(targetScroll - st) > 1.5) dollyToRef.current(targetScroll, 180, easeSnap);
       }
 
+      // a card mid-sink renders at its animated plane, easing into t.zp
+      const zpOf = (t: TrackCard): number => {
+        const anim = zpAnimsRef.current.get(t.id);
+        if (!anim) return t.zp;
+        const x = clamp((now - anim.t0) / anim.dur, 0, 1);
+        if (x >= 1) {
+          zpAnimsRef.current.delete(t.id);
+          return t.zp;
+        }
+        unsettled = true;
+        return t.zp + (anim.from - t.zp) * (1 - easeDolly(x));
+      };
+
       for (const t of tr) {
         const els = cardElsRef.current.get(t.id);
         if (!els) continue;
         const info = infosRef.current.get(t.id);
-        const d = t.zp - c;
+        const d = zpOf(t) - c;
 
         if (d <= CULL_BEHIND) {
           if (els.root.style.visibility !== 'hidden') {
@@ -421,7 +451,7 @@ export default function DescentView({
 
       // leader line: puck → engaged card's left edge
       if (leaderRef.current && engagedCard) {
-        const d = engagedCard.zp - c;
+        const d = zpOf(engagedCard) - c;
         if (d <= CULL_BEHIND) {
           leaderRef.current.setAttribute('x1', String(GAUGE_INSET));
           leaderRef.current.setAttribute('x2', String(GAUGE_INSET));
@@ -664,6 +694,39 @@ export default function DescentView({
     markActivity();
   });
 
+  // ----- settle sink: resolution becomes travel ---------------------------
+  // When a bubble settles (or un-settles), its plane leaps to/from p 0. The
+  // card glides there through the corridor instead of teleporting, its gauge
+  // dot slides down the scale, and if it settled while ENGAGED — you checked
+  // its last chip right where you read it — the camera rides down with it,
+  // in the same easing, all the way to the floor.
+  const prevZpsRef = useRef(new Map<string, number>());
+  const prevSettledRef = useRef(new Map<string, boolean>());
+  useEffect(() => {
+    const nowT = performance.now();
+    for (const { t, info } of byTrack) {
+      const wasSettled = prevSettledRef.current.get(t.id);
+      const fromZp = prevZpsRef.current.get(t.id);
+      if (
+        wasSettled === undefined ||
+        wasSettled === info.settled ||
+        fromZp === undefined ||
+        Math.abs(fromZp - t.zp) < 1 ||
+        reducedRef.current
+      )
+        continue;
+      const dur = 900;
+      zpAnimsRef.current.set(t.id, { from: fromZp, t0: nowT, dur });
+      dotSlidePendingRef.current = true;
+      if (info.settled && engagedIdRef.current === t.id) {
+        dollyToRef.current(scrollFor(rangeRef.current.cStart, t.zp), dur, easeDolly);
+      }
+      markActivity();
+    }
+    prevZpsRef.current = new Map(byTrack.map(({ t }) => [t.id, t.zp]));
+    prevSettledRef.current = new Map(byTrack.map(({ t, info }) => [t.id, info.settled]));
+  }, [byTrack, markActivity]);
+
   // ----- track changes: keep the engaged card under the camera ------------
   const trackKeyRef = useRef('');
   useEffect(() => {
@@ -672,7 +735,10 @@ export default function DescentView({
       const engaged = engagedIdRef.current;
       const t = track.find((x) => x.id === engaged);
       const scroller = scrollerRef.current;
-      if (t && scroller && userScrolledRef.current) scroller.scrollTop = scrollForPlane(t.zp);
+      // A sinking engaged card owns the camera (glide or follow-dolly) —
+      // the keep-under-camera teleport would snap the story to its end.
+      if (t && scroller && userScrolledRef.current && !zpAnimsRef.current.has(t.id) && dollyRef.current === null)
+        scroller.scrollTop = scrollForPlane(t.zp);
     }
     trackKeyRef.current = key;
     markActivity();
@@ -838,6 +904,27 @@ export default function DescentView({
   const dotYsRef = useRef<number[]>([]);
   dotYsRef.current = useMemo(() => dotLayout.map((d) => d.y), [dotLayout]);
 
+  // Settle sink, on the instrument: the sinking bubble's dot slides down the
+  // scale to p 0 (and neighbors the spread re-fans shuffle along) — the same
+  // WAAPI walk as the morning rebuild story.
+  const prevDotYsRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (dotSlidePendingRef.current) {
+      dotSlidePendingRef.current = false;
+      for (const { t, y } of dotLayout) {
+        const prev = prevDotYsRef.current.get(t.id);
+        const el = dotElsRef.current.get(t.id);
+        if (el && prev !== undefined && Math.abs(prev - y) > 2) {
+          el.animate([{ transform: `translateY(${(prev - y).toFixed(1)}px)` }, { transform: 'translateY(0)' }], {
+            duration: 900,
+            easing: 'ease-in-out',
+          });
+        }
+      }
+    }
+    prevDotYsRef.current = new Map(dotLayout.map(({ t, y }) => [t.id, y]));
+  }, [dotLayout]);
+
   // Ledger rows: same centered spread with a readable gap; a row displaced
   // from its dot keeps a hairline tie back to it.
   const ledgerRows = useMemo(() => {
@@ -963,13 +1050,15 @@ export default function DescentView({
                           <span className="dsc-sentence">
                             {info.settled ? (
                               <>
-                                <b className="dsc-tok">{b.name}</b> — handled.
+                                <b className="dsc-tok">{b.name}</b> — {info.settledWord}.
                               </>
                             ) : (
                               renderSegments(info)
                             )}
                           </span>
-                          {info.settled && <span className="dsc-done">✓ done</span>}
+                          {info.settled && (
+                            <span className="dsc-done">✓ {info.settledWord === 'passed' ? 'past' : 'done'}</span>
+                          )}
                           {info.construction === 'batch' && !info.settled && (
                             <span className="dsc-pips" aria-hidden>
                               {info.members.map((m) => (

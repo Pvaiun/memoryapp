@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, happeningToday, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -203,6 +203,36 @@ describe('captured-today relevance (§9.1, Now screen)', () => {
     expect(
       happeningToday(item({ cadence: { freq: 'daily', interval: 1, atTime: '21:00' } }), now, tz),
     ).toBe(true);
+  });
+});
+
+describe('passed events read as done (Now screen)', () => {
+  const now = new Date('2026-07-22T18:00:00Z').getTime();
+  it('a one-shot event is spent an hour after it ends', () => {
+    expect(
+      eventPassed({ eventAt: '2026-07-22T12:00:00Z', eventEnd: '2026-07-22T13:00:00Z', cadence: null }, now),
+    ).toBe(true);
+    // still inside the grace hour — lunch may be running long
+    expect(
+      eventPassed({ eventAt: '2026-07-22T16:00:00Z', eventEnd: '2026-07-22T17:30:00Z', cadence: null }, now),
+    ).toBe(false);
+    // no end time: the start anchors the grace
+    expect(eventPassed({ eventAt: '2026-07-22T16:00:00Z', eventEnd: null, cadence: null }, now)).toBe(true);
+    expect(eventPassed({ eventAt: '2026-07-22T19:00:00Z', eventEnd: null, cadence: null }, now)).toBe(false);
+  });
+  it('recurring events re-arm per occurrence; they never go spent', () => {
+    expect(
+      eventPassed(
+        { eventAt: '2026-07-01T12:00:00Z', eventEnd: null, cadence: { freq: 'weekly', interval: 1 } },
+        now,
+      ),
+    ).toBe(false);
+  });
+  it('isResolvedForNow: checked off OR already happened', () => {
+    const base = { status: 'active', cadence: null, doneToday: false, eventAt: null, eventEnd: null };
+    expect(isResolvedForNow(base, now)).toBe(false);
+    expect(isResolvedForNow({ ...base, status: 'completed' }, now)).toBe(true);
+    expect(isResolvedForNow({ ...base, eventAt: '2026-07-22T12:00:00Z' }, now)).toBe(true);
   });
 });
 

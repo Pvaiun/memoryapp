@@ -65,6 +65,35 @@ export function isDoneForNow(item: { status: string; cadence: Cadence | null; do
   return item.status === 'completed' || (!!item.cadence && item.doneToday);
 }
 
+// A one-shot event whose moment has passed (with an hour's grace for
+// overruns) is spent: it reads like a completed task — "Lunch with Seb"
+// must not hold its place in the day all afternoon. Recurring events
+// re-arm per occurrence, so they never go spent this way.
+export const EVENT_PASSED_GRACE_MS = 3_600_000;
+
+export function eventPassed(
+  item: { eventAt: string | null; eventEnd: string | null; cadence: Cadence | null },
+  now: number,
+): boolean {
+  if (!item.eventAt || item.cadence) return false;
+  return new Date(item.eventEnd ?? item.eventAt).getTime() + EVENT_PASSED_GRACE_MS < now;
+}
+
+// Resolved = nothing left to want from the item right now: checked off for
+// the occasion, or an event that already happened.
+export function isResolvedForNow(
+  item: {
+    status: string;
+    cadence: Cadence | null;
+    doneToday: boolean;
+    eventAt: string | null;
+    eventEnd: string | null;
+  },
+  now: number,
+): boolean {
+  return isDoneForNow(item) || eventPassed(item, now);
+}
+
 // Captured-today relevance (Now screen, §9.1): does this item carry TODAY's
 // pressure? "Today" is the user-local sleep-cycle day (5am boundary — the
 // same frame as doneToday and the date parser's night-owl rule). Qualifies:

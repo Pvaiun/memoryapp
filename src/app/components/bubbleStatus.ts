@@ -1,5 +1,5 @@
 import type { Bubble, ItemView } from '../../shared/types';
-import { isDoneForNow } from '../../shared/cadence';
+import { isResolvedForNow } from '../../shared/cadence';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
 // bubble's ACTIVE items, so the scale needs no legend and completing the
@@ -55,7 +55,8 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
     const it = items[id];
     // Done-for-today recurring items go quiet like completed ones — checking
     // off the recycling downgrades the chip the same as any other completion.
-    if (!it || isDoneForNow(it)) continue;
+    // Passed one-shot events go quiet too: lunch, once eaten, stops being "now".
+    if (!it || isResolvedForNow(it, now)) continue;
     if (it.deadline) {
       const due = new Date(it.deadline).getTime();
       if (due < now) overdue = true;
@@ -96,10 +97,10 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
   return { tone: 'grey', color: TONE_COLORS.grey, label: 'standing' };
 }
 
-export function bubbleCounts(bubble: Bubble, items: Record<string, ItemView>) {
+export function bubbleCounts(bubble: Bubble, items: Record<string, ItemView>, now = Date.now()) {
   const doneCount = bubble.itemIds.filter((id) => {
     const it = items[id];
-    return it && isDoneForNow(it);
+    return it && isResolvedForNow(it, now);
   }).length;
   const total = bubble.itemIds.length;
   return { doneCount, total, allDone: total > 0 && doneCount === total };
