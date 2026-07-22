@@ -1,6 +1,7 @@
 import type { ItemView } from '../../shared/types';
 import { describeCadence } from '../../shared/cadence';
 import { FLAVOUR_ICONS, itemColor } from '../api';
+import { comesBackLabel, isDone } from '../done';
 
 export function priorityColor(p: number): string {
   if (p >= 0.65) return 'var(--danger)';
@@ -28,9 +29,10 @@ export default function ItemRow({
   onOpen: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
 }) {
-  const done = item.status === 'completed';
+  const done = isDone(item);
+  const comesBack = done ? comesBackLabel(item) : null;
   const overdue =
-    item.type === 'DO' && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
+    item.type === 'DO' && !done && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
 
   return (
     <div className={`item-row${done ? ' done' : ''}`} onClick={() => onOpen(item)}>
@@ -73,6 +75,7 @@ export default function ItemRow({
             </span>
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
+          {comesBack && <span>back {comesBack}</span>}
           {item.neglected && <span className="neglected">slipping</span>}
           {item.themes.slice(0, 2).map((t) => (
             <span key={t.id} style={{ color: itemColor(item) }}>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, doneUntil, isDoneForNow, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -132,6 +132,58 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
       -240,
     );
     expect(occ.map((d) => d.toISOString())).toEqual(['2026-07-24T00:00:00.000Z', '2026-07-31T00:00:00.000Z']);
+  });
+});
+
+describe('done-for-now (recurring completion reads as checked)', () => {
+  const nightly: Cadence = { freq: 'daily', interval: 1, atTime: '21:30' };
+  const created = '2026-07-01T10:00:00Z';
+
+  it('a completed recurring DO is done until the next occurrence day begins', () => {
+    // Completed right after tonight's 9:30pm occurrence.
+    expect(doneUntil(nightly, '2026-07-21T21:35:00Z', created, 0).toISOString()).toBe('2026-07-22T00:00:00.000Z');
+    const item = { status: 'active', cadence: nightly, lastCompletedAt: '2026-07-21T21:35:00Z', createdAt: created };
+    expect(isDoneForNow(item, new Date('2026-07-21T23:00:00Z'))).toBe(true);
+    expect(isDoneForNow(item, new Date('2026-07-22T08:00:00Z'))).toBe(false);
+  });
+
+  it('doing it early covers tonight — still checked after the occurrence passes', () => {
+    const item = { status: 'active', cadence: nightly, lastCompletedAt: '2026-07-21T14:00:00Z', createdAt: created };
+    expect(isDoneForNow(item, new Date('2026-07-21T22:00:00Z'))).toBe(true);
+    expect(isDoneForNow(item, new Date('2026-07-22T10:00:00Z'))).toBe(false);
+  });
+
+  it('a weekly rhythm stays done all week, back on the next occurrence day', () => {
+    const weeklySun: Cadence = { freq: 'weekly', interval: 1, byWeekday: [0], atTime: '10:00' };
+    const item = {
+      status: 'active',
+      cadence: weeklySun,
+      lastCompletedAt: '2026-07-19T10:05:00Z', // Sunday
+      createdAt: '2026-07-05T09:00:00Z',
+    };
+    expect(isDoneForNow(item, new Date('2026-07-22T12:00:00Z'))).toBe(true); // Wednesday
+    expect(isDoneForNow(item, new Date('2026-07-26T09:00:00Z'))).toBe(false); // next Sunday
+  });
+
+  it('no atTime: done for one full period from completion', () => {
+    const weekly: Cadence = { freq: 'weekly', interval: 1 };
+    const item = { status: 'active', cadence: weekly, lastCompletedAt: '2026-07-19T15:00:00Z', createdAt: created };
+    expect(isDoneForNow(item, new Date('2026-07-25T12:00:00Z'))).toBe(true);
+    expect(isDoneForNow(item, new Date('2026-07-26T08:00:00Z'))).toBe(false);
+  });
+
+  it('one-shots answer by status; un-completing clears the window', () => {
+    const at = new Date('2026-07-21T12:00:00Z');
+    expect(isDoneForNow({ status: 'completed', cadence: null, lastCompletedAt: null, createdAt: created }, at)).toBe(true);
+    expect(isDoneForNow({ status: 'active', cadence: nightly, lastCompletedAt: null, createdAt: created }, at)).toBe(false);
+  });
+
+  it('the day boundary is the user-local one', () => {
+    // UTC-4: completed Tue 9:35pm local (Wed 01:35 UTC) → done through local
+    // Tuesday, back at local Wednesday midnight (04:00 UTC).
+    const item = { status: 'active', cadence: nightly, lastCompletedAt: '2026-07-22T01:35:00Z', createdAt: created };
+    expect(isDoneForNow(item, new Date('2026-07-22T03:00:00Z'), -240)).toBe(true); // Tue 11pm local
+    expect(isDoneForNow(item, new Date('2026-07-22T09:00:00Z'), -240)).toBe(false); // Wed 5am local
   });
 });
 

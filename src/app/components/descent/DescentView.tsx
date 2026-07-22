@@ -13,6 +13,7 @@ import {
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
 import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
+import { isDone } from '../../done';
 import type { BubbleStatus } from '../bubbleStatus';
 import {
   band,
@@ -870,7 +871,7 @@ export default function DescentView({
             {seg.text}
           </b>
         );
-      const done = item.status === 'completed';
+      const done = isDone(item);
       return (
         <span
           key={i}
@@ -953,7 +954,7 @@ export default function DescentView({
                               {info.members.map((m) => (
                                 <span
                                   key={m.id}
-                                  className={`dsc-pip${m.status === 'completed' ? ' filled' : ''}`}
+                                  className={`dsc-pip${isDone(m) ? ' filled' : ''}`}
                                 />
                               ))}
                             </span>

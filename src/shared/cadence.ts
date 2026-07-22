@@ -49,6 +49,43 @@ export function neglectedByDays(
   return Math.max(0, Math.round((elapsed - cadencePeriodMs(cadence)) / DAY_MS));
 }
 
+// "Done for now" (§7.2 companion): completing a recurring DO doesn't close the
+// series — it covers the occurrence nearest the completion (within half a
+// period either side, so doing it a little early still counts). The item then
+// renders as done until the user-local day of the NEXT occurrence begins — at
+// minimum the rest of the completion's own local day — and comes back fresh
+// for that occurrence. Derived, never stored: the same lastCompletedAt that
+// drives streaks drives this.
+export function doneUntil(
+  cadence: Cadence,
+  lastCompletedAtIso: string,
+  anchorIso: string,
+  tzOffsetMinutes = 0,
+): Date {
+  const tzMs = tzOffsetMinutes * 60_000;
+  const completedMs = new Date(lastCompletedAtIso).getTime();
+  const half = cadencePeriodMs(cadence) / 2;
+  // Without a clock anchor the rhythm has no occurrence instants; one full
+  // period from completion is the natural "covered" window.
+  const next = cadence.atTime
+    ? nextAtTimeOccurrence(cadence, anchorIso, new Date(completedMs + half), tzOffsetMinutes)
+    : new Date(completedMs + 2 * half);
+  const localDayStart = (ms: number) => Math.floor((ms + tzMs) / DAY_MS) * DAY_MS - tzMs;
+  return new Date(Math.max(localDayStart(next.getTime()), localDayStart(completedMs) + DAY_MS));
+}
+
+// The one question every checkbox asks. One-shots answer by status; a recurring
+// DO stays 'active' forever, so it answers by the done-for-now window above.
+export function isDoneForNow(
+  item: { status: string; cadence: Cadence | null; lastCompletedAt: string | null; createdAt: string },
+  now: Date,
+  tzOffsetMinutes = 0,
+): boolean {
+  if (item.status === 'completed') return true;
+  if (item.status !== 'active' || !item.cadence || !item.lastCompletedAt) return false;
+  return now.getTime() < doneUntil(item.cadence, item.lastCompletedAt, item.createdAt, tzOffsetMinutes).getTime();
+}
+
 // Next occurrence of a recurring time-anchored item at or after `from`.
 // anchor = the first/reference occurrence (eventAt for HAPPEN, createdAt for DO).
 export function nextOccurrence(cadence: Cadence, anchorIso: string, from: Date): Date {

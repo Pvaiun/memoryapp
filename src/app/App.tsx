@@ -11,6 +11,7 @@ import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
 import SearchView from './views/SearchView';
 import ItemSheet from './components/ItemSheet';
+import { comesBackLabel, isDone } from './done';
 
 type Tab = 'map' | 'browse' | 'calendar' | 'search';
 
@@ -155,14 +156,19 @@ export default function App() {
   }, []);
 
   // Within-day changes are deterministic (§9.1): completing updates in place.
+  // A recurring DO checks off like anything else — it reads as done until its
+  // next occurrence comes around (done-for-now, shared/cadence.ts), then
+  // returns fresh; tapping again while checked un-completes this occurrence.
   const toggleComplete = useCallback(
     async (item: ItemView) => {
       try {
-        const res =
-          item.status === 'completed' ? await api.uncompleteItem(item.id) : await api.completeItem(item.id);
+        const wasDone = isDone(item);
+        const res = wasDone ? await api.uncompleteItem(item.id) : await api.completeItem(item.id);
         patchItemEverywhere(res.item);
-        if (item.status !== 'completed' && res.item.cadence) {
-          toast(`Done — rhythm kept${res.item.streak > 1 ? ` (${res.item.streak} in a row)` : ''}`);
+        if (!wasDone && res.item.cadence) {
+          const back = comesBackLabel(res.item);
+          const streak = res.item.streak > 1 ? ` · ${res.item.streak} in a row` : '';
+          toast(`Done for today${back && back !== 'tomorrow' ? ` — back ${back}` : ''}${streak}`);
         }
       } catch (err) {
         toast(`${err instanceof Error ? err.message : err}`);

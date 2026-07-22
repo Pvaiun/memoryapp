@@ -3,6 +3,7 @@ import type { Flavour, ItemView } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { api, themeColor } from '../api';
 import ItemRow from '../components/ItemRow';
+import { isDone } from '../done';
 
 // Browse (§6): the stable shelves — organized by theme, filterable by flavour.
 
@@ -28,7 +29,7 @@ export default function BrowseView({
   const visible = (id: string) => {
     const item = data.items[id];
     if (!item) return false;
-    if (!showDone && item.status === 'completed') return false;
+    if (!showDone && isDone(item)) return false;
     return flavour === 'All' || item.flavour === flavour;
   };
 
@@ -38,7 +39,7 @@ export default function BrowseView({
     [...ids].sort((a, b) => {
       const A = data.items[a];
       const B = data.items[b];
-      if ((A.status === 'completed') !== (B.status === 'completed')) return A.status === 'completed' ? 1 : -1;
+      if (isDone(A) !== isDone(B)) return isDone(A) ? 1 : -1;
       const aDate = A.deadline ?? A.eventAt;
       const bDate = B.deadline ?? B.eventAt;
       if (!!aDate !== !!bDate) return aDate ? -1 : 1;

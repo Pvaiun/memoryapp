@@ -1,4 +1,4 @@
-import { nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
+import { doneUntil, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import type { Effort } from '../shared/types';
 import type { Env } from './env';
 import { getState, listItems, logEvent, newId, nowIso } from './db';
@@ -39,6 +39,7 @@ export function computeDueAlerts(
     alertLeadMinutes: number | null;
     cadence: import('../shared/types').Cadence | null;
     createdAt: string;
+    lastCompletedAt?: string | null;
   }[],
   now: Date,
   tzOffsetMinutes = 0,
@@ -98,7 +99,11 @@ export function computeDueAlerts(
     if (item.type === 'DO' && !item.deadline && item.cadence?.atTime) {
       const occurrence = nextAtTimeOccurrence(item.cadence, item.createdAt, new Date(nowMs - 10 * 60_000), tzOffsetMinutes);
       const occMs = occurrence.getTime();
-      if (nowMs >= occMs && nowMs < occMs + 10 * 60_000) {
+      // Done-for-now covers this occurrence (e.g. did it early) — no ping.
+      const covered =
+        !!item.lastCompletedAt &&
+        occMs < doneUntil(item.cadence, item.lastCompletedAt, item.createdAt, tzOffsetMinutes).getTime();
+      if (!covered && nowMs >= occMs && nowMs < occMs + 10 * 60_000) {
         alerts.push({
           itemId: item.id,
           occurrenceKey: occurrence.toISOString(),

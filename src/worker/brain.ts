@@ -1,5 +1,5 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeAtTime, describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
+import { describeAtTime, describeCadence, doneUntil, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -448,16 +448,21 @@ export function cadenceOccurrenceToday(
   const localNow = now.getTime() + tzOffsetMinutes * 60_000;
   const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
-  if (i.lastCompletedAt) {
-    const done = new Date(i.lastCompletedAt).getTime();
-    if (done >= dayStartUtc && done < dayEndUtc) return null;
-  }
   const from = new Date(dayStartUtc);
   const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
   const occ = i.cadence.atTime
     ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
     : nextOccurrence(i.cadence, anchor, from);
-  return occ.getTime() < dayEndUtc ? occ : null;
+  if (occ.getTime() >= dayEndUtc) return null;
+  // Done-for-now (shared/cadence.ts) already covers this occurrence — the
+  // rhythm releases until it comes back, same rule the client checkbox uses.
+  if (
+    i.lastCompletedAt &&
+    occ.getTime() < doneUntil(i.cadence, i.lastCompletedAt, anchor, tzOffsetMinutes).getTime()
+  ) {
+    return null;
+  }
+  return occ;
 }
 
 // The item exactly as the Brain's prompt receives it — one compact line,

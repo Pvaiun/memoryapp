@@ -92,6 +92,19 @@ describe('Layer-1 punctual push (§11.4)', () => {
     // 20:02 UTC the same Thursday is only 16:02 local — nothing due yet.
     expect(computeDueAlerts(items, new Date('2026-07-23T20:02:00Z'), -240)).toHaveLength(0);
   });
+
+  it('a done-for-now recurring DO skips the covered occurrence, pings the next', () => {
+    const items = [
+      {
+        ...baseItem,
+        cadence: { freq: 'weekly' as const, interval: 1, byWeekday: [4], atTime: '20:00' },
+        // Did it Thursday 4pm local, ahead of the 8pm anchor.
+        lastCompletedAt: '2026-07-23T20:00:00Z',
+      },
+    ];
+    expect(computeDueAlerts(items, new Date('2026-07-24T00:02:00Z'), -240)).toHaveLength(0);
+    expect(computeDueAlerts(items, new Date('2026-07-31T00:02:00Z'), -240)).toHaveLength(1);
+  });
 });
 
 describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {

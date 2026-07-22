@@ -3,6 +3,7 @@ import type { AffectTag, Cadence, Flavour, ItemView } from '../../shared/types';
 import { AFFECT_TAGS } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { api } from '../api';
+import { isDone } from '../done';
 
 // The review/edit surface (§10.2): every AI-inferred field independently
 // editable, the item independently rejectable. Flavour override is
@@ -282,7 +283,7 @@ export default function ItemSheet({
           <button className="danger" onClick={reject}>
             Remove
           </button>
-          {item.type === 'DO' && item.status === 'completed' && (
+          {item.type === 'DO' && isDone(item) && (
             <button
               onClick={async () => {
                 const { item: fresh } = await api.uncompleteItem(item.id);
