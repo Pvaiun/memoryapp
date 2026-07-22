@@ -54,10 +54,10 @@ export default function ItemRow({
   // A rhythm without a set time ("read 30 min/day") has no occurrence to tick
   // off — its button is a "did it" ping, rendered as a circle, not a checkbox.
   const rhythm = !!item.cadence && !item.cadence.atTime;
-  // Done → the occurrence after today's ("back Tue 9:30pm"). Not done and
-  // time-anchored → the pending occurrence ("today 9:30pm" / "next Tue
-  // 9:30pm"), so a released weekly task says when it's actually due again
-  // instead of reading like an open task.
+  // Done → the occurrence after today's; not done and time-anchored → the
+  // pending occurrence ("today 9:30pm"). Both label as "next …": it names the
+  // occurrence the rhythm is waiting on, never how long the checkmark lasts —
+  // that always releases at the sleep-day rollover.
   const nextOcc = doneToday
     ? nextOccurrenceFrom(item, new Date(sleepDayStart().getTime() + 86_400_000))
     : null;
@@ -117,7 +117,7 @@ export default function ItemRow({
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
           {doneToday && (
-            <span className="done-today">done today{nextOcc ? ` · back ${fmtDate(nextOcc.toISOString())}` : ''}</span>
+            <span className="done-today">done today{nextOcc ? ` · next ${fmtDate(nextOcc.toISOString())}` : ''}</span>
           )}
           {dueLabel && <span>{dueLabel.startsWith('today') ? dueLabel : `next ${dueLabel}`}</span>}
           {item.cadence && item.streak > 1 && <span className="streak">{item.streak} in a row</span>}
