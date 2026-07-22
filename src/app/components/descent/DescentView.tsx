@@ -864,7 +864,10 @@ export default function DescentView({
           </b>
         );
       const item = items[seg.itemId];
-      if (!item || info.bubble.kind === 'rotation')
+      // Chips complete DOs. The model sometimes wraps chip markup around an
+      // event or fact — a checkbox that "completes" a HAPPEN is a lie, so
+      // non-DO chips degrade to bold.
+      if (!item || item.type !== 'DO' || info.bubble.kind === 'rotation')
         return (
           <b key={i} className="dsc-tok">
             {seg.text}
