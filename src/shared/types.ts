@@ -121,6 +121,10 @@ export interface Bubble {
   itemIds: string[];
 }
 
+// Client-side presentation id for the synthetic "Captured today" bubble the
+// descent view builds over the §9.1 bucket. Never a real (server) bubble id.
+export const CAPTURED_BUBBLE_ID = '__captured-today__';
+
 export interface MapPayload {
   day: string;
   builtAt: string | null;
