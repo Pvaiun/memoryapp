@@ -1,7 +1,7 @@
 import { nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import type { Effort } from '../shared/types';
 import type { Env } from './env';
-import { getState, listItems, logEvent, newId, nowIso } from './db';
+import { getTzOffset, listItems, logEvent, newId, nowIso } from './db';
 import { sendPush, type PushSubscriptionRecord, type VapidKeys } from './webpush';
 
 // Layer-1 punctual push (§11): deterministic throughout — computed from dates +
@@ -121,7 +121,7 @@ export async function runPushScan(env: Env): Promise<{ sent: number; skipped: nu
   if (!subs.results.length) return { sent: 0, skipped: 0 };
 
   const items = await listItems(db, { statuses: ['active'] });
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const tz = await getTzOffset(db);
   const due = computeDueAlerts(items, new Date(), tz);
   if (!due.length) return { sent: 0, skipped: 0 };
 

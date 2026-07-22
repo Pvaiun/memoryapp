@@ -1,4 +1,5 @@
 import type { Bubble, ItemView } from '../../shared/types';
+import { isDoneForNow } from '../../shared/cadence';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
 // bubble's ACTIVE items, so the scale needs no legend and completing the
@@ -52,7 +53,9 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
   let nextEvent = Infinity;
   for (const id of bubble.itemIds) {
     const it = items[id];
-    if (!it || it.status === 'completed') continue;
+    // Done-for-today recurring items go quiet like completed ones — checking
+    // off the recycling downgrades the chip the same as any other completion.
+    if (!it || isDoneForNow(it)) continue;
     if (it.deadline) {
       const due = new Date(it.deadline).getTime();
       if (due < now) overdue = true;
@@ -94,7 +97,10 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
 }
 
 export function bubbleCounts(bubble: Bubble, items: Record<string, ItemView>) {
-  const doneCount = bubble.itemIds.filter((id) => items[id]?.status === 'completed').length;
+  const doneCount = bubble.itemIds.filter((id) => {
+    const it = items[id];
+    return it && isDoneForNow(it);
+  }).length;
   const total = bubble.itemIds.length;
   return { doneCount, total, allDone: total > 0 && doneCount === total };
 }

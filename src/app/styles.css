@@ -540,6 +540,11 @@ textarea:focus {
   background: var(--good);
   color: #0b0e17;
 }
+/* Timeless rhythms ("read 30 min/day") carry a "did it" ping, not a checkbox —
+   the circle marks the difference. */
+.item-row .check.ping {
+  border-radius: 50%;
+}
 .item-row .check.know {
   border-style: dotted;
   border-radius: 50%;
@@ -574,6 +579,13 @@ textarea:focus {
 .item-row .meta .neglected {
   color: var(--warn);
   font-weight: 600;
+}
+.item-row .meta .done-today {
+  color: var(--good);
+  font-weight: 600;
+}
+.item-row .meta .streak {
+  color: var(--text-dim);
 }
 .priority-dot {
   width: 8px;

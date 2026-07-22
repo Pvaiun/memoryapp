@@ -135,6 +135,10 @@ export interface ItemView extends Item {
   flavour: Flavour;
   effectivePriority: number;
   neglected: boolean; // now − lastCompleted exceeds cadence (§7.2)
+  // Completed within the user-local today. A recurring DO never reaches
+  // status='completed', so this is what its checkbox renders from — done for
+  // today, re-armed at the local-day rollover.
+  doneToday: boolean;
 }
 
 export type EventActor = 'user' | 'ai' | 'system';

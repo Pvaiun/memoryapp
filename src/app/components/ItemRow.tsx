@@ -1,6 +1,6 @@
 import type { ItemView } from '../../shared/types';
-import { describeCadence } from '../../shared/cadence';
-import { FLAVOUR_ICONS, itemColor } from '../api';
+import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
+import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
 export function priorityColor(p: number): string {
   if (p >= 0.65) return 'var(--danger)';
@@ -19,6 +19,19 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// A recurring DO's next occurrence after today's — what "done today" hands
+// back to ("back Thu 9:30pm"). Anchored the same way the worker anchors its
+// occurrence math (eventAt ?? createdAt).
+function nextOccurrenceAfterToday(item: ItemView): Date | null {
+  if (!item.cadence) return null;
+  const tomorrow = new Date();
+  tomorrow.setHours(24, 0, 0, 0);
+  const anchor = item.eventAt ?? item.createdAt;
+  return item.cadence.atTime
+    ? nextAtTimeOccurrence(item.cadence, anchor, tomorrow, tzOffsetMinutes())
+    : nextOccurrence(item.cadence, anchor, tomorrow);
+}
+
 export default function ItemRow({
   item,
   onOpen,
@@ -28,7 +41,14 @@ export default function ItemRow({
   onOpen: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
 }) {
-  const done = item.status === 'completed';
+  // Recurring DOs never reach status='completed' — their checked state is
+  // doneToday, released again at the local-day rollover.
+  const done = isDoneForNow(item);
+  const doneToday = done && item.status !== 'completed';
+  // A rhythm without a set time ("read 30 min/day") has no occurrence to tick
+  // off — its button is a "did it" ping, rendered as a circle, not a checkbox.
+  const rhythm = !!item.cadence && !item.cadence.atTime;
+  const nextOcc = doneToday ? nextOccurrenceAfterToday(item) : null;
   const overdue =
     item.type === 'DO' && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
 
@@ -36,8 +56,16 @@ export default function ItemRow({
     <div className={`item-row${done ? ' done' : ''}`} onClick={() => onOpen(item)}>
       {item.type === 'DO' ? (
         <button
-          className={`check${done ? ' done' : ''}`}
-          aria-label={done ? 'Mark not done' : 'Mark done'}
+          className={`check${done ? ' done' : ''}${rhythm ? ' ping' : ''}`}
+          aria-label={
+            done
+              ? item.cadence
+                ? 'Undo — not done today'
+                : 'Mark not done'
+              : rhythm
+                ? 'Did it — keep the rhythm'
+                : 'Mark done'
+          }
           onClick={(e) => {
             e.stopPropagation();
             onToggleComplete(item);
@@ -73,6 +101,10 @@ export default function ItemRow({
             </span>
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
+          {doneToday && (
+            <span className="done-today">done today{nextOcc ? ` · back ${fmtDate(nextOcc.toISOString())}` : ''}</span>
+          )}
+          {item.cadence && item.streak > 1 && <span className="streak">{item.streak} in a row</span>}
           {item.neglected && <span className="neglected">slipping</span>}
           {item.themes.slice(0, 2).map((t) => (
             <span key={t.id} style={{ color: itemColor(item) }}>

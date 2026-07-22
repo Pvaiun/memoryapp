@@ -4,7 +4,7 @@ import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
 import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
-import { getItem, getState, listItems, setState, toItemView } from './db';
+import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -177,14 +177,15 @@ app.get('/api/export', async (c) => {
 
 app.get('/api/items', async (c) => {
   const now = new Date();
+  const tz = await getTzOffset(c.env.DB);
   const items = await listItems(c.env.DB, { statuses: ['active', 'completed'] });
-  return c.json({ items: items.map((i) => toItemView(i, now)) });
+  return c.json({ items: items.map((i) => toItemView(i, now, tz)) });
 });
 
 app.get('/api/items/:id', async (c) => {
   const item = await getItem(c.env.DB, c.req.param('id'));
   if (!item) return c.json({ error: 'not found' }, 404);
-  return c.json({ item: toItemView(item, new Date()) });
+  return c.json({ item: toItemView(item, new Date(), await getTzOffset(c.env.DB)) });
 });
 
 app.patch('/api/items/:id', async (c) => {

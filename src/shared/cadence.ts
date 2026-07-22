@@ -38,6 +38,31 @@ export function isNeglected(
   return elapsed > cadencePeriodMs(cadence) * 1.5;
 }
 
+// "Done for today" (§7.2): completed within the user-local today. For a
+// recurring DO this is the per-occurrence done state — the item stays active
+// forever, but today's tap satisfies today's occurrence: the checkbox renders
+// checked, the Brain releases it, and the local-day rollover re-arms it. One
+// definition shared by the Brain's suppression and the ItemView derivation so
+// the two can never disagree.
+export function completedWithinLocalDay(
+  lastCompletedAt: string | null,
+  now: Date,
+  tzOffsetMinutes: number,
+): boolean {
+  if (!lastCompletedAt) return false;
+  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
+  const dayStartUtc = Math.floor(localNow / DAY_MS) * DAY_MS - tzOffsetMinutes * 60_000;
+  const done = new Date(lastCompletedAt).getTime();
+  return done >= dayStartUtc && done < dayStartUtc + DAY_MS;
+}
+
+// The user-facing "checked" state of a DO. One-shots check by status; a
+// recurring DO never reaches status='completed', so it checks by doneToday —
+// done for this occurrence, released at the local-day rollover.
+export function isDoneForNow(item: { status: string; cadence: Cadence | null; doneToday: boolean }): boolean {
+  return item.status === 'completed' || (!!item.cadence && item.doneToday);
+}
+
 export function neglectedByDays(
   cadence: Cadence,
   lastCompletedAt: string | null,

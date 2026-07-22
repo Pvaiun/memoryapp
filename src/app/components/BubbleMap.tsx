@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { Bubble, ItemView } from '../../shared/types';
-import { bubbleStatus } from './bubbleStatus';
+import { bubbleCounts, bubbleStatus } from './bubbleStatus';
 
 // The map (§6) as a packed mosaic: rounded tiles stuck together, sized by
 // prominence (area = the one scarce resource, §9.2). Status is an edge bar
@@ -61,9 +61,7 @@ export default function BubbleMap({
           <div key={ri} className="tile-row" style={{ height }}>
             {row.map((bubble) => {
               const status = bubbleStatus(bubble, items);
-              const doneCount = bubble.itemIds.filter((id) => items[id]?.status === 'completed').length;
-              const total = bubble.itemIds.length;
-              const allDone = total > 0 && doneCount === total;
+              const { doneCount, total, allDone } = bubbleCounts(bubble, items);
               const fontSize = Math.max(13, Math.min(19, 12 + bubble.prominence * 8));
               // Urgency glow: reserved for genuinely loud bubbles (§9.2's
               // "large, loud" end of the prominence range).

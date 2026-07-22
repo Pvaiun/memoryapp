@@ -1,5 +1,12 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeAtTime, describeCadence, neglectedByDays, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
+import {
+  completedWithinLocalDay,
+  describeAtTime,
+  describeCadence,
+  neglectedByDays,
+  nextAtTimeOccurrence,
+  nextOccurrence,
+} from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -10,6 +17,7 @@ import { embed } from './embeddings';
 import {
   getItem,
   getState,
+  getTzOffset,
   insertItem,
   listItems,
   listThemes,
@@ -62,8 +70,9 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   }
 
   const items = await listItems(db, { statuses: ['active', 'completed'] });
+  const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
-  for (const item of items) views[item.id] = toItemView(item, now);
+  for (const item of items) views[item.id] = toItemView(item, now, tz);
 
   const bubbles: Bubble[] = bubbleRows.results.map((b) => ({
     id: b.id,
@@ -133,7 +142,8 @@ export async function rebuildMap(
     console.error('librarian pass failed', err);
   }
 
-  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now));
+  const tz = await getTzOffset(db);
+  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now, tz));
 
   // Yesterday's bubbles — supplied separately, framed as "reuse only if apt" (§8.2).
   let previous: { name: string; itemTitles: string[] }[] = [];
@@ -176,7 +186,6 @@ export async function rebuildMap(
     await getState(db, 'brain_prompt_override'),
   );
 
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
   let proposed: ProposedBubble[];
   let mode: 'llm' | 'fallback' = 'fallback';
@@ -342,7 +351,7 @@ export async function addFirstStep(
   await logEvent(db, 'user', 'captured', { payload: { captureId, text: title } });
 
   const now = new Date();
-  const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
+  const tz = await getTzOffset(db);
   let parsed: ParseResult;
   if (llmAvailable(env)) {
     try {
@@ -392,7 +401,7 @@ export async function addFirstStep(
   const capture: CaptureResponse = {
     captureId,
     rawText: title,
-    created: created ? [toItemView(created, now)] : [],
+    created: created ? [toItemView(created, now, tz)] : [],
     boosted: [],
     nudge: parsed.confidence === 'low' ? 'low-confidence' : null,
   };
@@ -448,10 +457,9 @@ export function cadenceOccurrenceToday(
   const localNow = now.getTime() + tzOffsetMinutes * 60_000;
   const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
-  if (i.lastCompletedAt) {
-    const done = new Date(i.lastCompletedAt).getTime();
-    if (done >= dayStartUtc && done < dayEndUtc) return null;
-  }
+  // Same predicate that derives ItemView.doneToday — the checkbox and the
+  // Brain's release must agree on what "done for today" means.
+  if (completedWithinLocalDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes)) return null;
   const from = new Date(dayStartUtc);
   const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
   const occ = i.cadence.atTime

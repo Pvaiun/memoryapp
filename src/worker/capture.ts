@@ -8,6 +8,7 @@ import { anthropicJson, llmAvailable } from './ai';
 import { embed } from './embeddings';
 import {
   getItem,
+  getTzOffset,
   insertItem,
   listThemes,
   logEvent,
@@ -99,7 +100,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         payload: { appendedText: p.title, boost: RECAPTURE_BOOST, captureId },
       });
       const fresh = await getItem(db, matched.id);
-      if (fresh) boosted.push({ item: toItemView(fresh, now), appendedText: p.title });
+      if (fresh) boosted.push({ item: toItemView(fresh, now, tz), appendedText: p.title });
       continue;
     }
 
@@ -145,7 +146,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       payload: { type: p.type, title: p.title, themes: themes.map((t) => t.name), captureId },
     });
     const item = await getItem(db, id);
-    if (item) created.push(toItemView(item, now));
+    if (item) created.push(toItemView(item, now, tz));
   }
 
   // 5. Nudge only when the parse warrants it (§10.1).
@@ -202,7 +203,7 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
     payload: { appendedText, newItemId },
   });
   const fresh = await getItem(db, newItemId);
-  return fresh ? toItemView(fresh, now) : null;
+  return fresh ? toItemView(fresh, now, await getTzOffset(db)) : null;
 }
 
 // ---------- The cheap-tier parse call ----------
