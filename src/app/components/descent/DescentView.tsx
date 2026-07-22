@@ -89,7 +89,7 @@ interface CardInfo {
   doneCount: number;
   total: number;
   settled: boolean;
-  settledWord: 'handled' | 'passed';
+  settledWord: 'done' | 'passed';
   members: ItemView[];
   construction: CardConstruction;
   segments: CardSegment[];
@@ -178,11 +178,11 @@ export default function DescentView({
         total,
         settled: allDone,
         // A bubble that settled purely by the clock reads "passed", one the
-        // user actually worked reads "handled".
+        // user actually worked reads "done".
         settledWord:
           allDone && members.length > 0 && members.every((x) => !isDoneForNow(x) && eventPassed(x, nowMs))
             ? 'passed'
-            : 'handled',
+            : 'done',
         members,
         construction,
         segments,
@@ -1056,9 +1056,6 @@ export default function DescentView({
                               renderSegments(info)
                             )}
                           </span>
-                          {info.settled && (
-                            <span className="dsc-done">✓ {info.settledWord === 'passed' ? 'past' : 'done'}</span>
-                          )}
                           {info.construction === 'batch' && !info.settled && (
                             <span className="dsc-pips" aria-hidden>
                               {info.members.map((m) => (
