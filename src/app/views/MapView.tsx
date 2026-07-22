@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Bubble, ItemView, MapPayload } from '../../shared/types';
 import { CAPTURED_BUBBLE_ID } from '../../shared/types';
+import { happeningToday } from '../../shared/cadence';
 import BubbleMap from '../components/BubbleMap';
 import DescentView from '../components/descent/DescentView';
 import ItemRow from '../components/ItemRow';
@@ -10,6 +11,19 @@ export type NowView = 'descent' | 'tiles';
 // The card grammar (shared/cards.ts) reserves ** and []; a title carrying
 // them would shatter the utterance, so they never reach the markup.
 const safeToken = (title: string) => title.replace(/[*[\]]/g, '');
+
+// The Now screen's slice of the §9.1 bucket: only captures that carry
+// today's pressure surface here. Undated and future-dated captures stay in
+// the bucket (Browse, review sheet) until the morning build files them.
+// Shared with App.tsx so the layout class and the render agree.
+export function capturedForToday(map: MapPayload): string[] {
+  const now = new Date();
+  const tz = -now.getTimezoneOffset();
+  return map.capturedToday.filter((id) => {
+    const it = map.items[id];
+    return it && happeningToday(it, now, tz);
+  });
+}
 
 export default function MapView({
   map,
@@ -28,9 +42,10 @@ export default function MapView({
 }) {
   const [openBubble, setOpenBubble] = useState<Bubble | null>(null);
 
+  const capturedIds = useMemo(() => capturedForToday(map), [map]);
   const capturedItems = useMemo(
-    () => map.capturedToday.map((id) => map.items[id]).filter(Boolean),
-    [map.capturedToday, map.items],
+    () => capturedIds.map((id) => map.items[id]).filter(Boolean),
+    [capturedIds, map.items],
   );
 
   // In the descent, Captured Today is not a fixed panel above the corridor —
@@ -53,9 +68,9 @@ export default function MapView({
         .map((it) => (it.type === 'DO' ? `[${safeToken(it.title)}](${it.id})` : `**${safeToken(it.title)}**`))
         .join('  '),
       firstStep: null,
-      itemIds: map.capturedToday,
+      itemIds: capturedIds,
     };
-  }, [capturedItems, map.capturedToday, map.day]);
+  }, [capturedItems, capturedIds, map.day]);
 
   // Spawn signal: bumps when a capture is added, so the corridor can dolly
   // up to the captured bubble and show the new chip land.

@@ -6,7 +6,7 @@ import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
 import SettingsSheet from './components/SettingsSheet';
-import MapView from './views/MapView';
+import MapView, { capturedForToday } from './views/MapView';
 import type { NowView } from './views/MapView';
 import BrowseView from './views/BrowseView';
 import CalendarView from './views/CalendarView';
@@ -483,7 +483,7 @@ export default function App() {
       </header>
 
       <main
-        className={`view${tab === 'map' && nowView === 'descent' && map && (map.bubbles.length > 0 || map.capturedToday.length > 0) ? ' view-descent' : ''}`}
+        className={`view${tab === 'map' && nowView === 'descent' && map && (map.bubbles.length > 0 || capturedForToday(map).length > 0) ? ' view-descent' : ''}`}
       >
         {tab === 'map' && map && (
           <MapView
