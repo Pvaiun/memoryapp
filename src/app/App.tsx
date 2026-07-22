@@ -496,7 +496,7 @@ export default function App() {
           />
         )}
         {tab === 'browse' && (
-          <BrowseView refreshKey={refreshKey} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
+          <BrowseView refreshKey={refreshKey} onOpenItem={setOpenItem} />
         )}
         {tab === 'calendar' && (
           <CalendarView refreshKey={refreshKey} onOpenItem={setOpenItem} onToggleComplete={toggleComplete} />
