@@ -3,7 +3,7 @@ import { AFFECT_TAGS } from '../shared/types';
 import { atTimeOccurrencesBetween, cadencePeriodMs, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase } from '../shared/dates';
 import type { Env } from './env';
-import { embed } from './embeddings';
+import { embed, FALLBACK_DIMS } from './embeddings';
 import {
   blobToEmbedding,
   cosine,
@@ -302,9 +302,16 @@ export async function search(env: Env, query: string): Promise<{ itemIds: string
   const rows = await db
     .prepare("SELECT id, embedding FROM items WHERE status != 'deleted' AND embedding IS NOT NULL")
     .all<{ id: string; embedding: ArrayBuffer }>();
-  for (const r of rows.results) {
-    const sim = cosine(qEmb, blobToEmbedding(r.embedding));
-    if (sim > 0.3) scores.set(r.id, Math.max(scores.get(r.id) ?? 0, sim));
+  const sims = rows.results.map((r) => ({ id: r.id, sim: cosine(qEmb, blobToEmbedding(r.embedding)) }));
+  const cut = semanticCut(sims.map((s) => s.sim), qEmb.length);
+  const top = Math.max(...sims.map((s) => s.sim), 0);
+  for (const { id, sim } of sims) {
+    if (sim < cut) continue;
+    // Rescale into a band comparable with keyword scores: best semantic hit
+    // ~1.0, a borderline one ~0.6. Raw cosine can't be blended directly —
+    // bge packs everything into a narrow band, so raw gaps are tiny.
+    const sem = 0.6 + 0.4 * (top > cut ? (sim - cut) / (top - cut) : 1);
+    scores.set(id, Math.max(scores.get(id) ?? 0, sem));
   }
 
   if (!scores.size) return { itemIds: [], items: {} };
@@ -317,11 +324,28 @@ export async function search(env: Env, query: string): Promise<{ itemIds: string
     if (s === undefined) continue;
     const view = toItemView(item, now);
     views[item.id] = view;
-    // Relevance, lightly lifted by priority and recency (§6).
+    // Relevance, lightly lifted by priority and recency (§6). Kept an order of
+    // magnitude below real score gaps so it breaks ties instead of shuffling.
     const recencyDays = (now.getTime() - new Date(item.lastTouchedAt).getTime()) / 86_400_000;
-    const lift = view.effectivePriority * 0.1 + Math.max(0, 0.08 - recencyDays * 0.002);
+    const lift = view.effectivePriority * 0.03 + Math.max(0, 0.03 - recencyDays * 0.001);
     ranked.push({ id: item.id, score: s + lift });
   }
   ranked.sort((a, b) => b.score - a.score);
   return { itemIds: ranked.slice(0, 25).map((r) => r.id), items: views };
+}
+
+// The similarity bar a semantic hit must clear. Absolute thresholds don't
+// transfer across embedding backends: bge-base gives ~0.6-0.75 cosine to
+// completely unrelated English phrases (which is how "sim > 0.3" returned the
+// whole corpus), while the sparse dev trigram fallback sits near 0 for
+// unrelated text. So: a per-backend floor for "plausibly related at all",
+// tightened to just-below-the-best-hit so only items competitive with the top
+// match survive — not everything the backend considers vaguely English.
+// Exported for tests.
+export function semanticCut(sims: number[], queryDims: number): number {
+  const fallback = queryDims === FALLBACK_DIMS;
+  const floor = fallback ? 0.18 : 0.72;
+  const margin = fallback ? 0.15 : 0.08;
+  const top = Math.max(...sims, 0);
+  return Math.max(floor, top - margin);
 }
