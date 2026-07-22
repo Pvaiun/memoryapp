@@ -1,7 +1,7 @@
 import type { AffectEntry, BackendType, Cadence, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
 import { deriveFlavour } from '../shared/flavour';
 import { effectivePriority } from '../shared/priority';
-import { completedWithinLocalDay, isNeglected } from '../shared/cadence';
+import { completedWithinSleepDay, isNeglected } from '../shared/cadence';
 
 export function newId(): string {
   return crypto.randomUUID();
@@ -85,7 +85,7 @@ export function toItemView(item: Item, now: Date, tzOffsetMinutes = 0): ItemView
     neglected: item.type === 'DO' && item.status === 'active'
       ? isNeglected(item.cadence, item.lastCompletedAt, item.createdAt, now)
       : false,
-    doneToday: item.type === 'DO' && completedWithinLocalDay(item.lastCompletedAt, now, tzOffsetMinutes),
+    doneToday: item.type === 'DO' && completedWithinSleepDay(item.lastCompletedAt, now, tzOffsetMinutes),
   };
 }
 

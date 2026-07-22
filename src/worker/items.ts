@@ -1,6 +1,6 @@
 import type { AffectTag, Cadence, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
-import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinLocalDay, occurrencesBetween } from '../shared/cadence';
+import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase } from '../shared/dates';
 import type { Env } from './env';
 import { embed } from './embeddings';
@@ -31,7 +31,7 @@ export async function completeItem(env: Env, id: string): Promise<ItemView | nul
   // tap is the user toggling today's checkbox off, not a second completion.
   // Guarding here (not just in the UI) is what stops a stale client from
   // inflating completion_count and streak with repeat taps.
-  if (item.cadence && completedWithinLocalDay(item.lastCompletedAt, new Date(), tz)) {
+  if (item.cadence && completedWithinSleepDay(item.lastCompletedAt, new Date(), tz)) {
     return uncompleteItem(env, id);
   }
   const ts = nowIso();

@@ -1,6 +1,6 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
 import {
-  completedWithinLocalDay,
+  completedWithinSleepDay,
   describeAtTime,
   describeCadence,
   neglectedByDays,
@@ -458,8 +458,9 @@ export function cadenceOccurrenceToday(
   const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
   // Same predicate that derives ItemView.doneToday — the checkbox and the
-  // Brain's release must agree on what "done for today" means.
-  if (completedWithinLocalDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes)) return null;
+  // Brain's release must agree on what "done for today" means (sleep-cycle
+  // day: a 9:30pm completion stays done through the small hours).
+  if (completedWithinSleepDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes)) return null;
   const from = new Date(dayStartUtc);
   const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
   const occ = i.cadence.atTime

@@ -1,5 +1,6 @@
 import type { ItemView } from '../../shared/types';
 import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
+import { EARLY_MORNING_CUTOFF_MINUTES } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
 export function priorityColor(p: number): string {
@@ -19,17 +20,22 @@ function fmtDate(iso: string): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-// A recurring DO's next occurrence after today's — what "done today" hands
-// back to ("back Thu 9:30pm"). Anchored the same way the worker anchors its
-// occurrence math (eventAt ?? createdAt).
-function nextOccurrenceAfterToday(item: ItemView): Date | null {
+// The app's "today" is the sleep-cycle day (5am boundary, same as localDay):
+// its start anchors the current occurrence, its end is when doneness releases.
+function sleepDayStart(): Date {
+  const d = new Date(Date.now() - EARLY_MORNING_CUTOFF_MINUTES * 60_000);
+  d.setHours(0, 0, 0, 0);
+  return new Date(d.getTime() + EARLY_MORNING_CUTOFF_MINUTES * 60_000);
+}
+
+// A recurring DO's next occurrence at or after `from`, anchored the same way
+// the worker anchors its occurrence math (eventAt ?? createdAt).
+function nextOccurrenceFrom(item: ItemView, from: Date): Date | null {
   if (!item.cadence) return null;
-  const tomorrow = new Date();
-  tomorrow.setHours(24, 0, 0, 0);
   const anchor = item.eventAt ?? item.createdAt;
   return item.cadence.atTime
-    ? nextAtTimeOccurrence(item.cadence, anchor, tomorrow, tzOffsetMinutes())
-    : nextOccurrence(item.cadence, anchor, tomorrow);
+    ? nextAtTimeOccurrence(item.cadence, anchor, from, tzOffsetMinutes())
+    : nextOccurrence(item.cadence, anchor, from);
 }
 
 export default function ItemRow({
@@ -42,13 +48,22 @@ export default function ItemRow({
   onToggleComplete: (item: ItemView) => void;
 }) {
   // Recurring DOs never reach status='completed' — their checked state is
-  // doneToday, released again at the local-day rollover.
+  // doneToday, released again when the sleep-cycle day rolls (5am).
   const done = isDoneForNow(item);
   const doneToday = done && item.status !== 'completed';
   // A rhythm without a set time ("read 30 min/day") has no occurrence to tick
   // off — its button is a "did it" ping, rendered as a circle, not a checkbox.
   const rhythm = !!item.cadence && !item.cadence.atTime;
-  const nextOcc = doneToday ? nextOccurrenceAfterToday(item) : null;
+  // Done → the occurrence after today's ("back Tue 9:30pm"). Not done and
+  // time-anchored → the pending occurrence ("today 9:30pm" / "next Tue
+  // 9:30pm"), so a released weekly task says when it's actually due again
+  // instead of reading like an open task.
+  const nextOcc = doneToday
+    ? nextOccurrenceFrom(item, new Date(sleepDayStart().getTime() + 86_400_000))
+    : null;
+  const dueOcc =
+    !done && item.status === 'active' && item.cadence?.atTime ? nextOccurrenceFrom(item, sleepDayStart()) : null;
+  const dueLabel = dueOcc && dueOcc.getTime() >= Date.now() ? fmtDate(dueOcc.toISOString()) : null;
   const overdue =
     item.type === 'DO' && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
 
@@ -104,6 +119,7 @@ export default function ItemRow({
           {doneToday && (
             <span className="done-today">done today{nextOcc ? ` · back ${fmtDate(nextOcc.toISOString())}` : ''}</span>
           )}
+          {dueLabel && <span>{dueLabel.startsWith('today') ? dueLabel : `next ${dueLabel}`}</span>}
           {item.cadence && item.streak > 1 && <span className="streak">{item.streak} in a row</span>}
           {item.neglected && <span className="neglected">slipping</span>}
           {item.themes.slice(0, 2).map((t) => (

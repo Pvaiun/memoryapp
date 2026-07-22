@@ -135,9 +135,10 @@ export interface ItemView extends Item {
   flavour: Flavour;
   effectivePriority: number;
   neglected: boolean; // now − lastCompleted exceeds cadence (§7.2)
-  // Completed within the user-local today. A recurring DO never reaches
-  // status='completed', so this is what its checkbox renders from — done for
-  // today, re-armed at the local-day rollover.
+  // Completed within the user-local sleep-cycle day (5am boundary, same as
+  // localDay). A recurring DO never reaches status='completed', so this is
+  // what its checkbox renders from — done for today, re-armed when the user
+  // wakes into the next day.
   doneToday: boolean;
 }
 
