@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AffectTag, Cadence, Flavour, ItemView } from '../../shared/types';
 import { AFFECT_TAGS } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
+import { isDoneForNow } from '../../shared/cadence';
 import { api } from '../api';
 
 // The review/edit surface (§10.2): every AI-inferred field independently
@@ -282,7 +283,7 @@ export default function ItemSheet({
           <button className="danger" onClick={reject}>
             Remove
           </button>
-          {item.type === 'DO' && item.status === 'completed' && (
+          {item.type === 'DO' && isDoneForNow(item) && (
             <button
               onClick={async () => {
                 const { item: fresh } = await api.uncompleteItem(item.id);
@@ -290,7 +291,7 @@ export default function ItemSheet({
                 onClose();
               }}
             >
-              Un-complete
+              {item.status === 'completed' ? 'Un-complete' : 'Not done today'}
             </button>
           )}
           <button className="primary" disabled={saving} onClick={save}>

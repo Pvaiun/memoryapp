@@ -11,6 +11,7 @@ import {
   withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
+import { isDoneForNow } from '../../../shared/cadence';
 import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
@@ -870,7 +871,8 @@ export default function DescentView({
             {seg.text}
           </b>
         );
-      const done = item.status === 'completed';
+      // Recurring DOs check off per-occurrence (doneToday), not by status.
+      const done = isDoneForNow(item);
       return (
         <span
           key={i}
@@ -953,7 +955,7 @@ export default function DescentView({
                               {info.members.map((m) => (
                                 <span
                                   key={m.id}
-                                  className={`dsc-pip${m.status === 'completed' ? ' filled' : ''}`}
+                                  className={`dsc-pip${isDoneForNow(m) ? ' filled' : ''}`}
                                 />
                               ))}
                             </span>

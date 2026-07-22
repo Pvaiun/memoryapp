@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -117,6 +117,30 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
   it('describes the anchor time in the user clock', () => {
     expect(describeCadence({ freq: 'weekly', interval: 1, byWeekday: [4], atTime: '20:00' })).toBe('weekly on Thu at 8pm');
     expect(describeCadence({ freq: 'daily', interval: 1, atTime: '09:30' })).toBe('daily at 9:30am');
+  });
+  it('completedWithinSleepDay: done-for-today is bounded by the USER-LOCAL sleep-cycle day', () => {
+    // now = July 20 08:00 local at UTC-4 (12:00Z). The sleep day rolls at 5am
+    // local, so "today" spans 2026-07-20T09:00Z .. 2026-07-21T09:00Z.
+    const now = new Date('2026-07-20T12:00:00Z');
+    const tz = -240;
+    expect(completedWithinSleepDay(null, now, tz)).toBe(false);
+    // Completed an hour ago — done today.
+    expect(completedWithinSleepDay('2026-07-20T11:00:00Z', now, tz)).toBe(true);
+    // 01:30Z is 21:30 July 19 local — yesterday, not today.
+    expect(completedWithinSleepDay('2026-07-20T01:30:00Z', now, tz)).toBe(false);
+    // 00:30 local is before the 5am cutoff — that completion was last night's.
+    expect(completedWithinSleepDay('2026-07-20T04:30:00Z', now, tz)).toBe(false);
+    // Yesterday evening's completion released by wake-up.
+    expect(completedWithinSleepDay('2026-07-19T23:00:00Z', now, tz)).toBe(false);
+  });
+  it('completedWithinSleepDay: a 9:30pm completion stays done past midnight, releases on waking', () => {
+    const tz = -240;
+    // Done Tuesday July 21 21:30 local (Wed 01:30Z).
+    const doneAt = '2026-07-22T01:30:00Z';
+    // Still up at 12:30am (04:30Z) — same sleep day, still checked.
+    expect(completedWithinSleepDay(doneAt, new Date('2026-07-22T04:30:00Z'), tz)).toBe(true);
+    // Awake Wednesday 09:00 local (13:00Z) — released for the next occurrence.
+    expect(completedWithinSleepDay(doneAt, new Date('2026-07-22T13:00:00Z'), tz)).toBe(false);
   });
   it('walks atTime occurrences in the user frame, returning UTC instants', () => {
     // "every Thursday at 8pm" at UTC-4: local Thursday 20:00 is Friday 00:00

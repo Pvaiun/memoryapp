@@ -48,6 +48,7 @@ function mkItem(over: Partial<ItemView>): ItemView {
     flavour: 'Task',
     effectivePriority: 0.5,
     neglected: false,
+    doneToday: false,
     ...over,
   };
 }

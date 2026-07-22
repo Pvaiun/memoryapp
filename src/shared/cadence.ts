@@ -1,4 +1,5 @@
 import type { Cadence } from './types';
+import { EARLY_MORNING_CUTOFF_MINUTES } from './dates';
 
 // Shared RRULE-like recurrence core (§3.1). For a DO, cadence is a rhythm that
 // drives neglect-nudging (now − lastCompleted vs cadence), not a hard gate.
@@ -36,6 +37,32 @@ export function isNeglected(
   const anchor = lastCompletedAt ?? createdAt;
   const elapsed = now.getTime() - new Date(anchor).getTime();
   return elapsed > cadencePeriodMs(cadence) * 1.5;
+}
+
+// "Done for today" (§7.2): completed within the user-local SLEEP-CYCLE day —
+// the same 5am boundary as localDay() and the date parser's night-owl rule,
+// not calendar midnight. Finishing the recycling at 9:30pm and glancing at the
+// app at 12:30am must not uncheck it mid-evening; doneness releases when the
+// user wakes, and the next occurrence takes over from there. For a recurring
+// DO this is the per-occurrence done state — the item stays active forever.
+// One definition shared by the Brain's suppression and the ItemView
+// derivation so the two can never disagree.
+export function completedWithinSleepDay(
+  lastCompletedAt: string | null,
+  now: Date,
+  tzOffsetMinutes: number,
+): boolean {
+  if (!lastCompletedAt) return false;
+  const shift = (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000;
+  const sleepDayOf = (t: number) => Math.floor((t + shift) / DAY_MS);
+  return sleepDayOf(new Date(lastCompletedAt).getTime()) === sleepDayOf(now.getTime());
+}
+
+// The user-facing "checked" state of a DO. One-shots check by status; a
+// recurring DO never reaches status='completed', so it checks by doneToday —
+// done for this occurrence, released when the sleep-cycle day rolls (5am).
+export function isDoneForNow(item: { status: string; cadence: Cadence | null; doneToday: boolean }): boolean {
+  return item.status === 'completed' || (!!item.cadence && item.doneToday);
 }
 
 export function neglectedByDays(

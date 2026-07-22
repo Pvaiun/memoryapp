@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Flavour, ItemView } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
+import { isDoneForNow } from '../../shared/cadence';
 import { api, themeColor } from '../api';
 import ItemRow from '../components/ItemRow';
 
@@ -38,7 +39,10 @@ export default function BrowseView({
     [...ids].sort((a, b) => {
       const A = data.items[a];
       const B = data.items[b];
-      if ((A.status === 'completed') !== (B.status === 'completed')) return A.status === 'completed' ? 1 : -1;
+      // Done-for-today recurring items sink with the completed ones.
+      const doneA = isDoneForNow(A);
+      const doneB = isDoneForNow(B);
+      if (doneA !== doneB) return doneA ? 1 : -1;
       const aDate = A.deadline ?? A.eventAt;
       const bDate = B.deadline ?? B.eventAt;
       if (!!aDate !== !!bDate) return aDate ? -1 : 1;

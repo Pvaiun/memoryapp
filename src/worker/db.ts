@@ -1,7 +1,7 @@
 import type { AffectEntry, BackendType, Cadence, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
 import { deriveFlavour } from '../shared/flavour';
 import { effectivePriority } from '../shared/priority';
-import { isNeglected } from '../shared/cadence';
+import { completedWithinSleepDay, isNeglected } from '../shared/cadence';
 
 export function newId(): string {
   return crypto.randomUUID();
@@ -77,7 +77,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
   };
 }
 
-export function toItemView(item: Item, now: Date): ItemView {
+export function toItemView(item: Item, now: Date, tzOffsetMinutes = 0): ItemView {
   return {
     ...item,
     flavour: deriveFlavour(item),
@@ -85,6 +85,7 @@ export function toItemView(item: Item, now: Date): ItemView {
     neglected: item.type === 'DO' && item.status === 'active'
       ? isNeglected(item.cadence, item.lastCompletedAt, item.createdAt, now)
       : false,
+    doneToday: item.type === 'DO' && completedWithinSleepDay(item.lastCompletedAt, now, tzOffsetMinutes),
   };
 }
 
@@ -331,6 +332,13 @@ export async function setItemThemes(
 export async function getState(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM app_state WHERE key = ?').bind(key).first<{ value: string }>();
   return row?.value ?? null;
+}
+
+// The user's tz offset, captured client-side on capture/map/push calls. Every
+// user-local day computation (doneToday, occurrence-today, push windows) must
+// go through the same stored offset or the Brain and the checkbox drift apart.
+export async function getTzOffset(db: D1Database): Promise<number> {
+  return parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
 }
 
 export async function setState(db: D1Database, key: string, value: string): Promise<void> {
