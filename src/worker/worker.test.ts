@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { computeDueAlerts } from './push';
-import { aliasItems, brainItemLine, compactEventLines, isTodayRelevant, PROFILE_EVENT_TYPES, tierProminences } from './brain';
+import {
+  aliasItems,
+  brainItemLine,
+  compactEventLines,
+  isTodayRelevant,
+  PROFILE_EVENT_TYPES,
+  selectBrainSystem,
+  tierProminences,
+} from './brain';
 import type { Cadence, ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
@@ -167,6 +175,47 @@ describe('tierProminences — tier judgment from the Brain, numbers from code', 
   it('handles interleaved output order per tier', () => {
     const ps = tierProminences(['mid', 'loud', 'mid']);
     [0.68, 0.95, 0.5].forEach((want, i) => expect(ps[i]).toBeCloseTo(want));
+  });
+});
+
+describe('selectBrainSystem — the override gate', () => {
+  it('unchecked: saved override text is completely inert', () => {
+    const sel = selectBrainSystem('minimal', null, false, 'MY CUSTOM PROMPT');
+    expect(sel.prompt).toBe('minimal');
+    expect(sel.override).toBeNull();
+    expect(sel.system).not.toContain('MY CUSTOM PROMPT');
+  });
+  it('checked but empty or whitespace text: normal flow, never a blank prompt', () => {
+    for (const text of [null, '', '   \n  ']) {
+      const sel = selectBrainSystem('full', 'extra line', true, text);
+      expect(sel.prompt).toBe('full');
+      expect(sel.override).toBeNull();
+      expect(sel.system.endsWith('extra line')).toBe(true);
+    }
+  });
+  it('checked with text: the override IS the whole prompt; variant and addendum ignored', () => {
+    const sel = selectBrainSystem('minimal', 'addendum that must not appear', true, ' MY CUSTOM PROMPT ');
+    expect(sel).toEqual({
+      system: 'MY CUSTOM PROMPT',
+      prompt: 'override',
+      addendum: null,
+      override: 'MY CUSTOM PROMPT',
+    });
+  });
+  it('normal flow: addendum appends verbatim after a blank line; absent when empty', () => {
+    const plain = selectBrainSystem('minimal', null, false, null);
+    const withAdd = selectBrainSystem('minimal', 'Never comment on the user.', false, null);
+    expect(withAdd.system).toBe(`${plain.system}\n\nNever comment on the user.`);
+    expect(withAdd.addendum).toBe('Never comment on the user.');
+    expect(selectBrainSystem('minimal', '   ', false, null).system).toBe(plain.system);
+  });
+  it('the two variants produce different prompts and label themselves truthfully', () => {
+    const min = selectBrainSystem('minimal', null, false, null);
+    const full = selectBrainSystem('full', null, false, null);
+    expect(min.prompt).toBe('minimal');
+    expect(full.prompt).toBe('full');
+    expect(min.system).not.toBe(full.system);
+    expect(full.system.length).toBeGreaterThan(min.system.length);
   });
 });
 

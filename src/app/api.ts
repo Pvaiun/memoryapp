@@ -86,6 +86,15 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
+  // Only the fields passed are updated; the enabled flag alone gates usage.
+  setBrainOverride: (fields: { enabled?: boolean; text?: string }) =>
+    req<{ ok: boolean }>('/api/settings/brain-override', {
+      method: 'POST',
+      body: JSON.stringify(fields),
+    }),
+
+  brainPromptText: () => req<{ variant: 'full' | 'minimal'; text: string }>('/api/settings/brain-prompt-text'),
+
   addFirstStep: (bubbleId: string, title: string) =>
     req<{ map: MapPayload; capture: CaptureResponse }>(`/api/bubbles/${bubbleId}/first-step`, {
       method: 'POST',

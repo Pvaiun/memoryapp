@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
-import { addFirstStep, brainSnapshot, getMap, rebuildMap } from './brain';
+import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, listItems, setState, toItemView } from './db';
@@ -96,6 +96,33 @@ app.post('/api/settings/brain-addendum', async (c) => {
   if (typeof text !== 'string') return c.json({ error: 'text must be a string' }, 400);
   await setState(c.env.DB, 'brain_prompt_addendum', text.trim().slice(0, 4000));
   return c.json({ ok: true });
+});
+
+// Full prompt override: while enabled AND non-empty, the saved text IS the
+// whole Brain prompt (variant toggle and addendum ignored). The enabled flag
+// and the text are stored separately so unchecking leaves the draft intact
+// but completely inert. Fields are optional — only what's sent is updated.
+app.post('/api/settings/brain-override', async (c) => {
+  const { enabled, text } = await c.req.json<{ enabled?: boolean; text?: string }>();
+  if (enabled === undefined && text === undefined) return c.json({ error: 'enabled or text required' }, 400);
+  if (enabled !== undefined) {
+    if (typeof enabled !== 'boolean') return c.json({ error: 'enabled must be a boolean' }, 400);
+    await setState(c.env.DB, 'brain_prompt_override_enabled', enabled ? '1' : '');
+  }
+  if (text !== undefined) {
+    if (typeof text !== 'string') return c.json({ error: 'text must be a string' }, 400);
+    await setState(c.env.DB, 'brain_prompt_override', text.trim().slice(0, 20000));
+  }
+  return c.json({ ok: true });
+});
+
+// The composed default prompt (current variant + addendum), fetched fresh —
+// what the override editor prefills and what Reset restores.
+app.get('/api/settings/brain-prompt-text', async (c) => {
+  const db = c.env.DB;
+  const variant = (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal';
+  const addendum = (await getState(db, 'brain_prompt_addendum'))?.trim() || null;
+  return c.json({ variant, text: composeBrainSystem(variant, addendum) });
 });
 
 // The user answers a bubble's break-it-down invitation (§9.2): their typed
@@ -241,6 +268,8 @@ app.get('/api/status', async (c) => {
     mapBuiltAt: await getState(db, 'map_built_at'),
     brainPrompt: (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal',
     brainAddendum: (await getState(db, 'brain_prompt_addendum')) ?? '',
+    brainOverrideEnabled: (await getState(db, 'brain_prompt_override_enabled')) === '1',
+    brainOverride: (await getState(db, 'brain_prompt_override')) ?? '',
   });
 });
 
