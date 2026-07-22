@@ -169,7 +169,12 @@ export async function rebuildMap(
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
   const variant = promptVariant ?? ((await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal');
-  const addendum = (await getState(db, 'brain_prompt_addendum'))?.trim() || null;
+  const prompt = selectBrainSystem(
+    variant,
+    await getState(db, 'brain_prompt_addendum'),
+    (await getState(db, 'brain_prompt_override_enabled')) === '1',
+    await getState(db, 'brain_prompt_override'),
+  );
 
   const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
@@ -177,7 +182,7 @@ export async function rebuildMap(
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, input, variant, addendum);
+      proposed = await llmBuildBubbles(env, input, prompt.system);
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
@@ -274,7 +279,18 @@ export async function rebuildMap(
   await setState(
     db,
     'brain_last_input',
-    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: variant, addendum, payload: input.payload }),
+    JSON.stringify({
+      day,
+      builtAt: ts,
+      mode,
+      noHistory,
+      // What actually ran: 'override' + its text, or the variant + whatever
+      // addendum was appended. Never both — selectBrainSystem mirrors the gate.
+      prompt: prompt.prompt,
+      addendum: prompt.addendum,
+      override: prompt.override,
+      payload: input.payload,
+    }),
   );
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
@@ -530,6 +546,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
         noHistory: boolean;
         prompt?: string;
         addendum?: string | null;
+        override?: string | null;
         payload: unknown;
       })
     : null;
@@ -555,7 +572,14 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
     // How the last build ran: llm vs fallback, and whether yesterday's
     // groupings were withheld (the no-history workshop rebuild).
     build: last
-      ? { day: last.day, mode: last.mode, noHistory: last.noHistory, prompt: last.prompt ?? 'full', addendum: last.addendum ?? null }
+      ? {
+          day: last.day,
+          mode: last.mode,
+          noHistory: last.noHistory,
+          prompt: last.prompt ?? 'full',
+          addendum: last.addendum ?? null,
+          override: last.override ?? null,
+        }
       : null,
     input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
     output: bubbleRows.results.map((b) => ({
@@ -712,17 +736,37 @@ NAMING: if a bubble covers the same ground as a name in recentNameVocabulary, re
 
 export type BrainPromptVariant = 'full' | 'minimal';
 
-async function llmBuildBubbles(
-  env: Env,
-  input: BrainInput,
-  variant: BrainPromptVariant = 'full',
-  addendum: string | null = null,
-): Promise<ProposedBubble[]> {
-  // The addendum is the user's own workshop layer: appended verbatim, no
-  // framing or heading — a wrapper like "USER NOTE:" would mark it as
-  // special and make the model over- or under-weight it.
+// The default system prompt composition: chosen variant plus the user's
+// addendum, appended verbatim — no framing or heading, which would mark it as
+// special and make the model over- or under-weight it. Single source of truth
+// shared by the live call and the settings endpoint that shows/prefills it.
+export function composeBrainSystem(variant: BrainPromptVariant, addendum: string | null): string {
   const base = variant === 'minimal' ? MINIMAL_SYSTEM : FULL_SYSTEM;
-  const system = addendum?.trim() ? `${base}\n\n${addendum.trim()}` : base;
+  return addendum?.trim() ? `${base}\n\n${addendum.trim()}` : base;
+}
+
+// The override gate — the ONLY place the prompt-selection decision is made,
+// pure so it's unit-testable. Both conditions must hold to run the override:
+// the checkbox is enabled AND the saved text is non-empty. Unchecked, the
+// stored override text is inert no matter what it says; checked-but-empty
+// falls back to the normal flow rather than running on a blank prompt. The
+// returned record fields mirror the decision for the snapshot: never both an
+// addendum and an override.
+export function selectBrainSystem(
+  variant: BrainPromptVariant,
+  addendum: string | null,
+  overrideEnabled: boolean,
+  overrideText: string | null,
+): { system: string; prompt: BrainPromptVariant | 'override'; addendum: string | null; override: string | null } {
+  const cleanAddendum = addendum?.trim() || null;
+  const cleanOverride = overrideText?.trim() || null;
+  if (overrideEnabled && cleanOverride !== null) {
+    return { system: cleanOverride, prompt: 'override', addendum: null, override: cleanOverride };
+  }
+  return { system: composeBrainSystem(variant, cleanAddendum), prompt: variant, addendum: cleanAddendum, override: null };
+}
+
+async function llmBuildBubbles(env: Env, input: BrainInput, system: string): Promise<ProposedBubble[]> {
   const { idByAlias } = input;
   const user = JSON.stringify(input.payload);
 

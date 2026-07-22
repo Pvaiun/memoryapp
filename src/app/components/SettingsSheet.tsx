@@ -16,6 +16,8 @@ interface Status {
   mapBuiltAt: string | null;
   brainPrompt: 'full' | 'minimal';
   brainAddendum: string;
+  brainOverrideEnabled: boolean;
+  brainOverride: string;
 }
 
 export default function SettingsSheet({
@@ -44,6 +46,9 @@ export default function SettingsSheet({
 
   const [addendum, setAddendum] = useState('');
   const [savedAddendum, setSavedAddendum] = useState('');
+  const [overrideOn, setOverrideOn] = useState(false);
+  const [overrideText, setOverrideText] = useState('');
+  const [savedOverride, setSavedOverride] = useState('');
 
   useEffect(() => {
     api.status().then((s) => {
@@ -52,6 +57,9 @@ export default function SettingsSheet({
       setBrainPrompt(st.brainPrompt ?? 'minimal');
       setAddendum(st.brainAddendum ?? '');
       setSavedAddendum(st.brainAddendum ?? '');
+      setOverrideOn(!!st.brainOverrideEnabled);
+      setOverrideText(st.brainOverride ?? '');
+      setSavedOverride(st.brainOverride ?? '');
     }).catch(() => {});
   }, []);
 
@@ -67,6 +75,35 @@ export default function SettingsSheet({
   const clearAddendum = () => {
     setAddendum('');
     api.setBrainAddendum('').then(() => setSavedAddendum('')).catch(() => {});
+  };
+
+  // Full prompt override. The checkbox is the ONLY thing that arms it — the
+  // server uses the saved text solely while enabled, so an unchecked box
+  // leaves any draft completely inert. Turning it on with nothing saved
+  // prefills the editor with the live default (variant + addendum); nothing
+  // runs off the override until Save.
+  const toggleOverride = (on: boolean) => {
+    const prev = overrideOn;
+    setOverrideOn(on);
+    api.setBrainOverride({ enabled: on }).catch(() => setOverrideOn(prev));
+    if (on && !savedOverride && !overrideText.trim()) {
+      api.brainPromptText().then(({ text }) => setOverrideText(text)).catch(() => {});
+    }
+  };
+  const saveOverride = () => {
+    const t = overrideText.trim();
+    api.setBrainOverride({ text: t }).then(() => {
+      setOverrideText(t);
+      setSavedOverride(t);
+    }).catch(() => {});
+  };
+  // Reset restores the editor to the live default AND saves it, so the stored
+  // override can never silently lag what's on screen.
+  const resetOverride = () => {
+    api.brainPromptText().then(({ text }) => {
+      setOverrideText(text);
+      return api.setBrainOverride({ text }).then(() => setSavedOverride(text));
+    }).catch(() => {});
   };
 
   // The morning-prompt toggle (workshop shootout, longitudinal arm): which
@@ -170,6 +207,38 @@ export default function SettingsSheet({
           <small className="settings-hint">
             Applies to every rebuild until cleared. The Brain snapshot records what was active.
           </small>
+        </div>
+
+        <div className="field">
+          <label>
+            <input
+              type="checkbox"
+              checked={overrideOn}
+              onChange={(e) => toggleOverride(e.target.checked)}
+            />{' '}
+            Override Brain prompt
+          </label>
+          {overrideOn && (
+            <>
+              <textarea
+                rows={14}
+                value={overrideText}
+                onChange={(e) => setOverrideText(e.target.value)}
+                placeholder="The entire Brain prompt, verbatim"
+              />
+              <div className="seg">
+                <button disabled={overrideText.trim() === savedOverride} onClick={saveOverride}>
+                  {overrideText.trim() === savedOverride && savedOverride ? 'Saved' : 'Save'}
+                </button>
+                <button onClick={resetOverride}>Reset to default</button>
+              </div>
+              <small className="settings-hint">
+                While checked, the saved text above IS the whole Brain prompt — the Minimal/Full toggle and the
+                addendum are ignored. Unsaved edits and an empty box don't run: the normal flow stays in charge.
+                Unchecking returns to the normal flow; the text stays saved but inert.
+              </small>
+            </>
+          )}
         </div>
 
         <div className="settings-actions">
