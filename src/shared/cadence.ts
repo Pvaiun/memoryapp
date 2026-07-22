@@ -65,6 +65,47 @@ export function isDoneForNow(item: { status: string; cadence: Cadence | null; do
   return item.status === 'completed' || (!!item.cadence && item.doneToday);
 }
 
+// Captured-today relevance (Now screen, §9.1): does this item carry TODAY's
+// pressure? "Today" is the user-local sleep-cycle day (5am boundary — the
+// same frame as doneToday and the date parser's night-owl rule). Qualifies:
+//   - a deadline due today or already blown (overdue is today's pressure),
+//   - an event whose span touches today,
+//   - a cadence whose next occurrence lands today (a daily rhythm always
+//     does; "weekly on Sun" captured on a Tuesday waits for Sunday).
+// Undated items and future-dated items don't qualify — they wait in the
+// bucket for the morning build instead of crowding the map.
+export function happeningToday(
+  item: {
+    deadline: string | null;
+    eventAt: string | null;
+    eventEnd: string | null;
+    cadence: Cadence | null;
+    createdAt: string;
+  },
+  now: Date,
+  tzOffsetMinutes: number,
+): boolean {
+  const shift = (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000;
+  const sleepDayOf = (t: number) => Math.floor((t + shift) / DAY_MS);
+  const today = sleepDayOf(now.getTime());
+  if (item.deadline && sleepDayOf(new Date(item.deadline).getTime()) <= today) return true;
+  if (item.eventAt) {
+    const at = new Date(item.eventAt).getTime();
+    const end = item.eventEnd ? new Date(item.eventEnd).getTime() : at;
+    if (sleepDayOf(at) <= today && sleepDayOf(end) >= today) return true;
+  }
+  if (item.cadence) {
+    // Walk from the START of the current sleep day, not from `now` — an
+    // occurrence that already passed this afternoon still makes it today's.
+    const dayStart = new Date(today * DAY_MS - shift);
+    const next = item.cadence.atTime
+      ? nextAtTimeOccurrence(item.cadence, item.createdAt, dayStart, tzOffsetMinutes)
+      : nextOccurrence(item.cadence, item.eventAt ?? item.createdAt, dayStart);
+    if (sleepDayOf(next.getTime()) === today) return true;
+  }
+  return false;
+}
+
 export function neglectedByDays(
   cadence: Cadence,
   lastCompletedAt: string | null,

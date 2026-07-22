@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, happeningToday, isNeglected, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -156,6 +156,53 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
       -240,
     );
     expect(occ.map((d) => d.toISOString())).toEqual(['2026-07-24T00:00:00.000Z', '2026-07-31T00:00:00.000Z']);
+  });
+});
+
+describe('captured-today relevance (§9.1, Now screen)', () => {
+  // A UTC user, Wednesday 2026-07-22 18:00. Sleep day = Jul 22 05:00 → Jul 23 05:00.
+  const now = new Date('2026-07-22T18:00:00Z');
+  const tz = 0;
+  const item = (over: Partial<Parameters<typeof happeningToday>[0]>) => ({
+    deadline: null,
+    eventAt: null,
+    eventEnd: null,
+    cadence: null,
+    createdAt: '2026-07-22T17:00:00Z',
+    ...over,
+  });
+
+  it('undated captures stay out of the map', () => {
+    expect(happeningToday(item({}), now, tz)).toBe(false);
+  });
+  it("deadline tonight qualifies; overdue still carries today's pressure", () => {
+    expect(happeningToday(item({ deadline: '2026-07-22T22:00:00Z' }), now, tz)).toBe(true);
+    expect(happeningToday(item({ deadline: '2026-07-20T12:00:00Z' }), now, tz)).toBe(true);
+  });
+  it('a future deadline waits for its day', () => {
+    expect(happeningToday(item({ deadline: '2026-07-23T09:00:00Z' }), now, tz)).toBe(false);
+  });
+  it('the sleep-cycle boundary: due 2am "tomorrow" is still tonight', () => {
+    expect(happeningToday(item({ deadline: '2026-07-23T02:00:00Z' }), now, tz)).toBe(true);
+  });
+  it('events qualify only when their span touches today', () => {
+    expect(happeningToday(item({ eventAt: '2026-07-22T19:00:00Z' }), now, tz)).toBe(true);
+    expect(happeningToday(item({ eventAt: '2026-07-23T19:00:00Z' }), now, tz)).toBe(false);
+    expect(
+      happeningToday(item({ eventAt: '2026-07-20T12:00:00Z', eventEnd: '2026-07-25T12:00:00Z' }), now, tz),
+    ).toBe(true);
+    expect(happeningToday(item({ eventAt: '2026-07-21T12:00:00Z' }), now, tz)).toBe(false);
+  });
+  it('a daily rhythm is live today; weekly-on-Sunday waits for Sunday', () => {
+    expect(happeningToday(item({ cadence: { freq: 'daily', interval: 1 } }), now, tz)).toBe(true);
+    expect(
+      happeningToday(item({ cadence: { freq: 'weekly', interval: 1, byWeekday: [0] } }), now, tz),
+    ).toBe(false);
+  });
+  it('an atTime rhythm whose next ping lands today qualifies', () => {
+    expect(
+      happeningToday(item({ cadence: { freq: 'daily', interval: 1, atTime: '21:00' } }), now, tz),
+    ).toBe(true);
   });
 });
 

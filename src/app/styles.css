@@ -293,18 +293,6 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
 }
-.organize-now {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid rgba(139, 147, 248, 0.4);
-  border-radius: 999px;
-  padding: 4px 12px;
-}
-
 .tile-map {
   display: flex;
   flex-direction: column;
@@ -1251,9 +1239,6 @@ textarea:focus {
   height: 100%;
   min-height: 0;
 }
-.descent-wrap .captured-today {
-  margin: 8px 16px 4px;
-}
 .dsc-viewport {
   position: relative;
   flex: 1;
@@ -1538,6 +1523,21 @@ textarea:focus {
   border-style: dashed;
   border-left-style: solid;
   background: transparent;
+}
+/* captured today (§9.1): the untriaged bucket as a bubble — dashed frame
+   (the old panel's signature) with an eyebrow naming the bucket */
+.dsc-card.captured .dsc-body,
+.dsc-card.captured .dsc-far {
+  border-style: dashed;
+  border-left-style: solid;
+}
+.dsc-eyebrow {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
 }
 .dsc-card.rotation .dsc-tok,
 .dsc-card.rotation .dsc-far {

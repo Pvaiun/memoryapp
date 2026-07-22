@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import type { Bubble, ItemView } from '../../../shared/types';
+import { CAPTURED_BUBBLE_ID } from '../../../shared/types';
 import {
   anchorThemeName,
   deriveConstruction,
@@ -123,6 +124,7 @@ export default function DescentView({
   items,
   day,
   builtAt,
+  capturedSpawnNonce,
   onOpen,
   onToggleComplete,
   onAddFirstStep,
@@ -131,6 +133,9 @@ export default function DescentView({
   items: Record<string, ItemView>;
   day: string;
   builtAt: string | null;
+  // bumps when a capture lands in the Captured Today bubble — the corridor
+  // dollies up to it so the new chip is seen arriving
+  capturedSpawnNonce?: number;
   onOpen: (bubble: Bubble) => void;
   onToggleComplete: (item: ItemView) => void;
   onAddFirstStep?: (bubbleId: string, title: string) => void;
@@ -673,6 +678,16 @@ export default function DescentView({
     markActivity();
   }, [track, scrollForPlane, markActivity]);
 
+  // ----- captured-today spawn: a fresh capture surfaces its bubble --------
+  const spawnNonceRef = useRef(capturedSpawnNonce ?? 0);
+  useEffect(() => {
+    const nonce = capturedSpawnNonce ?? 0;
+    if (nonce === spawnNonceRef.current) return;
+    spawnNonceRef.current = nonce;
+    const t = trackRef.current.find((x) => x.id === CAPTURED_BUBBLE_ID);
+    if (t && sizeRef.current.h) dollyToRef.current(scrollForPlane(t.zp), 420, easeDolly);
+  }, [capturedSpawnNonce, scrollForPlane]);
+
   // ----- living HUD: data-delta ripples -----------------------------------
   const prevToneRef = useRef(new Map<string, string>());
   useEffect(() => {
@@ -905,13 +920,14 @@ export default function DescentView({
                 {byTrack.map(({ t, info }) => {
                   const b = info.bubble;
                   const rotation = b.kind === 'rotation';
+                  const captured = b.id === CAPTURED_BUBBLE_ID;
                   const showLedge = info.construction === 'nudge' && b.firstStep && !info.settled;
                   const showCount = !rotation && !info.settled && !info.notch && info.total >= 2;
                   return (
                     <button
                       key={b.id}
                       ref={attachCard(b.id)}
-                      className={`dsc-card${rotation ? ' rotation' : ''}${info.settled ? ' settled' : ''}`}
+                      className={`dsc-card${rotation ? ' rotation' : ''}${captured ? ' captured' : ''}${info.settled ? ' settled' : ''}`}
                       style={
                         {
                           left: cx,
@@ -943,6 +959,7 @@ export default function DescentView({
                               {info.doneCount}/{info.total}
                             </span>
                           )}
+                          {captured && !info.settled && <span className="dsc-eyebrow">Captured today</span>}
                           <span className="dsc-sentence">
                             {info.settled ? (
                               <>
