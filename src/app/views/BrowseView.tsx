@@ -83,21 +83,43 @@ interface Section {
   alwaysOpen: boolean;
 }
 
-function CatalogueRow({ item, onOpen }: { item: ItemView; onOpen: (item: ItemView) => void }) {
+function CatalogueRow({
+  item,
+  onOpen,
+  onToggleComplete,
+}: {
+  item: ItemView;
+  onOpen: (item: ItemView) => void;
+  onToggleComplete: (item: ItemView) => void;
+}) {
   const done = item.status === 'completed';
   // A recurring DO checked off today (§ done-for-today): still active, so no
-  // strikethrough — the anchor column states the fact instead.
+  // strikethrough — the checked box and green anchor state the fact instead.
   const doneNow = !done && isDoneForNow(item);
+  const checked = done || doneNow;
   return (
     <div className={`cat-row${done ? ' done' : ''}${doneNow ? ' done-today' : ''}`} onClick={() => onOpen(item)}>
-      <span className="glyph">{FLAVOUR_ICONS[item.flavour]}</span>
+      {item.type === 'DO' ? (
+        <button
+          className={`tick${checked ? ' done' : ''}`}
+          aria-label={checked ? 'Mark not done' : 'Mark done'}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleComplete(item);
+          }}
+        >
+          ✓
+        </button>
+      ) : (
+        <span className="glyph">{FLAVOUR_ICONS[item.flavour]}</span>
+      )}
       <span className={`title${item.flavour === 'Note' ? ' note' : ''}`}>{item.title}</span>
       <span className="dots">
         {item.themes.map((t) => (
           <i key={t.id} title={t.name} style={{ background: themeColor(t.name) }} />
         ))}
       </span>
-      <span className="when">{doneNow ? `✓ ${anchorText(item)}` : anchorText(item)}</span>
+      <span className="when">{anchorText(item)}</span>
     </div>
   );
 }
@@ -105,9 +127,11 @@ function CatalogueRow({ item, onOpen }: { item: ItemView; onOpen: (item: ItemVie
 export default function BrowseView({
   refreshKey,
   onOpenItem,
+  onToggleComplete,
 }: {
   refreshKey: number;
   onOpenItem: (item: ItemView) => void;
+  onToggleComplete: (item: ItemView) => void;
 }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.browse>> | null>(null);
   const [shelveBy, setShelveBy] = useState<ShelveBy>(loadShelveBy);
@@ -385,9 +409,9 @@ export default function BrowseView({
             <div className="shelf">
               <div className="shelf-items no-head">
                 {s.active.map((i) => (
-                  <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} />
+                  <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
                 ))}
-                {showDone && s.done.map((i) => <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} />)}
+                {showDone && s.done.map((i) => <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />)}
               </div>
             </div>
           </div>
@@ -405,9 +429,9 @@ export default function BrowseView({
             {open[s.key] && (
               <div className="shelf-items">
                 {s.active.map((i) => (
-                  <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} />
+                  <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
                 ))}
-                {showDone && s.done.map((i) => <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} />)}
+                {showDone && s.done.map((i) => <CatalogueRow key={i.id} item={i} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />)}
               </div>
             )}
           </div>
