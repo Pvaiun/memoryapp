@@ -126,6 +126,7 @@ export default function DescentView({
   day,
   builtAt,
   capturedSpawnNonce,
+  attentionId,
   onOpen,
   onToggleComplete,
   onAddFirstStep,
@@ -137,6 +138,9 @@ export default function DescentView({
   // bumps when a capture lands in the Captured Today bubble — the corridor
   // dollies up to it so the new chip is seen arriving
   capturedSpawnNonce?: number;
+  // the bubble whose sheet is open — the user's attention, for the settle
+  // follow even when the camera's engaged card has drifted elsewhere
+  attentionId?: string | null;
   onOpen: (bubble: Bubble) => void;
   onToggleComplete: (item: ItemView) => void;
   onAddFirstStep?: (bubbleId: string, title: string) => void;
@@ -254,6 +258,8 @@ export default function DescentView({
   sizeRef.current = size;
   const reducedRef = useRef(reduced);
   reducedRef.current = reduced;
+  const attentionIdRef = useRef(attentionId ?? null);
+  attentionIdRef.current = attentionId ?? null;
   const infosRef = useRef(infos);
   infosRef.current = infos;
   // rest positions for directional settle, in camera units, ascending:
@@ -718,7 +724,11 @@ export default function DescentView({
       const dur = 900;
       zpAnimsRef.current.set(t.id, { from: fromZp, t0: nowT, dur });
       dotSlidePendingRef.current = true;
-      if (info.settled && engagedIdRef.current === t.id) {
+      // Follow when the settling bubble holds the user's attention: engaged
+      // under the camera, or acting through its open sheet — after an
+      // uncheck-recheck the camera may have drifted off the plane, but the
+      // sheet still names the bubble being worked.
+      if (info.settled && (engagedIdRef.current === t.id || attentionIdRef.current === t.id)) {
         dollyToRef.current(scrollFor(rangeRef.current.cStart, t.zp), dur, easeDolly);
       }
       markActivity();

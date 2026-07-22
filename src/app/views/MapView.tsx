@@ -128,6 +128,7 @@ export default function MapView({
           day={map.day}
           builtAt={map.builtAt}
           capturedSpawnNonce={spawnNonce}
+          attentionId={openBubble?.id ?? null}
           onOpen={setOpenBubble}
           onToggleComplete={onToggleComplete}
           onAddFirstStep={onAddFirstStep}
