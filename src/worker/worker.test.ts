@@ -12,6 +12,7 @@ import {
 import type { Cadence, ItemView } from '../shared/types';
 import { extractJson } from './ai';
 import { trigramEmbed } from './embeddings';
+import { semanticCut } from './items';
 import { cosine } from './db';
 
 const baseItem = {
@@ -457,5 +458,47 @@ describe('fallback trigram embeddings', () => {
     const c = trigramEmbed('water the plants every monday');
     expect(cosine(a, b)).toBeGreaterThan(cosine(a, c));
     expect(cosine(a, b)).toBeGreaterThan(0.3);
+  });
+});
+
+describe('search semantic cutoff (§6)', () => {
+  const BGE_DIMS = 768;
+
+  it('rejects the bge unrelated-text band instead of returning the whole corpus', () => {
+    // bge gives ~0.6-0.75 cosine to unrelated English; none of these should pass.
+    const sims = [0.62, 0.66, 0.7, 0.64, 0.68];
+    const cut = semanticCut(sims, BGE_DIMS);
+    expect(sims.filter((s) => s >= cut)).toHaveLength(0);
+  });
+
+  it('keeps a real bge match and its near-ties, drops the unrelated crowd', () => {
+    const sims = [0.86, 0.82, 0.7, 0.66, 0.62];
+    const cut = semanticCut(sims, BGE_DIMS);
+    expect(sims.filter((s) => s >= cut)).toEqual([0.86, 0.82]);
+  });
+
+  it('when everything genuinely matches, everything survives', () => {
+    const sims = [0.88, 0.85, 0.84, 0.83];
+    const cut = semanticCut(sims, BGE_DIMS);
+    expect(sims.filter((s) => s >= cut)).toHaveLength(4);
+  });
+
+  it('with the trigram fallback, a paraphrase clears the cut and unrelated items do not', () => {
+    const q = trigramEmbed("Sarah's food thing");
+    const corpus = [
+      trigramEmbed('remember Sarah has a nut allergy'),
+      trigramEmbed('water the plants every monday'),
+      trigramEmbed('dentist appointment in august'),
+    ];
+    const sims = corpus.map((e) => cosine(q, e));
+    const cut = semanticCut(sims, q.length);
+    expect(sims[0]).toBeGreaterThanOrEqual(cut);
+    expect(sims[1]).toBeLessThan(cut);
+    expect(sims[2]).toBeLessThan(cut);
+  });
+
+  it('a gibberish query matches nothing under either backend', () => {
+    expect(semanticCut([0.05, 0.1, 0.02], trigramEmbed('xqzzt vprw').length)).toBeGreaterThan(0.1);
+    expect(semanticCut([0.4, 0.5], BGE_DIMS)).toBeGreaterThan(0.5);
   });
 });
