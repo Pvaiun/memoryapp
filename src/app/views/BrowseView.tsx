@@ -184,15 +184,19 @@ export default function BrowseView({
     for (const shelf of themeShelves) {
       const items = shelf.itemIds.map((id) => data.items[id]).filter(Boolean);
       const kept = items.filter(matchesFilters);
-      if (items.length && !kept.length) {
-        emptyNames.push(shelf.name);
+      const { active: act, done } = split(kept);
+      // A shelf with nothing active is hidden (it reappears under "show
+      // done" if that's what it holds); it earns a stated line only when
+      // the flavour filter is what emptied it.
+      if (!act.length && !(showDone && done.length)) {
+        if (flavourFilter && items.some((i) => i.status !== 'completed')) emptyNames.push(shelf.name);
         continue;
       }
-      if (!kept.length) continue;
-      const { active: act, done } = split(kept);
-      const digest = FLAVOURS.filter((f) => act.some((i) => i.flavour === f))
-        .map((f) => `${FLAVOUR_ICONS[f]}${act.filter((i) => i.flavour === f).length}`)
-        .join(' ');
+      const digest = act.length
+        ? FLAVOURS.filter((f) => act.some((i) => i.flavour === f))
+            .map((f) => `${FLAVOUR_ICONS[f]}${act.filter((i) => i.flavour === f).length}`)
+            .join(' ')
+        : `${done.length} done`;
       sections.push({
         key: shelf.id,
         name: shelf.name,
@@ -208,16 +212,27 @@ export default function BrowseView({
     for (const f of FLAVOURS) {
       const items = derived.all.filter((i) => i.flavour === f);
       const kept = items.filter(matchesFilters);
-      if (items.length && !kept.length) {
-        emptyNames.push(plural(f).toLowerCase());
+      const { active: act, done } = split(kept);
+      if (!act.length && !(showDone && done.length)) {
+        if (themeFilter.length && items.some((i) => i.status !== 'completed')) emptyNames.push(plural(f).toLowerCase());
         continue;
       }
-      if (!kept.length) continue;
-      const { active: act, done } = split(kept);
-      sections.push({ key: f, name: plural(f), color: null, glyph: FLAVOUR_ICONS[f], digest: '', active: act, done, alwaysOpen: false });
+      sections.push({
+        key: f,
+        name: plural(f),
+        color: null,
+        glyph: FLAVOUR_ICONS[f],
+        digest: act.length ? '' : `${done.length} done`,
+        active: act,
+        done,
+        alwaysOpen: false,
+      });
     }
   } else {
-    const kept = derived.all.filter(matchesFilters).sort((a, b) => a.title.localeCompare(b.title));
+    const kept = derived.all
+      .filter(matchesFilters)
+      .filter((i) => showDone || i.status !== 'completed')
+      .sort((a, b) => a.title.localeCompare(b.title));
     const byLetter = new Map<string, ItemView[]>();
     for (const i of kept) {
       const c = i.title[0]?.toUpperCase() ?? '#';
@@ -231,7 +246,13 @@ export default function BrowseView({
   }
 
   const visibleCount = sections.reduce((n, s) => n + s.active.length, 0);
-  const hiddenDone = sections.reduce((n, s) => n + s.done.length, 0);
+  // Counted over the whole filtered catalogue, not just rendered shelves —
+  // a theme holding only done items has no shelf until "show" reveals it.
+  const hiddenDone = derived.doneItems.filter(matchesFilters).length;
+  // Themes with nothing active don't count as part of the spread either.
+  const liveThemeCount = data.themes.filter((t) =>
+    t.itemIds.some((id) => data.items[id]?.status !== 'completed'),
+  ).length;
   const filtered = shelveBy === 'theme' ? flavourFilter !== null : themeFilter.length > 0;
 
   // ---- spread bar: theme filings among items matching the current filter --
@@ -280,9 +301,11 @@ export default function BrowseView({
 
   return (
     <div className="browse">
+      {/* Header pins while the shelves scroll under it. */}
+      <div className="browse-sticky">
       <div className="spread-head">
         <span>
-          {filtered ? `${visibleCount} of ${active.length} · ${filterLabel}` : `${active.length} things · ${data.themes.length} themes`}
+          {filtered ? `${visibleCount} of ${active.length} · ${filterLabel}` : `${active.length} things · ${liveThemeCount} theme${liveThemeCount === 1 ? '' : 's'}`}
         </span>
       </div>
       <div className="spread-bar">
@@ -336,7 +359,9 @@ export default function BrowseView({
             <button className={`chip${themeFilter.length === 0 ? ' on' : ''}`} onClick={() => setThemeFilter([])}>
               All <b>{active.length}</b>
             </button>
-            {themeShelves.map((t) => (
+            {themeShelves
+              .filter((t) => (themeCount.get(t.id) ?? 0) > 0 || showDone || themeFilter.includes(t.id))
+              .map((t) => (
               <button
                 key={t.id}
                 className={`chip${themeFilter.includes(t.id) ? ' on' : ''}`}
@@ -348,6 +373,7 @@ export default function BrowseView({
             ))}
           </>
         )}
+      </div>
       </div>
 
       {sections.length === 0 && <div className="hint">Nothing filed here yet.</div>}

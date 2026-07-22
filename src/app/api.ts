@@ -138,11 +138,19 @@ export const api = {
 };
 
 // Stable colour per theme name (§6: colour = theme).
+// Hues come from a curated wheel, not `hash % 360`: HSL degrees are not
+// perceptually uniform — the green-cyan band spans roughly a third of the
+// wheel, so uniform-random hues read as "mostly greens and blues". The list
+// below spaces hues by how different they *look*, and a second hash byte
+// nudges lightness so name collisions on the same hue still separate.
+const THEME_HUES = [347, 15, 38, 60, 90, 130, 165, 190, 210, 235, 262, 290, 318];
+
 export function themeColor(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue} 62% 62%)`;
+  const hue = THEME_HUES[h % THEME_HUES.length];
+  const light = 58 + ((h >>> 8) % 3) * 5; // 58 / 63 / 68
+  return `hsl(${hue} 62% ${light}%)`;
 }
 
 export function itemColor(item: ItemView): string {
