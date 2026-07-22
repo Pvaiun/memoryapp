@@ -293,18 +293,6 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
 }
-.organize-now {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid rgba(139, 147, 248, 0.4);
-  border-radius: 999px;
-  padding: 4px 12px;
-}
-
 .tile-map {
   display: flex;
   flex-direction: column;

@@ -211,7 +211,6 @@ function Demo() {
           nowView="descent"
           onOpenItem={() => {}}
           onToggleComplete={toggle}
-          onOrganizeNow={() => {}}
         />
       </main>
     </div>

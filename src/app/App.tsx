@@ -491,7 +491,6 @@ export default function App() {
             nowView={nowView}
             onOpenItem={setOpenItem}
             onToggleComplete={toggleComplete}
-            onOrganizeNow={organizeNow}
             onAddFirstStep={addFirstStep}
           />
         )}

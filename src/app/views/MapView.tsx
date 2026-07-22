@@ -30,14 +30,12 @@ export default function MapView({
   nowView,
   onOpenItem,
   onToggleComplete,
-  onOrganizeNow,
   onAddFirstStep,
 }: {
   map: MapPayload;
   nowView: NowView;
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
-  onOrganizeNow: () => void;
   onAddFirstStep?: (bubbleId: string, title: string) => void;
 }) {
   const [openBubble, setOpenBubble] = useState<Bubble | null>(null);
@@ -98,14 +96,7 @@ export default function MapView({
 
   const capturedBlock = capturedItems.length > 0 && (
     <div className="captured-today">
-      <h3>
-        Captured today
-        {capturedItems.length >= 5 && (
-          <button className="organize-now" onClick={onOrganizeNow}>
-            Organize now
-          </button>
-        )}
-      </h3>
+      <h3>Captured today</h3>
       {capturedItems.map((item) => (
         <ItemRow key={item.id} item={item} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
       ))}
@@ -116,14 +107,7 @@ export default function MapView({
     <div className="sheet-backdrop" onClick={() => setOpenBubble(null)}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-grabber" />
-        <h2>
-          {openBubbleLive.name}
-          {openBubbleLive.id === CAPTURED_BUBBLE_ID && capturedItems.length >= 5 && (
-            <button className="organize-now" onClick={onOrganizeNow}>
-              Organize now
-            </button>
-          )}
-        </h2>
+        <h2>{openBubbleLive.name}</h2>
         {openBubbleLive.reason && <p className="reason">{openBubbleLive.reason}</p>}
         {openBubbleLive.itemIds
           .map((id) => map.items[id])
