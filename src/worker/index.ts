@@ -89,6 +89,15 @@ app.post('/api/settings/brain-prompt', async (c) => {
   return c.json({ ok: true, variant });
 });
 
+// User-authored text appended verbatim to whichever Brain prompt runs — the
+// self-serve workshop layer (tone experiments and the like). Empty clears it.
+app.post('/api/settings/brain-addendum', async (c) => {
+  const { text } = await c.req.json<{ text: string }>();
+  if (typeof text !== 'string') return c.json({ error: 'text must be a string' }, 400);
+  await setState(c.env.DB, 'brain_prompt_addendum', text.trim().slice(0, 4000));
+  return c.json({ ok: true });
+});
+
 // The user answers a bubble's break-it-down invitation (§9.2): their typed
 // step is parsed like any capture and becomes a real item on the card.
 // Returns the updated map plus a CaptureResponse for the review sheet.
@@ -231,6 +240,7 @@ app.get('/api/status', async (c) => {
     mapDay: await getState(db, 'map_day'),
     mapBuiltAt: await getState(db, 'map_built_at'),
     brainPrompt: (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal',
+    brainAddendum: (await getState(db, 'brain_prompt_addendum')) ?? '',
   });
 });
 

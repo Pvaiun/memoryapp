@@ -80,6 +80,12 @@ export const api = {
       body: JSON.stringify({ variant }),
     }),
 
+  setBrainAddendum: (text: string) =>
+    req<{ ok: boolean }>('/api/settings/brain-addendum', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
   addFirstStep: (bubbleId: string, title: string) =>
     req<{ map: MapPayload; capture: CaptureResponse }>(`/api/bubbles/${bubbleId}/first-step`, {
       method: 'POST',

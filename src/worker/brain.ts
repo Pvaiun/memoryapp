@@ -169,6 +169,7 @@ export async function rebuildMap(
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
   const variant = promptVariant ?? ((await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal');
+  const addendum = (await getState(db, 'brain_prompt_addendum'))?.trim() || null;
 
   const tz = parseInt((await getState(db, 'tz_offset_minutes')) ?? '0', 10) || 0;
   const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
@@ -176,7 +177,7 @@ export async function rebuildMap(
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, input, variant);
+      proposed = await llmBuildBubbles(env, input, variant, addendum);
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
@@ -273,7 +274,7 @@ export async function rebuildMap(
   await setState(
     db,
     'brain_last_input',
-    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: variant, payload: input.payload }),
+    JSON.stringify({ day, builtAt: ts, mode, noHistory, prompt: variant, addendum, payload: input.payload }),
   );
   // One consolidated event per rebuild (the bubbles table holds the details).
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
@@ -528,6 +529,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
         mode: string;
         noHistory: boolean;
         prompt?: string;
+        addendum?: string | null;
         payload: unknown;
       })
     : null;
@@ -552,7 +554,9 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
     builtAt: last?.builtAt ?? (await getState(db, 'map_built_at')),
     // How the last build ran: llm vs fallback, and whether yesterday's
     // groupings were withheld (the no-history workshop rebuild).
-    build: last ? { day: last.day, mode: last.mode, noHistory: last.noHistory, prompt: last.prompt ?? 'full' } : null,
+    build: last
+      ? { day: last.day, mode: last.mode, noHistory: last.noHistory, prompt: last.prompt ?? 'full', addendum: last.addendum ?? null }
+      : null,
     input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
     output: bubbleRows.results.map((b) => ({
       name: b.name,
@@ -712,8 +716,13 @@ async function llmBuildBubbles(
   env: Env,
   input: BrainInput,
   variant: BrainPromptVariant = 'full',
+  addendum: string | null = null,
 ): Promise<ProposedBubble[]> {
-  const system = variant === 'minimal' ? MINIMAL_SYSTEM : FULL_SYSTEM;
+  // The addendum is the user's own workshop layer: appended verbatim, no
+  // framing or heading — a wrapper like "USER NOTE:" would mark it as
+  // special and make the model over- or under-weight it.
+  const base = variant === 'minimal' ? MINIMAL_SYSTEM : FULL_SYSTEM;
+  const system = addendum?.trim() ? `${base}\n\n${addendum.trim()}` : base;
   const { idByAlias } = input;
   const user = JSON.stringify(input.payload);
 

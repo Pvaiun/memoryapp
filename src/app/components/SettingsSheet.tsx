@@ -15,6 +15,7 @@ interface Status {
   mapDay: string | null;
   mapBuiltAt: string | null;
   brainPrompt: 'full' | 'minimal';
+  brainAddendum: string;
 }
 
 export default function SettingsSheet({
@@ -24,7 +25,6 @@ export default function SettingsSheet({
   onEnablePush,
   onRebuild,
   onRebuildNoHistory,
-  onRebuildMinimal,
   onExport,
   onCopyBrainSnapshot,
   onClose,
@@ -35,7 +35,6 @@ export default function SettingsSheet({
   onEnablePush: () => void;
   onRebuild: () => void;
   onRebuildNoHistory: () => void;
-  onRebuildMinimal: () => void;
   onExport: () => void;
   onCopyBrainSnapshot: () => void;
   onClose: () => void;
@@ -43,13 +42,32 @@ export default function SettingsSheet({
   const [status, setStatus] = useState<Status | null>(null);
   const [brainPrompt, setBrainPrompt] = useState<'full' | 'minimal' | null>(null);
 
+  const [addendum, setAddendum] = useState('');
+  const [savedAddendum, setSavedAddendum] = useState('');
+
   useEffect(() => {
     api.status().then((s) => {
       const st = s as unknown as Status;
       setStatus(st);
       setBrainPrompt(st.brainPrompt ?? 'minimal');
+      setAddendum(st.brainAddendum ?? '');
+      setSavedAddendum(st.brainAddendum ?? '');
     }).catch(() => {});
   }, []);
+
+  // The self-serve workshop layer: text appended verbatim to whichever Brain
+  // prompt runs. Save persists; Clear removes it entirely.
+  const saveAddendum = () => {
+    const t = addendum.trim();
+    api.setBrainAddendum(t).then(() => {
+      setAddendum(t);
+      setSavedAddendum(t);
+    }).catch(() => {});
+  };
+  const clearAddendum = () => {
+    setAddendum('');
+    api.setBrainAddendum('').then(() => setSavedAddendum('')).catch(() => {});
+  };
 
   // The morning-prompt toggle (workshop shootout, longitudinal arm): which
   // Brain prompt tomorrow's first-open rebuild uses. Optimistic; reverts on
@@ -133,6 +151,27 @@ export default function SettingsSheet({
           </small>
         </div>
 
+        <div className="field">
+          <label>Brain prompt addendum</label>
+          <textarea
+            rows={4}
+            value={addendum}
+            onChange={(e) => setAddendum(e.target.value)}
+            placeholder="Extra instructions appended verbatim to the Brain prompt — try tone, emphasis, anything"
+          />
+          <div className="seg">
+            <button disabled={addendum.trim() === savedAddendum} onClick={saveAddendum}>
+              {addendum.trim() === savedAddendum && savedAddendum ? 'Saved' : 'Save'}
+            </button>
+            <button disabled={!addendum && !savedAddendum} onClick={clearAddendum}>
+              Clear
+            </button>
+          </div>
+          <small className="settings-hint">
+            Applies to every rebuild until cleared. The Brain snapshot records what was active.
+          </small>
+        </div>
+
         <div className="settings-actions">
           <button
             className="settings-btn primary"
@@ -153,16 +192,6 @@ export default function SettingsSheet({
           >
             Rebuild map now — no history
             <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
-          </button>
-          <button
-            className="settings-btn"
-            onClick={() => {
-              onClose();
-              onRebuildMinimal();
-            }}
-          >
-            Rebuild map now — minimal prompt
-            <small>Shootout: bare objective instead of the full spec, no history — compare snapshots</small>
           </button>
           {!pushOn && (
             <button
