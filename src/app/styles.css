@@ -1551,13 +1551,6 @@ textarea:focus {
 .dsc-card.settled .dsc-tok {
   color: var(--text-dim);
 }
-.dsc-done {
-  display: inline-block;
-  margin-top: 7px;
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--good);
-}
 
 /* ----- screen-space lines at the ends (§6) ----- */
 .dsc-header,
