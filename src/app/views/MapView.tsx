@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Bubble, ItemView, MapPayload } from '../../shared/types';
 import { CAPTURED_BUBBLE_ID } from '../../shared/types';
-import { happeningToday } from '../../shared/cadence';
+import { describeAtTime, happeningToday } from '../../shared/cadence';
 import BubbleMap from '../components/BubbleMap';
 import DescentView from '../components/descent/DescentView';
 import ItemRow from '../components/ItemRow';
@@ -11,6 +11,47 @@ export type NowView = 'descent' | 'tiles';
 // The card grammar (shared/cards.ts) reserves ** and []; a title carrying
 // them would shatter the utterance, so they never reach the markup.
 const safeToken = (title: string) => title.replace(/[*[\]]/g, '');
+
+// Brain-voice time of day: "9:30pm", "7pm" — the same phrasing the Brain
+// weaves into its cards (shared/cadence describeAtTime), so a captured card
+// reads in the Brain's register, not a widget's.
+function brainTime(iso: string): string {
+  const d = new Date(iso);
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h >= 12 ? 'pm' : 'am';
+  const hr = ((h + 11) % 12) + 1;
+  return m ? `${hr}:${String(m).padStart(2, '0')}${ampm}` : `${hr}${ampm}`;
+}
+
+// The one moment a captured item is anchored to, if any: an event's start, a
+// set rhythm's time, or a timed deadline. Date-only deadlines (stored at
+// noon) carry no time; undated captures never reach this bucket.
+function capturedDue(item: ItemView): string | null {
+  // Date-only dates anchor at noon (dates.localNoonIso); the T12:00:00 marker
+  // is how the app tells "all day" from a real clock time (same test ItemRow
+  // uses), so an all-day event or dateless deadline shows no time.
+  if (item.type === 'HAPPEN' && item.eventAt && !item.eventAt.includes('T12:00:00')) return brainTime(item.eventAt);
+  if (item.cadence?.atTime) return describeAtTime(item.cadence.atTime);
+  if (item.deadline && !item.deadline.includes('T12:00:00')) return brainTime(item.deadline);
+  return null;
+}
+
+// Build the captured bubble's card sentence deterministically, in the same
+// marked-up grammar the Brain uses (shared/cards.ts): each DO an actionable
+// [chip](id), each fact/event a **bold** token, its due time woven in as
+// "at **9:30pm**", the items joined as a plain-prose list. No Brain call —
+// captures stay deterministic (§9.1) — but the card reads like every other.
+function capturedSentence(items: ItemView[]): string {
+  const parts = items.map((it) => {
+    const token = it.type === 'DO' ? `[${safeToken(it.title)}](${it.id})` : `**${safeToken(it.title)}**`;
+    const due = capturedDue(it);
+    return due ? `${token} at **${due}**` : token;
+  });
+  if (parts.length <= 1) return `${parts[0] ?? ''}.`;
+  if (parts.length === 2) return `${parts[0]}, and ${parts[1]}.`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}.`;
+}
 
 // The Now screen's slice of the §9.1 bucket: only captures that carry
 // today's pressure surface here. Undated and future-dated captures stay in
@@ -62,11 +103,9 @@ export default function MapView({
       kind: 'situation',
       prominence: 1,
       reason: 'Fresh captures, kept losslessly until the morning build folds them into real bubbles.',
-      // One utterance from the bucket itself: every DO is a live chip,
-      // everything else a bold token.
-      sentence: capturedItems
-        .map((it) => (it.type === 'DO' ? `[${safeToken(it.title)}](${it.id})` : `**${safeToken(it.title)}**`))
-        .join('  '),
+      // One utterance in the Brain's own card grammar — chips, bold tokens,
+      // due times woven in — so the captured card reads like every other.
+      sentence: capturedSentence(capturedItems),
       firstStep: null,
       itemIds: capturedIds,
     };

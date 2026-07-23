@@ -1033,39 +1033,6 @@ export default function DescentView({
       );
     });
 
-  // Captured Today reads as a little log, not one utterance: each fresh
-  // capture on its own row with the time of day it landed (§9.1). DOs keep
-  // their live checkbox chip; facts/events show as bold tokens.
-  const fmtCaptureTime = (iso: string) =>
-    new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const renderCaptured = (info: CardInfo) => (
-    <span className="dsc-cap-list">
-      {info.members.map((item) => {
-        const done = isDoneForNow(item);
-        return (
-          <span className="dsc-cap-row" key={item.id}>
-            {item.type === 'DO' ? (
-              <span
-                role="checkbox"
-                aria-checked={done}
-                className={`dsc-chip-tok${done ? ' done' : ''}`}
-                onClick={(e) => onChipTap(e, item, info.bubble.id)}
-              >
-                <span className="dsc-box" aria-hidden>
-                  {done ? '✓' : ''}
-                </span>
-                {item.title}
-              </span>
-            ) : (
-              <b className="dsc-tok">{item.title}</b>
-            )}
-            <time className="dsc-cap-time">{fmtCaptureTime(item.createdAt)}</time>
-          </span>
-        );
-      })}
-    </span>
-  );
-
   return (
     <div className="dsc-viewport" ref={viewportRef}>
       {vh > 0 && (
@@ -1124,8 +1091,6 @@ export default function DescentView({
                               <>
                                 <b className="dsc-tok">{b.name}</b> — {info.settledWord}.
                               </>
-                            ) : captured ? (
-                              renderCaptured(info)
                             ) : (
                               renderSegments(info)
                             )}
