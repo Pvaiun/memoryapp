@@ -1,0 +1,705 @@
+<title>Calendar redesign — Memory</title>
+<style>
+  /* ---------- page tokens (themed) ---------- */
+  :root {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d1019;
+      --panel: #151a28;
+      --ink: #eef0fa;
+      --ink-dim: #9aa3c0;
+      --ink-faint: #5d647e;
+      --line: rgba(148, 163, 216, 0.16);
+      --accent: #8b93f8;
+      --accent-soft: rgba(139, 147, 248, 0.14);
+      --chip-ink: #0b0e17;
+    }
+  }
+  :root[data-theme='light'] {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+  }
+  :root[data-theme='dark'] {
+    --ground: #0d1019;
+    --panel: #151a28;
+    --ink: #eef0fa;
+    --ink-dim: #9aa3c0;
+    --ink-faint: #5d647e;
+    --line: rgba(148, 163, 216, 0.16);
+    --accent: #8b93f8;
+    --accent-soft: rgba(139, 147, 248, 0.14);
+    --chip-ink: #0b0e17;
+  }
+
+  /* ---------- app tokens (fixed — the app is dark-only) ---------- */
+  :root {
+    --a-bg: #0b0e17;
+    --a-line: rgba(148, 163, 216, 0.14);
+    --a-text: #eef0fa;
+    --a-dim: #9aa3c0;
+    --a-faint: #5d647e;
+    --a-accent: #8b93f8;
+    --a-accent-soft: rgba(139, 147, 248, 0.16);
+    --t-green: #6fd08c;
+    --t-gold: #e8c26a;
+    --t-pink: #ef7fae;
+    --t-blue: #6aa5f0;
+    --t-purple: #9a8df2;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--ground); }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 56px 24px 80px; }
+
+  /* ---------- page typography ---------- */
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin-bottom: 16px;
+  }
+  .lede { font-size: 16.5px; color: var(--ink-dim); max-width: 62ch; }
+  h2 { font-size: 22px; font-weight: 750; letter-spacing: -0.015em; margin-bottom: 6px; }
+  .kicker {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  section { margin-top: 72px; }
+  .row {
+    display: grid;
+    grid-template-columns: 400px minmax(0, 1fr);
+    gap: 44px;
+    align-items: start;
+  }
+  @media (max-width: 880px) {
+    .row { grid-template-columns: minmax(0, 1fr); }
+  }
+  .prose { font-size: 15px; color: var(--ink-dim); max-width: 58ch; }
+  .prose p { margin-bottom: 12px; }
+  .prose strong { color: var(--ink); font-weight: 650; }
+  .points { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  .points li { display: flex; gap: 14px; font-size: 15px; color: var(--ink-dim); }
+  .points b { color: var(--ink); font-weight: 650; }
+  .pt-num {
+    flex: none;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--chip-ink);
+    font-size: 12.5px; font-weight: 750;
+    display: grid; place-items: center;
+    margin-top: 1px;
+  }
+  .code-note {
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--ink-faint);
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    max-width: 58ch;
+  }
+  .code-note code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    background: var(--accent-soft);
+    border-radius: 6px;
+    padding: 1.5px 6px;
+    color: var(--ink);
+  }
+  .verdict {
+    margin-top: 80px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 30px;
+  }
+  .verdict .prose { max-width: 70ch; }
+
+  /* ---------- phone frame ---------- */
+  .phone {
+    width: 360px;
+    max-width: 100%;
+    height: 724px;
+    background: radial-gradient(500px 260px at 50% -80px, rgba(122, 132, 247, 0.09), transparent 70%), var(--a-bg);
+    border: 1px solid rgba(148, 163, 216, 0.22);
+    border-radius: 34px;
+    padding: 16px 15px 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--a-text);
+    box-shadow: 0 24px 60px rgba(8, 10, 22, 0.28);
+    font-variant-numeric: tabular-nums;
+  }
+  .p-head { display: flex; align-items: center; gap: 10px; padding: 4px 4px 12px; }
+  .p-orb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #b9befc, var(--a-accent) 60%, #5b63d8);
+    box-shadow: 0 0 12px rgba(139, 147, 248, 0.7);
+  }
+  .p-title { flex: 1; line-height: 1.2; }
+  .p-title b { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; display: block; }
+  .p-title span { font-size: 11.5px; color: var(--a-dim); }
+  .p-gear {
+    width: 32px; height: 32px; border-radius: 11px;
+    background: rgba(148, 163, 216, 0.08);
+    border: 1px solid var(--a-line);
+    display: grid; place-items: center;
+    color: var(--a-dim); font-size: 14px;
+  }
+  .p-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .p-capture { display: flex; gap: 7px; align-items: center; padding-top: 10px; }
+  .p-cap-input {
+    flex: 1;
+    background: rgba(148, 163, 216, 0.07);
+    border: 1px solid var(--a-line);
+    border-radius: 14px;
+    padding: 10px 13px;
+    font-size: 13.5px;
+    color: var(--a-faint);
+  }
+  .p-mic, .p-send {
+    width: 40px; height: 40px; flex: none;
+    border-radius: 13px;
+    display: grid; place-items: center;
+    font-size: 15px;
+  }
+  .p-mic { background: rgba(148, 163, 216, 0.07); border: 1px solid var(--a-line); color: var(--a-dim); }
+  .p-send { background: #3f478f; color: #dfe2ff; }
+  .p-tabs {
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 4px 2px;
+    margin-top: 8px;
+    border-top: 1px solid var(--a-line);
+  }
+  .p-tabs span {
+    font-size: 10.5px; font-weight: 650;
+    color: var(--a-faint);
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .p-tabs i { font-style: normal; font-size: 15px; line-height: 1; }
+  .p-tabs .on { color: var(--a-accent); }
+
+  .cal-top { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 8px; }
+  .cal-top b { font-size: 16px; font-weight: 750; }
+  .cal-nav {
+    width: 32px; height: 32px; border-radius: 11px;
+    background: rgba(148, 163, 216, 0.08); border: 1px solid var(--a-line);
+    display: grid; place-items: center; color: var(--a-dim); font-size: 13px;
+  }
+  .dow7 { display: grid; grid-template-columns: repeat(7, 1fr); padding-bottom: 4px; }
+  .dow7 span { text-align: center; font-size: 10px; font-weight: 650; color: var(--a-faint); }
+
+  .cap { margin-top: 14px; font-size: 12.5px; color: var(--ink-faint); max-width: 360px; }
+
+  /* shared micro-marks */
+  .kw {
+    font-size: 9px; font-weight: 650;
+    line-height: 1.15;
+    padding: 2px 4px;
+    border-radius: 5px;
+    max-width: 100%;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .ticks { display: flex; gap: 2.5px; justify-content: center; }
+  .ticks i { width: 3px; height: 3px; border-radius: 50%; display: block; opacity: 0.4; }
+  .wring { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--t-blue); opacity: 0.75; }
+  .nsel {
+    background: var(--a-accent); color: #0b0e17 !important; font-weight: 750 !important;
+    border-radius: 50%;
+  }
+
+  /* ---------- Concept A: fisheye weeks ---------- */
+  .fz { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .fz-row { display: grid; grid-template-columns: repeat(7, 1fr); border-radius: 14px; }
+  .fz-row .c { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+  .fz-row .n { font-size: 12px; font-weight: 550; color: var(--a-dim); }
+  .fz-row .n.out { opacity: 0.3; }
+  .fz-row .bar { width: 12px; height: 2.5px; border-radius: 2px; background: var(--a-accent); }
+  .b0 { opacity: 0; } .b1 { opacity: 0.35; } .b2 { opacity: 0.65; } .b3 { opacity: 1; }
+  .fz-far { height: 40px; padding-top: 5px; }
+  .fz-far .n { font-size: 11px; }
+  .fz-near { height: 62px; padding-top: 6px; }
+  .fz-near .mk { font-size: 8.5px; color: var(--a-dim); max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 2px; }
+  .fz-focus {
+    height: 238px;
+    position: relative;
+    background: rgba(139, 147, 248, 0.055);
+    border: 1px solid rgba(139, 147, 248, 0.2);
+    padding: 8px 3px 8px;
+  }
+  .fz-focus .c { justify-content: flex-start; gap: 4px; padding: 0 2px; }
+  .fz-focus .n {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    font-size: 13px;
+  }
+  .fz-focus .band-gap { height: 20px; flex: none; }
+  .fz-focus .ticks { margin-top: auto; padding-bottom: 2px; }
+  .fz-band {
+    position: absolute;
+    top: 42px;
+    left: calc(100% / 7 * 1 + 3px);
+    width: calc(100% / 7 * 5 - 6px);
+    height: 17px;
+    border-radius: 5px;
+    background: rgba(239, 127, 174, 0.16);
+    border-left: 2px solid var(--t-pink);
+    color: var(--t-pink);
+    font-size: 9px; font-weight: 650;
+    line-height: 17px;
+    padding: 0 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .fz-week-label {
+    position: absolute;
+    top: -1px; right: 10px;
+    transform: translateY(-50%);
+    font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--a-accent);
+    background: var(--a-bg);
+    padding: 0 6px;
+  }
+
+  /* ---------- Concept B: weighted days ---------- */
+  .wk { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+  .wk-bar { display: flex; gap: 3px; }
+  .wk-day {
+    border-radius: 10px;
+    background: rgba(148, 163, 216, 0.06);
+    padding: 4px 5px;
+    min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+    overflow: hidden;
+  }
+  .wk-day .d { font-size: 9px; font-weight: 650; color: var(--a-faint); white-space: nowrap; }
+  .wk-day.hot { background: rgba(139, 147, 248, 0.1); }
+  .wk-day.sel { background: var(--a-accent-soft); border: 1px solid rgba(139, 147, 248, 0.5); }
+  .wk-day.sel .d { color: var(--a-accent); }
+  .wk-day .ticks { justify-content: flex-start; margin-top: auto; }
+  .wk-legend {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 4px 0;
+    font-size: 10.5px; color: var(--a-faint);
+  }
+  .wk-legend i { display: block; height: 3px; border-radius: 2px; background: var(--a-accent); }
+
+  /* ---------- Concept C: rhythms & moments ---------- */
+  .g4 { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+  .g4-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; position: relative; }
+  .g4-row .c {
+    height: 58px;
+    border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 4px 2px 4px;
+    min-width: 0;
+  }
+  .g4-row .n { font-size: 11.5px; font-weight: 550; color: var(--a-dim); width: 20px; height: 20px; display: grid; place-items: center; }
+  .g4-row .n.out { opacity: 0.3; }
+  .g4-row .c.sel { background: var(--a-accent-soft); border: 1px solid rgba(139, 147, 248, 0.45); }
+  .g4-row .ticks { margin-top: auto; }
+  .g4-band {
+    position: absolute;
+    top: 27px;
+    left: calc(100% / 7 * 1 + 4px);
+    width: calc(100% / 7 * 5 - 8px);
+    height: 14px;
+    border-radius: 4px;
+    background: rgba(239, 127, 174, 0.16);
+    border-left: 2px solid var(--t-pink);
+    color: var(--t-pink);
+    font-size: 8.5px; font-weight: 650;
+    line-height: 14px;
+    padding: 0 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .day-x {
+    border: 1px solid rgba(139, 147, 248, 0.3);
+    background: rgba(139, 147, 248, 0.06);
+    border-radius: 14px;
+    padding: 8px 10px 6px;
+    margin-top: 2px;
+  }
+  .day-x-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--a-accent);
+    padding: 0 2px 4px;
+  }
+  .day-x-head span { color: var(--a-faint); font-size: 12px; letter-spacing: 0; text-transform: none; }
+  .xr { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+  .xr + .xr { border-top: 1px solid rgba(148, 163, 216, 0.08); }
+  .xr .t { flex: none; width: 40px; font-size: 11px; color: var(--a-dim); text-align: right; }
+  .xr .gl {
+    flex: none; width: 26px; height: 26px; border-radius: 9px;
+    display: grid; place-items: center; font-size: 12px;
+  }
+  .xr .bd { flex: 1; min-width: 0; line-height: 1.25; }
+  .xr .bd b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xr .bd span { display: block; font-size: 10.5px; color: var(--a-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xr .cb { flex: none; width: 19px; height: 19px; border-radius: 7px; border: 1.5px solid rgba(148, 163, 216, 0.4); }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Memory · Calendar view · Round 2</div>
+    <h1>The calendar is the page</h1>
+    <p class="lede">
+      Building on the open-grid direction: no persistent task list. The month fills the screen, days speak
+      in keywords, and detail only appears when you expand a day. Three mechanisms, one per mock-up — a
+      fisheye lens on the current week, days sized by what they hold, and a visual grammar that separates
+      recurring rhythms from one-off moments. The data model already knows the difference
+      (<span style="font-family: ui-monospace, monospace; font-size: 0.88em;">item.cadence</span> vs.
+      <span style="font-family: ui-monospace, monospace; font-size: 0.88em;">eventAt</span>), so the
+      "smart parsing" costs one filter.
+    </p>
+  </header>
+
+  <!-- ================= CONCEPT A ================= -->
+  <section>
+    <div class="kicker">Concept A · Zoom without leaving the month</div>
+    <h2>Fisheye weeks</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="dow7"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+          <div class="fz">
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n out">28</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n out">29</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n out">30</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">1</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">2</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">3</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">4</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n">5</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">6</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">7</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">8</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">9</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">10</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">11</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n">12</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">13</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">14</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">15</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">16</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">17</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">18</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-focus">
+              <span class="fz-week-label">This week</span>
+              <span class="fz-band">Sarah &amp; Deidra · until Fri 10:00</span>
+              <span class="c"><span class="n">19</span><span class="band-gap"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">20</span><span class="band-gap"></span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 arrive</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">21</span><span class="band-gap"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">22</span><span class="band-gap"></span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Insurance</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n nsel">23</span><span class="band-gap"></span><span class="kw" style="background:rgba(139,147,248,0.16); color:var(--a-accent);">3 items</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">24</span><span class="band-gap"></span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 leave</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span><span class="wring" style="margin-bottom:2px;"></span></span>
+              <span class="c"><span class="n">25</span><span class="band-gap"></span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="fz-row fz-near">
+              <span class="c"><span class="n">26</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">27</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">28</span><span class="mk">Car svc</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">29</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">30</span><span class="mk">Anna</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">31</span><span class="mk">Rent</span><span class="bar b2"></span></span>
+              <span class="c"><span class="n out">1</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+            </div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>The whole month stays on screen; the lens does the prioritizing.</strong> The selected
+        week gets ~5× the height of a distant week and is the only place that renders words. Tap any other
+        week (or scroll) and the lens glides there — you never lose the month's shape to see the week's
+        content.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>Three zoom levels, three vocabularies.</b> Far weeks: number +
+          density bar. The adjacent week: number + a one-word whisper ("Rent", "Anna"). The focus week:
+          keyword chips, time hints, and multi-day spans as a continuous band — Sarah &amp; Deidra reads as
+          one visit, not five dots.</span></li>
+          <li><span class="pt-num">2</span><span><b>Rhythms don't inflate density.</b> Daily/weekly cadence items
+          would light up every bar, so they're excluded from the bars and appear only as faint ticks
+          inside the focus week. The bars answer "which days are <em>unusual</em>?"</span></li>
+          <li><span class="pt-num">3</span><span><b>Detail is one tap deeper.</b> Today shows a "3 items" pill;
+          tapping any focus-week day expands it (see Concept C's panel) rather than keeping a permanent
+          agenda below.</span></li>
+        </ul>
+        <p class="code-note">The grid rows in <code>.cal-grid</code> become per-week rows with a height class
+        driven by distance from the selected week; <code>byDay</code> in <code>CalendarView.tsx</code> already
+        holds per-day entries for chips and counts. A CSS height transition makes the lens glide.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONCEPT B ================= -->
+  <section>
+    <div class="kicker">Concept B · Space follows weight</div>
+    <h2>Weighted days</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="wk">
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">W 1</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 2</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 3</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 4</span></span>
+            </div>
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 5</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 6</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 7</span><span class="kw" style="background:rgba(154,141,242,0.14); color:var(--t-purple);">Dentist</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 8</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 9</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 10</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 11</span></span>
+            </div>
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 12</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 13</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 14</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 15</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 16</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Payday</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 17</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 18</span></span>
+            </div>
+            <div class="wk-bar" style="height: 108px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 19</span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">M 20</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Sarah + Deidra arrive</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">10:00</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 21</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">visit · d2</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">W 22</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Insurance due</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">visit · d3</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day sel" style="flex: 4;"><span class="d">T 23 · TODAY</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">visit · d4</span><span class="kw" style="background:rgba(139,147,248,0.18); color:var(--a-accent);">3 items ↓</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">F 24</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 leave</span><span class="ticks"><i style="background:var(--t-gold)"></i></span><span class="wring"></span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">S 25</span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="wk-bar" style="height: 66px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 26</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 27</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 28</span><span class="kw" style="background:rgba(106,165,240,0.14); color:var(--t-blue);">Car svc</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 29</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 30</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Anna 🎂</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">F 31</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Rent</span></span>
+            </div>
+            <div class="wk-legend"><i style="width: 10px; opacity: 0.35;"></i><i style="width: 22px; opacity: 0.7;"></i><i style="width: 38px; opacity: 1;"></i> day width grows with what's on · rhythms excluded</div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>The boldest option: the grid itself becomes the chart.</strong> Each week is a bar; each
+        day's width is proportional to its load (rhythms excluded, so the proportions mean something).
+        Empty days compress to labeled slivers, busy days earn enough room to speak in words. Week height
+        scales too — the week of the visit is physically the biggest thing on screen.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>You read the month like a skyline.</b> Where the space is,
+          the life is. No counting dots — the visit week and the end-of-month cluster are visible from
+          arm's length.</span></li>
+          <li><span class="pt-num">2</span><span><b>Partial weeks stop pretending.</b> July 1–4 renders as a
+          four-day bar; there are no ghost cells from June or August at all.</span></li>
+          <li><span class="pt-num">3</span><span><b>The honest tradeoff:</b> weekday columns no longer align
+          vertically, so each day carries its own "T 23" label. You trade "all Mondays in a column" for
+          "busy days are big." Worth prototyping; feels great or infuriating, nothing in between.</span></li>
+        </ul>
+        <p class="code-note">Each week becomes a flex row with <code>flex: 1 + moments.length</code> per day —
+        about 30 lines in <code>CalendarView.tsx</code>. Cap the ratio (e.g. max 4:1) so quiet days stay
+        tappable.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONCEPT C ================= -->
+  <section>
+    <div class="kicker">Concept C · A grammar for time</div>
+    <h2>Rhythms &amp; moments</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="dow7"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+          <div class="g4">
+            <div class="g4-row">
+              <span class="c"><span class="n out">28</span></span>
+              <span class="c"><span class="n out">29</span></span>
+              <span class="c"><span class="n out">30</span></span>
+              <span class="c"><span class="n">1</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">2</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">3</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">4</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="c"><span class="n">5</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">6</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">7</span><span class="kw" style="background:rgba(154,141,242,0.14); color:var(--t-purple);">Dentist</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">8</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">9</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">10</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">11</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="c"><span class="n">12</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">13</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">14</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">15</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">16</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Payday</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">17</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">18</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="g4-band">Sarah &amp; Deidra</span>
+              <span class="c"><span class="n">19</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">20</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">21</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">22</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c sel"><span class="n nsel">23</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">24</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">25</span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="day-x">
+              <div class="day-x-head">Thursday 23 <span>3 items · ✕</span></div>
+              <div class="xr">
+                <span class="t">0:00</span>
+                <span class="gl" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">◎</span>
+                <div class="bd"><b>Start the dishwasher</b><span>rhythm · daily at 12am · Home</span></div>
+                <span class="cb"></span>
+              </div>
+              <div class="xr">
+                <span class="t">all day</span>
+                <span class="gl" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">📅</span>
+                <div class="bd"><b>Sarah and Deidra visiting</b><span>moment · day 4 of 5 · leaves Fri 10:00</span></div>
+              </div>
+              <div class="xr">
+                <span class="t">18:30</span>
+                <span class="gl" style="background:rgba(111,208,140,0.14); color:var(--t-green);">✓</span>
+                <div class="bd"><b>Water the garden</b><span>rhythm · every 2 days · Garden</span></div>
+                <span class="cb"></span>
+              </div>
+            </div>
+            <div class="g4-row">
+              <span class="c"><span class="n">26</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">27</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">28</span><span class="kw" style="background:rgba(106,165,240,0.14); color:var(--t-blue);">Car svc</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">29</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">30</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Anna 🎂</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">31</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Rent</span><span class="wring"></span></span>
+              <span class="c"><span class="n out">1</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>Every mark answers "what kind of time is this?"</strong> Recurring rhythms (daily
+        dishwasher, every-other-day garden) recede into faint ticks at the cell floor — present, never
+        loud. Weekly recurrences render as a hollow ring that visibly repeats down the Friday column.
+        One-off moments get the only words on the grid: an auto-keyword clipped from the title. Multi-day
+        events run as a single band.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>The month becomes scannable prose.</b> "Dentist… Payday…
+          Sarah &amp; Deidra… Market… Rent" is the month, readable top to bottom, because rhythms no
+          longer camouflage the moments.</span></li>
+          <li><span class="pt-num">2</span><span><b>Detail lives behind the tap.</b> Selecting a day unfolds an
+          inline panel under its own week row — full titles, cadence, checkboxes — labeled
+          <em>rhythm</em> or <em>moment</em>. Close it and the calendar is all there is.</span></li>
+          <li><span class="pt-num">3</span><span><b>The parse is one line.</b> <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">item.cadence</code>
+          → tick (or ring if weekly); <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">eventAt / deadline</code>
+          → keyword chip; <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">eventEnd</code>
+          spanning days → band. The keyword is the title's first two significant words.</span></li>
+        </ul>
+        <p class="code-note">The calendar API already returns <code>kind</code> per entry and full items with
+        <code>cadence</code>/<code>eventAt</code>/<code>eventEnd</code>; the accordion is a conditional row
+        inserted after the selected week in <code>CalendarView.tsx</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECOMMENDATION ================= -->
+  <div class="verdict">
+    <div class="kicker">Recommendation</div>
+    <h2>C is the language, A is the camera</h2>
+    <div class="prose" style="margin-top: 10px;">
+      <p><strong>Concept C's grammar should exist in any version</strong> — ticks for rhythms, keywords for
+      moments, bands for spans, and the tap-to-expand day panel. It's what makes a words-on-the-grid
+      calendar readable instead of noisy, and the data model already supports it.</p>
+      <p><strong>Layer Concept A on top:</strong> the fisheye simply decides how much of that grammar each
+      week gets to speak — bars far away, whispers nearby, full chips under the lens. Together they're one
+      coherent page: a full month you never leave, that always spends its pixels where your attention
+      is.</p>
+      <p><strong>B is the wildcard.</strong> It's the most striking and the most opinionated — it gives up
+      aligned weekday columns. I'd build A + C first, then prototype B's width-weighting inside the
+      fisheye's focus week only, where the alignment loss costs least.</p>
+    </div>
+  </div>
+</div>
