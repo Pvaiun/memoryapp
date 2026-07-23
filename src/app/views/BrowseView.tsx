@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Cadence, Flavour, ItemView } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { isDoneForNow } from '../../shared/cadence';
+import { sleepDayDiffLocal } from '../../shared/dates';
 import { api, themeColor, FLAVOUR_ICONS } from '../api';
 
 // Browse (§6): the stable catalogue. Pure representation — no urgency, no
@@ -33,13 +34,13 @@ function loadOpen(): Record<string, boolean> {
 }
 
 // Compact date for the anchor column — no times (Calendar owns those), no
-// overdue styling (no judgement here).
+// overdue styling (no judgement here). Day distances are sleep-cycle days
+// (5am boundary, same as localDay).
 function fmtWhen(iso: string): string {
   const d = new Date(iso);
-  const now = new Date();
-  const days = Math.round((d.getTime() - now.getTime()) / 86_400_000);
-  if (Math.abs(days) < 1 && d.getDate() === now.getDate()) return 'today';
-  if (days >= 0 && days < 7) return d.toLocaleDateString([], { weekday: 'short' });
+  const days = sleepDayDiffLocal(d.getTime(), Date.now());
+  if (days === 0) return 'today';
+  if (days > 0 && days < 7) return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 

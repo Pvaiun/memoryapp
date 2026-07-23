@@ -10,6 +10,7 @@
 // Nothing else. If a card can't be said in this grammar, the cluster is wrong.
 
 import type { ItemView } from './types';
+import { sleepDayDiffLocal } from './dates';
 
 export type CardSegment =
   | { kind: 'text'; text: string }
@@ -110,8 +111,6 @@ export function deriveConstruction(items: ItemView[], firstStep: string | null):
 
 // ---------- bricks (§4): physical features, derived from the members ----------
 
-const DAY_MS = 86_400_000;
-
 // Span rail: a duration track for anything occupying a range of time.
 // Union of the bubble's multi-day event spans; frac is today's position.
 export interface SpanRailBrick {
@@ -137,7 +136,7 @@ export function deriveSpanRail(items: ItemView[], now: number): SpanRailBrick | 
 
 // Deadline notch: a corner countdown for the nearest HARD date.
 export interface DeadlineNotchBrick {
-  days: number; // calendar days from today; negative = overdue
+  days: number; // sleep-cycle days from today (5am boundary); negative = overdue
   label: string;
 }
 
@@ -148,7 +147,7 @@ export function deriveDeadlineNotch(items: ItemView[], now: number): DeadlineNot
     nearest = Math.min(nearest, new Date(it.deadline).getTime());
   }
   if (!isFinite(nearest)) return null;
-  const days = calDayDiff(nearest, now);
+  const days = sleepDayDiffLocal(nearest, now);
   if (days > 30) return null; // too far to be glanceable pressure
   const label = days < 0 ? 'overdue' : days === 0 ? 'today' : days === 1 ? '1 day' : `${days} days`;
   return { days, label };
@@ -180,12 +179,4 @@ export function anchorThemeName(items: ItemView[]): string | null {
 
 function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
-}
-
-function calDayDiff(t: number, now: number): number {
-  const a = new Date(t);
-  const b = new Date(now);
-  a.setHours(0, 0, 0, 0);
-  b.setHours(0, 0, 0, 0);
-  return Math.round((a.getTime() - b.getTime()) / DAY_MS);
 }

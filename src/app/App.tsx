@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ItemView, MapPayload } from '../shared/types';
 import type { CaptureResponse } from '../shared/types';
 import { isDoneForNow } from '../shared/cadence';
+import { EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
@@ -490,7 +491,13 @@ export default function App() {
           <div>
             <h1>Memory</h1>
             <div className="day">
-              {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+              {/* The sleep-cycle day (5am boundary): at 1am the header still
+                  names the evening's date, matching the map it sits above. */}
+              {new Date(Date.now() - EARLY_MORNING_CUTOFF_MINUTES * 60_000).toLocaleDateString([], {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })}
             </div>
           </div>
         </div>

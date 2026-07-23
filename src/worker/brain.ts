@@ -11,7 +11,13 @@ import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
-import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
+import {
+  EARLY_MORNING_CUTOFF_MINUTES,
+  refineWithSourceTime,
+  resolveDatePhrase,
+  sleepDayDiff,
+  sleepDayOf,
+} from '../shared/dates';
 import { llmParse } from './capture';
 import { embed } from './embeddings';
 import {
@@ -195,10 +201,10 @@ export async function rebuildMap(
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
-      proposed = fallbackBubbles(items, now);
+      proposed = fallbackBubbles(items, now, tz);
     }
   } else {
-    proposed = fallbackBubbles(items, now);
+    proposed = fallbackBubbles(items, now, tz);
   }
 
   // Code-side prominence floors mirroring the prompt's tier floors — the
@@ -261,7 +267,7 @@ export async function rebuildMap(
   const missed = items.filter((i) => !surfacedIds.has(i.id) && isTodayRelevant(i, now, tz));
   if (missed.length) {
     const bubbleId = newId();
-    const sentence = composeSentence(missed, now).slice(0, 600);
+    const sentence = composeSentence(missed, now, tz).slice(0, 600);
     await db
       .prepare(
         'INSERT INTO bubbles (id, day, name, kind, prominence, reason, sentence, first_step, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -410,7 +416,9 @@ export async function addFirstStep(
 
 // Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
 // or happening today must reach the map no matter what the Brain decides.
-// Pure so it's unit-testable; tzOffsetMinutes defines the user's "today".
+// Pure so it's unit-testable; tzOffsetMinutes defines the user's "today" —
+// the sleep-cycle day (5am → 5am, the app's one day system), so a deadline
+// at 1am still counts as the evening before it.
 export function isTodayRelevant(
   i: {
     status: string;
@@ -426,8 +434,8 @@ export function isTodayRelevant(
 ): boolean {
   if (i.status !== 'active') return false;
   const DAY = 86_400_000;
-  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
-  const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
+  const dayStartUtc =
+    sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
   if (i.deadline && new Date(i.deadline).getTime() < dayEndUtc) return true; // due today or overdue
   if (i.eventAt) {
@@ -454,8 +462,8 @@ export function cadenceOccurrenceToday(
 ): Date | null {
   if (!i.cadence) return null;
   const DAY = 86_400_000;
-  const localNow = now.getTime() + tzOffsetMinutes * 60_000;
-  const dayStartUtc = Math.floor(localNow / DAY) * DAY - tzOffsetMinutes * 60_000;
+  const dayStartUtc =
+    sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
   // Same predicate that derives ItemView.doneToday — the checkbox and the
   // Brain's release must agree on what "done for today" means (sleep-cycle
@@ -475,8 +483,11 @@ export function cadenceOccurrenceToday(
 // medium effort, never recaptured); only deviations are written, so the token
 // cost is signal, not structure.
 export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): string {
+  // All day distances are sleep-cycle days (5am boundary) — the same system
+  // the UI's countdown badges use, so the Brain's "in five days" can never
+  // disagree with the notch on the card it wrote.
   const relDays = (iso: string): string => {
-    const d = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+    const d = sleepDayDiff(new Date(iso).getTime(), now.getTime(), tzOffsetMinutes);
     return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
   };
   const parts: string[] = [];
@@ -494,13 +505,13 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     parts.push(`slipping=${neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now)}d`);
   // Days since first capture — without it, a task that's been sitting three
   // weeks reads identically to one from yesterday, and "piling up" is invisible.
-  const ageDays = Math.floor((now.getTime() - new Date(i.createdAt).getTime()) / 86_400_000);
+  const ageDays = sleepDayDiff(now.getTime(), new Date(i.createdAt).getTime(), tzOffsetMinutes);
   if (ageDays >= 1) parts.push(`age=${ageDays}d`);
   parts.push(`prio=${Math.round(i.effectivePriority * 100) / 100}`);
   if (i.optionality === 'nice') parts.push('optional');
   if (i.effort !== 'medium') parts.push(i.effort === 'large' ? 'big-effort' : 'quick');
   if (i.lastSurfacedAt) {
-    const d = Math.round((now.getTime() - new Date(i.lastSurfacedAt).getTime()) / 86_400_000);
+    const d = sleepDayDiff(now.getTime(), new Date(i.lastSurfacedAt).getTime(), tzOffsetMinutes);
     parts.push(`seen=${d === 0 ? 'today' : `${d}d-ago`}`);
   } else {
     parts.push('new');
@@ -512,7 +523,7 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     // it stays the Brain's call.
     let when = '';
     if (i.boostUpdatedAt) {
-      const d = Math.round((now.getTime() - new Date(i.boostUpdatedAt).getTime()) / 86_400_000);
+      const d = sleepDayDiff(now.getTime(), new Date(i.boostUpdatedAt).getTime(), tzOffsetMinutes);
       when = `(${d <= 0 ? 'today' : `${d}d-ago`})`;
     }
     parts.push(`recaptured=${recaptures}${when}`);
@@ -812,8 +823,8 @@ async function llmBuildBubbles(env: Env, input: BrainInput, system: string): Pro
 
 // ---------- Deterministic fallback map (no LLM configured) ----------
 
-function shortDate(iso: string, now: Date): string {
-  const days = Math.round((new Date(iso).getTime() - now.getTime()) / 86_400_000);
+function shortDate(iso: string, now: Date, tzOffsetMinutes: number): string {
+  const days = sleepDayDiff(new Date(iso).getTime(), now.getTime(), tzOffsetMinutes);
   if (days < 0) return `${-days}d overdue`;
   if (days === 0) return 'today';
   if (days === 1) return 'tomorrow';
@@ -823,11 +834,11 @@ function shortDate(iso: string, now: Date): string {
 
 // Card-grammar sentence without an LLM: active DOs become chips (max 3),
 // everything else bold titles, dates bold — mechanical but in register.
-function composeSentence(items: ItemView[], now: Date, lead = ''): string {
+function composeSentence(items: ItemView[], now: Date, tzOffsetMinutes: number, lead = ''): string {
   let chips = 0;
   const parts = items.slice(0, 3).map((i) => {
     const when = i.deadline ?? i.eventAt;
-    const date = when ? ` **${shortDate(when, now)}**` : '';
+    const date = when ? ` **${shortDate(when, now, tzOffsetMinutes)}**` : '';
     if (i.type === 'DO' && i.status === 'active' && chips < 3) {
       chips += 1;
       return `[${i.title}](${i.id})${date ? ` by${date}` : ''}`;
@@ -849,15 +860,23 @@ function proposed(
   return { name, kind, prominence, reason: stripSentence(sentence), sentence, firstStep, itemIds: items.map((i) => i.id) };
 }
 
-function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
+function fallbackBubbles(items: ItemView[], now: Date, tzOffsetMinutes: number): ProposedBubble[] {
   const bubbles: ProposedBubble[] = [];
   const dueSoon = items.filter(
-    (i) => i.type === 'DO' && i.deadline && new Date(i.deadline).getTime() - now.getTime() < 7 * 86_400_000,
+    (i) => i.type === 'DO' && i.deadline && sleepDayDiff(new Date(i.deadline).getTime(), now.getTime(), tzOffsetMinutes) < 7,
   );
   if (dueSoon.length) {
-    const soonest = Math.min(...dueSoon.map((i) => new Date(i.deadline!).getTime() - now.getTime()));
+    const soonest = Math.min(
+      ...dueSoon.map((i) => sleepDayDiff(new Date(i.deadline!).getTime(), now.getTime(), tzOffsetMinutes)),
+    );
     bubbles.push(
-      proposed('Due soon', 'situation', soonest < 86_400_000 ? 0.95 : 0.7, composeSentence(dueSoon, now), dueSoon),
+      proposed(
+        'Due soon',
+        'situation',
+        soonest <= 0 ? 0.95 : 0.7,
+        composeSentence(dueSoon, now, tzOffsetMinutes),
+        dueSoon,
+      ),
     );
   }
   const neglected = items.filter((i) => i.neglected && !dueSoon.includes(i));
@@ -867,23 +886,23 @@ function fallbackBubbles(items: ItemView[], now: Date): ProposedBubble[] {
         'Rhythms to pick back up',
         'situation',
         0.5,
-        composeSentence(neglected, now, 'The rhythm slipped — '),
+        composeSentence(neglected, now, tzOffsetMinutes, 'The rhythm slipped — '),
         neglected,
       ),
     );
   }
   const upcoming = items.filter(
     (i) => i.type === 'HAPPEN' && i.eventAt && new Date(i.eventAt).getTime() > now.getTime() - 86_400_000 &&
-      new Date(i.eventAt).getTime() - now.getTime() < 14 * 86_400_000,
+      sleepDayDiff(new Date(i.eventAt).getTime(), now.getTime(), tzOffsetMinutes) < 14,
   );
   if (upcoming.length) {
-    bubbles.push(proposed('Coming up', 'situation', 0.55, composeSentence(upcoming, now), upcoming));
+    bubbles.push(proposed('Coming up', 'situation', 0.55, composeSentence(upcoming, now, tzOffsetMinutes), upcoming));
   }
   const important = items.filter(
     (i) => i.effectivePriority >= 0.65 && !dueSoon.includes(i) && !neglected.includes(i) && !upcoming.includes(i) && i.type !== 'KNOW',
   );
   if (important.length) {
-    bubbles.push(proposed('Important', 'situation', 0.45, composeSentence(important, now), important));
+    bubbles.push(proposed('Important', 'situation', 0.45, composeSentence(important, now, tzOffsetMinutes), important));
   }
   // Quiet rehearsal rotation (§9.2): a few important, least-recently-seen
   // KNOWs. Reference facts (low priority, never recaptured) stay out — they

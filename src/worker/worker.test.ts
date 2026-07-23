@@ -121,6 +121,14 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
     // 03:30Z July 21 is 23:30 July 20 at UTC-4 — still today locally.
     expect(isTodayRelevant({ ...base, deadline: '2026-07-21T03:30:00Z' }, now, tz)).toBe(true);
   });
+  it('the dishes-at-1am case: at 10pm, a 1am deadline is still today (sleep-cycle day)', () => {
+    // Monday July 20 10pm local (Tue 02:00Z); "do the dishes at 1am" resolves
+    // to Tuesday 01:00 local — before the 5am rollover, so today's floor.
+    const eveningNow = new Date('2026-07-21T02:00:00Z');
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T05:00:00Z' }, eveningNow, tz)).toBe(true);
+    // 6am local is past the rollover — tomorrow's business.
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T10:00:00Z' }, eveningNow, tz)).toBe(false);
+  });
 
   // The cadence hole: recurring items have neither deadline nor eventAt, so
   // the floor must reach them through occurrence math (now = Monday Jul 20).
@@ -257,8 +265,10 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
   } as unknown as ItemView;
 
   it('a bare item writes only type, title, age, prio, and new — no null boilerplate', () => {
+    // Age counts sleep-cycle days: created Jul 1 00:00Z is before the 5am
+    // cutoff, so it belongs to Jun 30 — 20 sleep days before Jul 20.
     const line = brainItemLine(baseView, now);
-    expect(line).toBe('DO "Call grandma" age=19d prio=0.5 new');
+    expect(line).toBe('DO "Call grandma" age=20d prio=0.5 new');
   });
 
   it('items captured today omit age', () => {
@@ -302,6 +312,27 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(
       brainItemLine({ ...baseView, cadence: daily, lastCompletedAt: '2026-07-20T11:00:00Z' } as ItemView, now, -240),
     ).not.toContain('happens=');
+  });
+
+  it('due=+Nd counts sleep-cycle days, matching the UI countdown badges', () => {
+    // 9am local July 23 (UTC-4); hard deadline 10pm local July 27. That is
+    // 4.5×24h away — the old rolling round said +5d while the Descent notch
+    // said 4 days. Sleep-day counting: 4, everywhere.
+    const line = brainItemLine(
+      { ...baseView, deadline: '2026-07-28T02:00:00Z', deadlineHardness: 'hard' } as ItemView,
+      new Date('2026-07-23T13:00:00Z'),
+      -240,
+    );
+    expect(line).toContain('due=+4d(hard)');
+  });
+  it('a 1am deadline is due=today through the evening before it', () => {
+    // 10pm local July 23; due 1am local July 24 — same sleep day.
+    const line = brainItemLine(
+      { ...baseView, deadline: '2026-07-24T05:00:00Z', deadlineHardness: 'hard' } as ItemView,
+      new Date('2026-07-24T02:00:00Z'),
+      -240,
+    );
+    expect(line).toContain('due=today(hard)');
   });
 
   it('event ranges and recaptures render', () => {
