@@ -60,6 +60,25 @@ export default function App() {
       /* private mode — the choice just won't persist */
     }
   }, []);
+  // Descent fall speed (§8 settle-sink): how fast a resolved bubble drops to
+  // the floor. 1.0 is the design default; higher is snappier, lower is a
+  // slow, satisfying glide. Persisted per device like the Now view.
+  const [fallSpeed, setFallSpeedState] = useState<number>(() => {
+    try {
+      const v = parseFloat(localStorage.getItem('memory.fallSpeed') ?? '');
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const setFallSpeed = useCallback((v: number) => {
+    setFallSpeedState(v);
+    try {
+      localStorage.setItem('memory.fallSpeed', String(v));
+    } catch {
+      /* private mode — the choice just won't persist */
+    }
+  }, []);
   const [building, setBuilding] = useState(false);
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
@@ -489,6 +508,7 @@ export default function App() {
           <MapView
             map={map}
             nowView={nowView}
+            fallSpeed={fallSpeed}
             onOpenItem={setOpenItem}
             onToggleComplete={toggleComplete}
             onAddFirstStep={addFirstStep}
@@ -558,6 +578,8 @@ export default function App() {
         <SettingsSheet
           pushOn={pushOn}
           nowView={nowView}
+          fallSpeed={fallSpeed}
+          onSetFallSpeed={setFallSpeed}
           onSetNowView={setNowView}
           onEnablePush={enablePush}
           onRebuild={() => organizeNow()}

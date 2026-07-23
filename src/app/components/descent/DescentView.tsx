@@ -66,6 +66,11 @@ const PASS_DROP_FRAC = 0.62; // extra downward travel during the pass, × vh
 const SETTLE_HYST = 30; // camera units of drift that still return backward
 
 const STORAGE_KEY = 'memory.descent.prev';
+// Settle-sink glide at fallSpeed 1.0; the setting scales it (dur = BASE /
+// speed), clamped so extremes stay legible and never instant.
+const BASE_FALL_MS = 900;
+const FALL_MS_MIN = 150;
+const FALL_MS_MAX = 4000;
 // Focus owns the viewport (§6): anything deeper than half a spacing step has
 // already collapsed to its far form — rim color plus cropped bold tokens.
 // FAR_END stays under the spacing floor (engine MIN_SPACING) so a card at
@@ -127,6 +132,7 @@ export default function DescentView({
   builtAt,
   capturedSpawnNonce,
   attentionId,
+  fallSpeed = 1,
   onOpen,
   onToggleComplete,
   onAddFirstStep,
@@ -141,6 +147,9 @@ export default function DescentView({
   // the bubble whose sheet is open — the user's attention, for the settle
   // follow even when the camera's engaged card has drifted elsewhere
   attentionId?: string | null;
+  // settle-sink speed multiplier (Settings): 1 = design default, higher is
+  // snappier, lower is a slow glide
+  fallSpeed?: number;
   onOpen: (bubble: Bubble) => void;
   onToggleComplete: (item: ItemView) => void;
   onAddFirstStep?: (bubbleId: string, title: string) => void;
@@ -260,6 +269,9 @@ export default function DescentView({
   reducedRef.current = reduced;
   const attentionIdRef = useRef(attentionId ?? null);
   attentionIdRef.current = attentionId ?? null;
+  // Live fall duration (ms), read at the moment a bubble settles.
+  const fallMsRef = useRef(BASE_FALL_MS);
+  fallMsRef.current = clamp(Math.round(BASE_FALL_MS / (fallSpeed || 1)), FALL_MS_MIN, FALL_MS_MAX);
   const infosRef = useRef(infos);
   infosRef.current = infos;
   // rest positions for directional settle, in camera units, ascending:
@@ -721,7 +733,7 @@ export default function DescentView({
         reducedRef.current
       )
         continue;
-      const dur = 900;
+      const dur = fallMsRef.current;
       zpAnimsRef.current.set(t.id, { from: fromZp, t0: nowT, dur });
       dotSlidePendingRef.current = true;
       // Follow when the settling bubble holds the user's attention: engaged
@@ -926,7 +938,7 @@ export default function DescentView({
         const el = dotElsRef.current.get(t.id);
         if (el && prev !== undefined && Math.abs(prev - y) > 2) {
           el.animate([{ transform: `translateY(${(prev - y).toFixed(1)}px)` }, { transform: 'translateY(0)' }], {
-            duration: 900,
+            duration: fallMsRef.current,
             easing: 'ease-in-out',
           });
         }
