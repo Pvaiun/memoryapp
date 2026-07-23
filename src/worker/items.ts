@@ -233,6 +233,7 @@ export interface ItemEdits {
   eventAtPhrase?: string | null;
   eventEnd?: string | null;
   alertLeadMinutes?: number | null;
+  showOnCalendar?: boolean;
   priority?: number | null; // user edit; null clears the override
   flavourOverride?: Flavour | null;
   themes?: string[];
@@ -275,6 +276,7 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   }
   if (edits.eventEnd !== undefined) set('event_end', 'eventEnd', edits.eventEnd);
   if (edits.alertLeadMinutes !== undefined) set('alert_lead_minutes', 'alertLeadMinutes', edits.alertLeadMinutes);
+  if (edits.showOnCalendar !== undefined) set('show_on_calendar', 'showOnCalendar', edits.showOnCalendar ? 1 : 0);
   // Rescheduling a passed/missed event to a future moment reopens it — the
   // clock's verdict covered the old moment only. Dismissed stays dismissed:
   // that was a decision, and reviving it takes an explicit Restore.
@@ -385,6 +387,10 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
   for (const item of items) {
     if (item.type === 'HAPPEN' && item.eventAt) {
       if (item.cadence) {
+        // Recurrences only paint the calendar when they've earned it
+        // (show_on_calendar): therapy yes, garbage day no. One-offs below
+        // are unconditional — the flag never hides a dated moment.
+        if (!item.showOnCalendar) continue;
         for (const occ of occurrencesBetween(item.cadence, item.eventAt, from, to)) {
           entries.push({ itemId: item.id, date: occ.toISOString(), kind: 'occurrence' });
           used.add(item.id);
@@ -411,7 +417,7 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
       }
       // Recurring DOs with a time anchor also render per-occurrence. atTime is
       // user-local, so the occurrence walk runs in the user's frame.
-      if (item.cadence?.atTime) {
+      if (item.cadence?.atTime && item.showOnCalendar) {
         for (const occ of atTimeOccurrencesBetween(item.cadence, item.createdAt, from, to, tz)) {
           entries.push({ itemId: item.id, date: occ.toISOString(), kind: 'occurrence' });
           used.add(item.id);
