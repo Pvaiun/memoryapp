@@ -12,8 +12,8 @@ import {
   withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
-import { eventPassed, isDoneForNow, nextAtTimeOccurrence } from '../../../shared/cadence';
-import { themeColor, tzOffsetMinutes } from '../../api';
+import { eventPassed, isDoneForNow } from '../../../shared/cadence';
+import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
 import {
@@ -1033,55 +1033,6 @@ export default function DescentView({
       );
     });
 
-  // Captured Today reads as a little log, not one utterance: each fresh
-  // capture on its own row (§9.1). DOs keep their live checkbox chip;
-  // facts/events show as bold tokens. When the capture carries a time — an
-  // event, a timed deadline, a set rhythm — it's shown as due, inline in the
-  // label. (Undated captures don't reach this bucket; date-only deadlines,
-  // stored at noon, carry no time to show.)
-  const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const dueLabel = (item: ItemView): string | null => {
-    if (item.type === 'HAPPEN' && item.eventAt) return fmtTime(item.eventAt);
-    if (item.cadence?.atTime)
-      return fmtTime(
-        nextAtTimeOccurrence(item.cadence, item.eventAt ?? item.createdAt, new Date(), tzOffsetMinutes()).toISOString(),
-      );
-    if (item.deadline && !item.deadline.includes('T12:00:00')) return fmtTime(item.deadline);
-    return null;
-  };
-  const renderCaptured = (info: CardInfo) => (
-    <span className="dsc-cap-list">
-      {info.members.map((item) => {
-        const done = isDoneForNow(item);
-        const due = dueLabel(item);
-        const label = (
-          <>
-            {item.title}
-            {due && <span className="dsc-chip-due"> · {due}</span>}
-          </>
-        );
-        return item.type === 'DO' ? (
-          <span
-            key={item.id}
-            role="checkbox"
-            aria-checked={done}
-            className={`dsc-chip-tok${done ? ' done' : ''}`}
-            onClick={(e) => onChipTap(e, item, info.bubble.id)}
-          >
-            <span className="dsc-box" aria-hidden>
-              {done ? '✓' : ''}
-            </span>
-            {label}
-          </span>
-        ) : (
-          <b className="dsc-tok" key={item.id}>
-            {label}
-          </b>
-        );
-      })}
-    </span>
-  );
-
   return (
     <div className="dsc-viewport" ref={viewportRef}>
       {vh > 0 && (
@@ -1140,8 +1091,6 @@ export default function DescentView({
                               <>
                                 <b className="dsc-tok">{b.name}</b> — {info.settledWord}.
                               </>
-                            ) : captured ? (
-                              renderCaptured(info)
                             ) : (
                               renderSegments(info)
                             )}
