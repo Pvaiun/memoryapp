@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import type { ItemView } from './types';
+import { describe, expect, it, vi } from 'vitest';
+import type { Bubble, ItemView } from './types';
+import { bubbleStatus } from '../app/components/bubbleStatus';
 import {
   anchorThemeName,
   deriveConstruction,
@@ -197,6 +198,26 @@ describe('bricks', () => {
       NOW,
     );
     expect(notch).toEqual({ days: 5, label: '5 days' });
+  });
+
+  it('the status chip and the deadline notch never disagree on the day-count', () => {
+    // The regression: chip used ceil(raw) and the notch used calendar days, so
+    // the same deadline read "5 days" in the classic chip and "4 DAYS" in the
+    // descent notch. 4.3 days out is exactly where ceil (5) and calendar (4)
+    // split; both must now say 4.
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    try {
+      const deadline = new Date(NOW + 4.3 * DAY_MS).toISOString();
+      const it = item({ id: 'd', deadline, deadlineHardness: 'hard' });
+      const notch = deriveDeadlineNotch([it], NOW)!;
+      const bubble = { id: 'b', kind: 'situation', prominence: 0.4, itemIds: ['d'] } as unknown as Bubble;
+      const status = bubbleStatus(bubble, { d: it });
+      expect(status.label).toBe(notch.label);
+      expect(notch.label).toBe('4 days');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('no hard deadline → no notch; completed items are invisible to bricks', () => {

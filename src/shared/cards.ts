@@ -182,7 +182,12 @@ function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
 
-function calDayDiff(t: number, now: number): number {
+// Calendar-day distance (local): how many dates ahead the target is, counting
+// midnight boundaries — NOT rounded/ceiled raw hours. THE single day-count for
+// everything the user sees (the deadline notch and the status chip both call
+// this), so two pieces of card furniture can never show different numbers for
+// the same deadline. Negative = in the past.
+export function calDayDiff(t: number, now: number): number {
   const a = new Date(t);
   const b = new Date(now);
   a.setHours(0, 0, 0, 0);

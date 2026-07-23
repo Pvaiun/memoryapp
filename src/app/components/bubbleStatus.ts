@@ -1,4 +1,5 @@
 import type { Bubble, ItemView } from '../../shared/types';
+import { calDayDiff } from '../../shared/cards';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
 // bubble's ACTIVE items, so the scale needs no legend and completing the
@@ -22,16 +23,6 @@ export interface BubbleStatus {
   tone: Tone;
   color: string;
   label: string;
-}
-
-// Calendar-day distance (local), so an event at 9am tomorrow says "tomorrow"
-// even when it's under 24h away.
-function calDayDiff(t: number, now: number): number {
-  const a = new Date(t);
-  const b = new Date(now);
-  a.setHours(0, 0, 0, 0);
-  b.setHours(0, 0, 0, 0);
-  return Math.round((a.getTime() - b.getTime()) / DAY_MS);
 }
 
 function fmtEventDay(t: number, now: number): string {
@@ -84,8 +75,11 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
     return { tone: 'red', color: TONE_COLORS.red, label };
   }
   if (soonestDue < Infinity) {
-    const days = Math.max(2, Math.ceil((soonestDue - now) / DAY_MS));
-    return { tone: 'amber', color: TONE_COLORS.amber, label: `${days} days` };
+    // Same calendar-day count as the deadline notch — ceil(raw) drifted a full
+    // day off the notch for the identical deadline (classic "5 days" vs notch
+    // "4 DAYS"). soonestDue is >24h out (dueToday caught nearer), so ≥1.
+    const days = calDayDiff(soonestDue, now);
+    return { tone: 'amber', color: TONE_COLORS.amber, label: days === 1 ? '1 day' : `${days} days` };
   }
   if (slipped) return { tone: 'amber', color: TONE_COLORS.amber, label: 'slipped' };
   if (bubble.prominence >= 0.7) return { tone: 'amber', color: TONE_COLORS.amber, label: 'pressing' };
