@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AffectTag, Cadence, Flavour, ItemView } from '../../shared/types';
 import { AFFECT_TAGS } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
-import { isDoneForNow } from '../../shared/cadence';
+import { eventPassed, isDoneForNow } from '../../shared/cadence';
 import { api } from '../api';
 
 // The review/edit surface (§10.2): every AI-inferred field independently
@@ -90,6 +90,18 @@ export default function ItemSheet({
     onDeleted(item.id);
     onClose();
   };
+
+  const applyExit = async (call: Promise<{ item: ItemView }>) => {
+    const { item: fresh } = await call;
+    onChanged(fresh);
+    onClose();
+  };
+
+  // Lifecycle exits (per flavour). The positive exit is 'completed' everywhere
+  // it exists, labelled in the flavour's own words; events have no positive
+  // exit — they pass on their own (neutral) or get flagged missed (the fail).
+  const oneShotEvent = item.type === 'HAPPEN' && !item.cadence;
+  const spentEvent = oneShotEvent && (item.status === 'passed' || eventPassed(item, Date.now()));
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -283,14 +295,27 @@ export default function ItemSheet({
           <button className="danger" onClick={reject}>
             Remove
           </button>
-          {item.type === 'DO' && isDoneForNow(item) && (
-            <button
-              onClick={async () => {
-                const { item: fresh } = await api.uncompleteItem(item.id);
-                onChanged(fresh);
-                onClose();
-              }}
-            >
+          {item.status === 'active' && item.type === 'KNOW' && (
+            <button onClick={() => applyExit(api.completeItem(item.id))}>Got it</button>
+          )}
+          {item.status === 'active' && item.type === 'DO' && item.cadence && (
+            <button onClick={() => applyExit(api.completeItem(item.id, true))}>Achieved</button>
+          )}
+          {/* A spent event can't be cancelled anymore — its exits are pass
+              (automatic) or missed; Dismiss covers everything still open. */}
+          {item.status === 'active' && !spentEvent && (
+            <button onClick={() => applyExit(api.dismissItem(item.id))}>Dismiss</button>
+          )}
+          {(item.status === 'passed' || (item.status === 'active' && spentEvent)) && (
+            <button onClick={() => applyExit(api.missItem(item.id))}>Missed it</button>
+          )}
+          {(item.status === 'dismissed' || item.status === 'missed') && (
+            <button onClick={() => applyExit(api.reopenItem(item.id))}>
+              {item.status === 'missed' ? 'Not missed' : 'Restore'}
+            </button>
+          )}
+          {(item.status === 'completed' || (item.type === 'DO' && item.status === 'active' && isDoneForNow(item))) && (
+            <button onClick={() => applyExit(api.uncompleteItem(item.id))}>
               {item.status === 'completed' ? 'Un-complete' : 'Not done today'}
             </button>
           )}

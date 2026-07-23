@@ -1,7 +1,7 @@
 import type { AffectTag, Cadence, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
-import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, occurrencesBetween } from '../shared/cadence';
-import { resolveDatePhrase } from '../shared/dates';
+import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, occurrencesBetween } from '../shared/cadence';
+import { resolveDatePhrase, sleepDayOf } from '../shared/dates';
 import type { Env } from './env';
 import { embed, FALLBACK_DIMS } from './embeddings';
 import {
@@ -22,31 +22,44 @@ import {
 // Item state changes. Every change appends a Tier-0 event (§7.1); corrections
 // append compensating events — the log never pretends a misfire didn't happen.
 
-export async function completeItem(env: Env, id: string): Promise<ItemView | null> {
+// The positive exit, labelled per flavour in the UI (Done / Achieved / Got
+// it). DOs and KNOWs only — a HAPPEN has no "attended": its neutral default
+// is 'passed' (sweepPassedEvents) and its explicit fail is 'missed'.
+// terminal: retire a recurring DO for good ("goal achieved") instead of
+// checking off today's occurrence.
+export async function completeItem(env: Env, id: string, opts: { terminal?: boolean } = {}): Promise<ItemView | null> {
   const db = env.DB;
   const item = await getItem(db, id);
-  if (!item || item.type !== 'DO') return null;
+  if (!item || item.type === 'HAPPEN') return null;
   const tz = await getTzOffset(db);
+  const doneToday = !!item.cadence && completedWithinSleepDay(item.lastCompletedAt, new Date(), tz);
   // A recurring DO already done today can't be completed again — the second
   // tap is the user toggling today's checkbox off, not a second completion.
   // Guarding here (not just in the UI) is what stops a stale client from
   // inflating completion_count and streak with repeat taps.
-  if (item.cadence && completedWithinSleepDay(item.lastCompletedAt, new Date(), tz)) {
+  if (item.cadence && !opts.terminal && doneToday) {
     return uncompleteItem(env, id);
   }
   const ts = nowIso();
+  const status = item.cadence && !opts.terminal ? 'active' : 'completed';
   // Streak (§7.2): consecutive completions within cadence rhythm; simple bump/reset.
   const withinRhythm =
     !item.cadence || !item.lastCompletedAt
       ? true
       : Date.now() - new Date(item.lastCompletedAt).getTime() < 2 * cadencePeriodMs(item.cadence);
   await updateItemFields(db, id, {
-    // A recurring DO stays active (cadence is a rhythm, not a one-shot);
-    // a one-shot DO is completed.
-    status: item.cadence ? 'active' : 'completed',
-    last_completed_at: ts,
-    completion_count: item.completionCount + 1,
-    streak: withinRhythm ? item.streak + 1 : 1,
+    // A recurring DO stays active per occurrence (cadence is a rhythm, not a
+    // one-shot) unless the user retires it terminally.
+    status,
+    // Retiring a goal already checked off today closes the status without
+    // counting a second occurrence.
+    ...(opts.terminal && doneToday
+      ? {}
+      : {
+          last_completed_at: ts,
+          completion_count: item.completionCount + 1,
+          streak: withinRhythm ? item.streak + 1 : 1,
+        }),
     // Completing clears accumulated recapture boost (§9.3).
     priority_boost: 0,
   });
@@ -56,7 +69,10 @@ export async function completeItem(env: Env, id: string): Promise<ItemView | nul
     itemId: id,
     payload: {
       before: { status: item.status, lastCompletedAt: item.lastCompletedAt, streak: item.streak },
-      after: { status: item.cadence ? 'active' : 'completed' },
+      after: { status },
+      // counted:false → this event closed the status without marking a new
+      // occurrence; uncomplete must not decrement the completion count.
+      ...(opts.terminal ? { terminal: true, counted: !doneToday } : {}),
     },
   });
   const fresh = await getItem(db, id);
@@ -73,6 +89,7 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
   // behaviour.
   let prevCompletedAt: string | null = null;
   let prevStreak: number | null = null;
+  let counted = true;
   if (item.lastCompletedAt) {
     const ev = await db
       .prepare("SELECT payload FROM events WHERE item_id = ? AND type = 'completed' ORDER BY ts DESC LIMIT 1")
@@ -80,10 +97,13 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
       .first<{ payload: string }>();
     if (ev) {
       try {
-        const before = (JSON.parse(ev.payload) as { before?: { lastCompletedAt?: string | null; streak?: number } })
-          .before;
-        prevCompletedAt = before?.lastCompletedAt ?? null;
-        if (typeof before?.streak === 'number') prevStreak = before.streak;
+        const p = JSON.parse(ev.payload) as {
+          before?: { lastCompletedAt?: string | null; streak?: number };
+          counted?: boolean;
+        };
+        prevCompletedAt = p.before?.lastCompletedAt ?? null;
+        if (typeof p.before?.streak === 'number') prevStreak = p.before.streak;
+        counted = p.counted !== false;
       } catch {
         // Unparseable legacy payload — clear, as before.
       }
@@ -91,9 +111,15 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
   }
   await updateItemFields(db, id, {
     status: 'active',
-    completion_count: Math.max(0, item.completionCount - 1),
-    streak: prevStreak ?? Math.max(0, item.streak - 1),
-    last_completed_at: prevCompletedAt,
+    // A terminal achieve on an already-done-today goal only closed the status
+    // (counted:false) — reverting it must not touch the occurrence anchors.
+    ...(counted
+      ? {
+          completion_count: Math.max(0, item.completionCount - 1),
+          streak: prevStreak ?? Math.max(0, item.streak - 1),
+          last_completed_at: prevCompletedAt,
+        }
+      : {}),
   });
   // Immutable correction model (§7.1): a compensating "reverted" event.
   await logEvent(db, 'user', 'completion_reverted', { itemId: id, payload: { before: { status: item.status }, after: { status: 'active' } } });
@@ -103,6 +129,8 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
 }
 
 // Reject/delete (§10.2): deletes that one item, everything else untouched.
+// Pure data hygiene (a mis-parse, a duplicate) — never a life signal; the
+// meaningful "let it go" exit is dismissItem.
 export async function rejectItem(env: Env, id: string): Promise<boolean> {
   const db = env.DB;
   const item = await getItem(db, id);
@@ -111,6 +139,84 @@ export async function rejectItem(env: Env, id: string): Promise<boolean> {
   await db.prepare('DELETE FROM items_fts WHERE item_id = ?').bind(id).run();
   await logEvent(db, 'user', 'rejected', { itemId: id, payload: { title: item.title } });
   return true;
+}
+
+// Dismiss: the user says this stopped mattering — a cancelled plan, a stale
+// note, a goal let go. A real decision, so it stays searchable and browsable
+// (unlike delete) and its event feeds the profile.
+export async function dismissItem(env: Env, id: string): Promise<ItemView | null> {
+  const db = env.DB;
+  const item = await getItem(db, id);
+  if (!item || item.status === 'deleted') return null;
+  await updateItemFields(db, id, { status: 'dismissed' });
+  await logEvent(db, 'user', 'dismissed', {
+    itemId: id,
+    payload: { before: { status: item.status }, after: { status: 'dismissed' }, title: item.title },
+  });
+  const fresh = await getItem(db, id);
+  return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
+}
+
+// Missed: the user's explicit "didn't make it" on a one-shot event — the one
+// exit an event needs the user for. Attendance is never asserted: an event
+// nobody flags simply becomes 'passed' (sweepPassedEvents), so the signal
+// stays uniform instead of depending on whether the user felt like logging.
+export async function missItem(env: Env, id: string): Promise<ItemView | null> {
+  const db = env.DB;
+  const item = await getItem(db, id);
+  if (!item || item.type !== 'HAPPEN' || item.cadence) return null;
+  if (item.status !== 'active' && item.status !== 'passed') return null;
+  // Nothing to miss before the moment arrives — the event must have started.
+  // (Started is enough: "I'm not going to make it" is real ten minutes in,
+  // before the grace hour lets eventPassed call it spent.)
+  if (!item.eventAt || new Date(item.eventAt).getTime() > Date.now()) return null;
+  await updateItemFields(db, id, { status: 'missed' });
+  await logEvent(db, 'user', 'missed', {
+    itemId: id,
+    payload: { before: { status: item.status }, after: { status: 'missed' }, title: item.title },
+  });
+  const fresh = await getItem(db, id);
+  return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
+}
+
+// Reopen a dismissed/passed/missed item (mis-taps happen; completed has its
+// own uncomplete path). Un-missing an event whose moment already elapsed goes
+// back to 'passed', not 'active' — the clock's verdict stands.
+export async function reopenItem(env: Env, id: string): Promise<ItemView | null> {
+  const db = env.DB;
+  const item = await getItem(db, id);
+  if (!item || !['dismissed', 'passed', 'missed'].includes(item.status)) return null;
+  const next = item.status === 'missed' && eventPassed(item, Date.now()) ? 'passed' : 'active';
+  await updateItemFields(db, id, { status: next });
+  // Immutable correction model (§7.1): a compensating event, not an erasure.
+  await logEvent(db, 'user', 'reopened', {
+    itemId: id,
+    payload: { before: { status: item.status }, after: { status: next } },
+  });
+  const fresh = await getItem(db, id);
+  return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
+}
+
+// Crystallize the map's derived "spent event" greying (eventPassed) into a
+// stored status once the moment fell in a PREVIOUS sleep-cycle day: the
+// evening's event stays visibly greyed all evening and closes overnight with
+// the daily rebuild. System-asserted and semantically neutral — 'passed'
+// claims nothing about what the user did, so its event never reaches the
+// profile. Recurring HAPPENs re-arm per occurrence and are never swept.
+export async function sweepPassedEvents(db: D1Database, now: Date, tzOffsetMinutes: number): Promise<void> {
+  const items = await listItems(db, { statuses: ['active'], types: ['HAPPEN'] });
+  const today = sleepDayOf(now.getTime(), tzOffsetMinutes);
+  for (const item of items) {
+    if (item.cadence || !item.eventAt) continue;
+    const end = new Date(item.eventEnd ?? item.eventAt).getTime();
+    if (sleepDayOf(end, tzOffsetMinutes) < today) {
+      await updateItemFields(db, item.id, { status: 'passed' });
+      await logEvent(db, 'system', 'passed', {
+        itemId: item.id,
+        payload: { before: { status: 'active' }, after: { status: 'passed' }, title: item.title },
+      });
+    }
+  }
 }
 
 export interface ItemEdits {
@@ -169,6 +275,16 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   }
   if (edits.eventEnd !== undefined) set('event_end', 'eventEnd', edits.eventEnd);
   if (edits.alertLeadMinutes !== undefined) set('alert_lead_minutes', 'alertLeadMinutes', edits.alertLeadMinutes);
+  // Rescheduling a passed/missed event to a future moment reopens it — the
+  // clock's verdict covered the old moment only. Dismissed stays dismissed:
+  // that was a decision, and reviving it takes an explicit Restore.
+  if (
+    (item.status === 'passed' || item.status === 'missed') &&
+    typeof fields.event_at === 'string' &&
+    new Date(fields.event_at).getTime() > Date.now()
+  ) {
+    set('status', 'status', 'active');
+  }
   if (edits.priority !== undefined) set('user_priority', 'userPriority', edits.priority);
   // Flavour override is presentation-only (§4): stored, wins over derived,
   // never mutates the behaviour-driving parameters above.
@@ -219,7 +335,9 @@ export async function browse(env: Env): Promise<{
 }> {
   const db = env.DB;
   const now = new Date();
-  const items = await listItems(db, { statuses: ['active', 'completed'] });
+  // Every closed status stays on the shelves (under the "past" reveal) —
+  // browse is the full record; only deletions vanish.
+  const items = await listItems(db, { statuses: ['active', 'completed', 'dismissed', 'passed', 'missed'] });
   const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
   for (const i of items) views[i.id] = toItemView(i, now, tz);
@@ -257,7 +375,9 @@ export async function calendar(env: Env, fromIso: string, toIso: string): Promis
   const now = new Date();
   const from = new Date(fromIso);
   const to = new Date(toIso);
-  const items = await listItems(db, { statuses: ['active', 'completed'] });
+  // Passed/missed events keep painting the days they happened on — a calendar
+  // without its past is no record. Dismissed = cancelled, so it leaves.
+  const items = await listItems(db, { statuses: ['active', 'completed', 'passed', 'missed'] });
   const tz = await getTzOffset(db);
   const entries: CalendarEntry[] = [];
   const used = new Set<string>();
@@ -356,7 +476,7 @@ export async function search(env: Env, query: string): Promise<{ itemIds: string
 
   if (!scores.size) return { itemIds: [], items: {} };
 
-  const all = await listItems(db, { statuses: ['active', 'completed'] });
+  const all = await listItems(db, { statuses: ['active', 'completed', 'dismissed', 'passed', 'missed'] });
   const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
   const ranked: { id: string; score: number }[] = [];

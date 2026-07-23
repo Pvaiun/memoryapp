@@ -445,18 +445,21 @@ describe('compactEventLines — churn compression for the profile builder', () =
   });
 
   it('the profile builder sees in-world events only — no app-admin mechanics', () => {
-    for (const t of ['captured', 'recaptured', 'completed', 'push_sent']) {
+    for (const t of ['captured', 'recaptured', 'completed', 'dismissed', 'missed', 'push_sent']) {
       expect(PROFILE_EVENT_TYPES).toContain(t);
     }
     // The librarian's restructures and the user's filing/editing gestures must
     // never reach the profile — describing them as habits fed capture a
-    // self-reinforcing "consolidate everything" signal.
-    for (const t of ['edited', 're_themed', 'theme_merged', 'theme_renamed', 'map_rebuilt']) {
+    // self-reinforcing "consolidate everything" signal. 'passed' is the clock,
+    // not behaviour, so it stays out too.
+    for (const t of ['edited', 're_themed', 'theme_merged', 'theme_renamed', 'map_rebuilt', 'passed']) {
       expect(PROFILE_EVENT_TYPES).not.toContain(t);
     }
   });
 
-  it('slow-burn rejections are NOT draft churn', () => {
+  it('deletions are hygiene, not signal — rejected lines never reach the profile', () => {
+    // Still fetched (they fuel the draft collapse) but a slow-burn delete is
+    // suppressed: the deliberate "let it go" signal is 'dismissed'.
     const lines = compactEventLines(
       [
         ev('2026-07-18T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
@@ -464,8 +467,22 @@ describe('compactEventLines — churn compression for the profile builder', () =
       ],
       titles,
     );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('created');
+  });
+
+  it('dismissed and missed pass through as plain lines', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-19T09:00:00Z', 'user', 'dismissed', 'b', { title: 'Make my will' }),
+        ev('2026-07-20T10:00:00Z', 'user', 'missed', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toContain('rejected');
+    expect(lines[0]).toContain('dismissed');
+    expect(lines[0]).toContain('Make my will');
+    expect(lines[1]).toContain('missed');
   });
 });
 

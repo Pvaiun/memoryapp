@@ -113,8 +113,14 @@ export const api = {
       body: JSON.stringify({ ...edits, tzOffsetMinutes: tzOffsetMinutes() }),
     }),
 
-  completeItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/complete`, { method: 'POST' }),
+  // terminal: retire a recurring DO for good ("goal achieved") instead of
+  // checking off today's occurrence.
+  completeItem: (id: string, terminal = false) =>
+    req<{ item: ItemView }>(`/api/items/${id}/complete`, { method: 'POST', body: JSON.stringify({ terminal }) }),
   uncompleteItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/uncomplete`, { method: 'POST' }),
+  dismissItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/dismiss`, { method: 'POST' }),
+  missItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/miss`, { method: 'POST' }),
+  reopenItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/reopen`, { method: 'POST' }),
   rejectItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}`, { method: 'DELETE' }),
 
   browse: () =>
