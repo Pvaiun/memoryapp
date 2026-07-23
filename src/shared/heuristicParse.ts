@@ -36,6 +36,14 @@ export function parseCadencePhrase(text: string): Cadence | null {
   return null;
 }
 
+// Calendar-worthiness fallback when no semantics are available (heuristic
+// parse, or the LLM omitted the field): frequency is the best proxy —
+// daily-scale rhythms are chores/habits, weekly-and-slower recurrences are
+// more likely commitments. The LLM decides semantically; the user overrides.
+export function defaultCalendarWorthy(cadence: Cadence | null): boolean {
+  return !cadence || cadence.freq !== 'daily';
+}
+
 function inferType(text: string, hasDate: boolean): BackendType {
   if (PING_CUES.test(text)) return 'DO';
   if (KNOW_CUES.test(text)) return 'KNOW';
@@ -106,6 +114,7 @@ export function heuristicParse(raw: string, ref: Date, tzOffsetMinutes?: number)
       priority: inferPriority(text),
       themes: [],
       affect: [],
+      calendarWorthy: defaultCalendarWorthy(cadence),
       matchItemId: null,
     };
   });
@@ -131,6 +140,7 @@ function emptyFallback(raw: string): ParsedItem {
     priority: 'medium',
     themes: [],
     affect: [],
+    calendarWorthy: true,
     matchItemId: null,
   };
 }

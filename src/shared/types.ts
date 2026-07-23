@@ -90,6 +90,13 @@ export interface Item {
   eventEnd: string | null;
   alertLeadMinutes: number | null; // per-event push lead override (§11.4)
 
+  // Whether a RECURRING item earns calendar presence (§6). One-offs always
+  // paint their dates; this gates cadence occurrences only — a bi-weekly
+  // therapy session belongs on the calendar, nightly dishwasher duty is
+  // ambient routine that would bury it. Parser-set at capture, user override
+  // in the item sheet wins.
+  showOnCalendar: boolean;
+
   // Priority (§9.3): base + boosts with decay; user edit wins.
   priorityBase: number; // 0..1 (low .25 / medium .5 / high .75)
   priorityBoost: number; // accumulated recapture boost, decays over time
@@ -187,6 +194,10 @@ export interface ParsedItem {
   priority: PriorityLevel;
   themes: string[]; // theme names — existing reused or new coined (§5)
   affect: AffectTag[]; // 0-2 tags; the phrasing's emotional colour, usually []
+  // For recurring items: does this recurrence belong on the calendar
+  // (commitment/appointment) or is it ambient routine (chore/habit)?
+  // Meaningless (always true) for one-offs.
+  calendarWorthy: boolean;
   // Recapture-match (§10.3): id of the existing item this capture re-refers to.
   matchItemId: string | null;
 }

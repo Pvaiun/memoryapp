@@ -26,6 +26,7 @@ interface ItemRow {
   event_at: string | null;
   event_end: string | null;
   alert_lead_minutes: number | null;
+  show_on_calendar: number;
   priority_base: number;
   priority_boost: number;
   boost_updated_at: string | null;
@@ -59,6 +60,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
     eventAt: row.event_at,
     eventEnd: row.event_end,
     alertLeadMinutes: row.alert_lead_minutes,
+    showOnCalendar: !!row.show_on_calendar,
     priorityBase: row.priority_base,
     priorityBoost: row.priority_boost,
     boostUpdatedAt: row.boost_updated_at,
@@ -168,6 +170,7 @@ export interface NewItemInput {
   eventAt?: string | null;
   eventEnd?: string | null;
   alertLeadMinutes?: number | null;
+  showOnCalendar?: boolean;
   priorityBase?: number;
   parseConfidence?: number;
   captureId?: string | null;
@@ -183,12 +186,12 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
       `INSERT INTO items (
         id, type, title, raw_texts, status,
         deadline, deadline_hardness, cadence, optionality, effort, ping_natured,
-        event_at, event_end, alert_lead_minutes,
+        event_at, event_end, alert_lead_minutes, show_on_calendar,
         priority_base, priority_boost, boost_updated_at, user_priority,
         flavour_override, created_at, updated_at, last_touched_at,
         last_completed_at, completion_count, streak, last_surfaced_at,
         parse_confidence, capture_id, affect_tags, embedding
-      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,?,?,?,?)`,
+      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,?,?,?,?)`,
     )
     .bind(
       id,
@@ -204,6 +207,7 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
       input.eventAt ?? null,
       input.eventEnd ?? null,
       input.alertLeadMinutes ?? null,
+      input.showOnCalendar === false ? 0 : 1,
       input.priorityBase ?? 0.5,
       ts,
       ts,

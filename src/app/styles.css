@@ -1217,9 +1217,10 @@ textarea:focus {
 }
 
 /* ---------- calendar ----------
-   One continuous strip of weeks with a scroll-driven lens: the focused week
-   is tall and speaks in keywords, the week after it semi-zoomed, the rest
-   compressed to numbers + pips. The calendar owns its scroll (.view-cal). */
+   One continuous strip of weeks with a two-week lens about a third of the
+   way down the screen: lens weeks are tall and speak in wrappable keyword
+   chips, everything else compresses to numbers + pips. The calendar owns
+   its scroll (.view-cal). */
 .view-cal {
   padding: 4px 16px 0;
   overflow: hidden;
@@ -1267,7 +1268,7 @@ textarea:focus {
 }
 .calv-dow span {
   text-align: center;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
   color: var(--text-faint);
 }
@@ -1286,69 +1287,75 @@ textarea:focus {
   height: max(45vh, 300px);
 }
 .cal-month-mark {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-faint);
-  padding: 12px 2px 4px;
+  padding: 14px 2px 5px;
 }
 .cal-week {
   position: relative;
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   overflow: hidden;
-  border-radius: 14px;
   border: 1px solid transparent;
   margin-bottom: 3px;
-  transition: height 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  transition: height 0.13s ease-out, background 0.13s ease-out, border-color 0.13s ease-out;
 }
 .wk-far {
-  height: 44px;
+  height: 78px;
+  border-radius: 14px;
 }
-.wk-near {
-  height: 68px;
-}
-.wk-focus {
-  height: 116px;
+/* the lens: two full weeks joined into one box */
+.wk-lens {
+  height: 150px;
   background: rgba(139, 147, 248, 0.06);
   border-color: rgba(139, 147, 248, 0.22);
+}
+.wk-lens-a {
+  border-radius: 16px 16px 0 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.wk-lens-b {
+  border-radius: 0 0 16px 16px;
+  border-top: 1px solid rgba(148, 163, 216, 0.1);
 }
 .cal-day {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 5px 2px 4px;
+  gap: 3px;
+  padding: 8px 2px 6px;
   min-width: 0;
   overflow: hidden;
   border-radius: 10px;
 }
-.wk-far .cal-day {
-  padding-top: 3px;
-}
 .cal-day .n {
   flex: none;
-  width: 22px;
-  height: 22px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-size: 12px;
-  font-weight: 550;
   color: var(--text-dim);
+  width: 26px;
+  height: 26px;
+  font-size: 13.5px;
+  font-weight: 550;
 }
-.wk-far .cal-day .n {
-  width: 19px;
-  height: 19px;
-  font-size: 11px;
+.wk-lens .cal-day .n {
+  width: 30px;
+  height: 30px;
+  font-size: 16.5px;
+  font-weight: 650;
+  color: var(--text);
 }
 .cal-day.today .n {
   border: 1px solid rgba(139, 147, 248, 0.55);
   color: var(--accent);
   font-weight: 700;
 }
-.wk-focus .cal-day.today .n {
+.wk-lens .cal-day.today .n {
   border: none;
   background: var(--accent);
   color: #0b0e17;
@@ -1361,58 +1368,61 @@ textarea:focus {
   flex: none;
   width: 100%;
 }
-/* the pip grammar — permanently visible at every zoom level:
-   solid dot = one-off moment · faint tick = daily rhythm · ring = weekly+ */
+/* the pip grammar on compressed weeks: solid dot = one-off, ring = recurrence
+   (only calendar-worthy recurrences reach the calendar at all) */
 .cal-day .pips {
   display: flex;
-  gap: 3px;
+  gap: 3.5px;
   align-items: center;
   margin-top: auto;
-  height: 7px;
+  height: 9px;
   flex: none;
 }
 .pip-m {
   display: block;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-}
-.pip-t {
-  display: block;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  opacity: 0.45;
 }
 .pip-r {
   display: block;
   box-sizing: border-box;
-  width: 7px;
-  height: 7px;
+  width: 7.5px;
+  height: 7.5px;
   border-radius: 50%;
   border: 1.5px solid;
-  opacity: 0.8;
+  opacity: 0.85;
 }
+/* lens chips: readable, wrappable — the zoom exists to fit words */
 .day-kw {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 1.28;
   max-width: 100%;
+  padding: 2px 4px;
+  border-radius: 7px;
+  text-align: center;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  animation: cal-fade 0.25s ease;
-}
-.chip-kw {
-  padding: 1.5px 5px;
-  border-radius: 6px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  animation: cal-fade 0.2s ease;
 }
 .kw-due {
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
+/* recurring chips echo the ring pip: dashed outline instead of an inline glyph
+   (a glyph glued to the first word wrecks the wrap) */
+.kw-rec {
+  border: 1px dashed currentColor;
+  padding: 1px 3px;
+}
 .day-more {
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-faint);
 }
 /* multi-day one-offs: one continuous band per week, labelled under the lens */
@@ -1420,23 +1430,19 @@ textarea:focus {
   position: absolute;
   border-radius: 5px;
   border-left: 2px solid;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 650;
-  line-height: 16px;
+  line-height: 17px;
   padding: 0 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  animation: cal-fade 0.25s ease;
-  height: 16px;
-}
-.wk-near .wk-band {
-  height: 5px;
-  padding: 0;
+  animation: cal-fade 0.2s ease;
+  height: 17px;
 }
 .wk-far .wk-band {
-  height: 3px;
+  height: 4px;
   padding: 0;
   border-left: none;
   border-radius: 2px;

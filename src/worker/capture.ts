@@ -2,7 +2,7 @@ import type { AffectTag, CaptureResponse, Item, ItemView, ParseResult, ParsedIte
 import { AFFECT_TAGS } from '../shared/types';
 import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
 import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
-import { heuristicParse } from '../shared/heuristicParse';
+import { defaultCalendarWorthy, heuristicParse } from '../shared/heuristicParse';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { embed } from './embeddings';
@@ -134,6 +134,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       eventAt: p.type === 'HAPPEN' ? eventAt?.iso ?? null : null,
       eventEnd: p.type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
       alertLeadMinutes: p.alertLeadMinutes,
+      showOnCalendar: p.calendarWorthy,
       priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
       parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
       captureId,
@@ -192,6 +193,7 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
     optionality: p.optionality,
     effort: p.effort,
     pingNatured: p.pingNatured,
+    showOnCalendar: p.calendarWorthy,
     priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
     parseConfidence: 0.4,
     embedding,
@@ -208,8 +210,9 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
 
 // ---------- The cheap-tier parse call ----------
 
-interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId' | 'affect'> {
+interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId' | 'affect' | 'calendarWorthy'> {
   affect?: string[];
+  calendarWorthy?: boolean;
   matchItemId: string | null;
   matchConfidence?: 'high' | 'low';
 }
@@ -251,6 +254,7 @@ FOR EACH ITEM emit:
 - "deadlinePhrase": for a DO with a due date, the date/time phrase from the text, else null. Date phrases (here and in eventAtPhrase) are handed to a deterministic parser, so make them parser-readable while staying faithful: keep relative phrases VERBATIM ("tomorrow", "next Tuesday", "in 3 weeks" — do NOT compute dates yourself), but expand elliptical day ordinals with their month using today's date ("the 20th" → "July 20"; "the 20th to the 25th" → "July 20 to July 25"). Ranges are allowed. NEVER drop a time of day: "before 3:00 p.m." → "3:00 p.m."; "tomorrow by noon" → "tomorrow at noon". A bare clock time is a valid phrase (the parser anchors it to the coming occurrence) — never replace it with just "today".
 - "deadlineHardness": "hard" | "soft" | null. A plainly-stated date defaults to "hard"; explicit low-pressure phrasing ("ideally", "sometime", "no rush") makes it "soft".
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null. "atTime" is the stated time of day in the USER'S local 24h clock — whenever a recurring item names a time, it MUST land here ("every Thursday at 8pm" → {"freq":"weekly","interval":1,"byWeekday":[4],"atTime":"20:00"}; "take meds daily at 9" → {"freq":"daily","interval":1,"atTime":"09:00"}). A recurring DO's time belongs in cadence.atTime, never in deadlinePhrase.
+- "calendarWorthy": for RECURRING items (cadence set) — does this recurrence belong on the user's calendar? true for commitments and appointments a calendar exists to show (therapy every other week, weekly team check-in, a class, a standing dinner); false for ambient routine that would bury the calendar in repetition (start the dishwasher nightly, garbage day Tuesday, water the plants, take meds). The test: would a person write it on a wall calendar? Frequency is a hint, not the rule — a daily standup can be worthy, a weekly chore not. Always true for one-off items.
 - "optionality": "must" | "nice" — must-do vs nice-to-do, inferred from phrasing ("maybe", "if I get to it" → "nice"). Orthogonal to priority.
 - "effort": "quick" | "medium" | "large" — coarse magnitude ("do taxes" is large, "call grandma" is quick).
 - "pingNatured": true ONLY when the user is asking to be nudged at a moment ("remind me to…", "don't let me forget to…") — the wish for a ping must be in their phrasing. A task is not ping-natured just because it is small or scheduled: "take out garbage every Thursday at 9:30" is a task with a schedule, "finish the report by Friday" is a deliverable — both false. Only for DO.
@@ -285,12 +289,14 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
     16384,
   );
 
-  const items: ParsedItem[] = (out.items ?? []).map((p) => ({
+  const items: ParsedItem[] = (out.items ?? []).map((p) => {
+    const cadence = sanitizeCadence(p.cadence);
+    return {
     type: p.type === 'KNOW' || p.type === 'HAPPEN' ? p.type : 'DO',
     title: String(p.title ?? text).slice(0, 300),
     deadlinePhrase: p.deadlinePhrase ?? null,
     deadlineHardness: p.deadlineHardness === 'soft' ? 'soft' : p.deadlinePhrase ? 'hard' : null,
-    cadence: sanitizeCadence(p.cadence),
+    cadence,
     optionality: p.optionality === 'nice' ? 'nice' : 'must',
     effort: p.effort === 'quick' || p.effort === 'large' ? p.effort : 'medium',
     pingNatured: !!p.pingNatured,
@@ -304,8 +310,12 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
     affect: Array.isArray(p.affect)
       ? p.affect.filter((t): t is AffectTag => (AFFECT_TAGS as readonly string[]).includes(String(t))).slice(0, 2)
       : [],
+    // One-offs are always calendar-worthy; for recurrences the model's call
+    // stands, with the frequency heuristic covering an omitted field.
+    calendarWorthy: !cadence || (typeof p.calendarWorthy === 'boolean' ? p.calendarWorthy : defaultCalendarWorthy(cadence)),
     matchItemId: p.matchItemId && candidates.some((c) => c.id === p.matchItemId) ? p.matchItemId : null,
-  }));
+    };
+  });
 
   if (!items.length) return heuristicParse(text, ref, tzOffsetMinutes);
   return { items, confidence: out.confidence === 'low' ? 'low' : 'high' };

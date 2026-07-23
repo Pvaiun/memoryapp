@@ -49,6 +49,7 @@ export default function ItemSheet({
   const [effort, setEffort] = useState(item.effort);
   const [eventAt, setEventAt] = useState(toLocalInput(item.eventAt));
   const [eventEnd, setEventEnd] = useState(toLocalInput(item.eventEnd));
+  const [showOnCal, setShowOnCal] = useState(item.showOnCalendar);
   const [priority, setPriority] = useState(Math.round(item.effectivePriority * 100));
   const [priorityTouched, setPriorityTouched] = useState(false);
   const [flavourOverride, setFlavourOverride] = useState<Flavour | ''>(item.flavourOverride ?? '');
@@ -69,6 +70,7 @@ export default function ItemSheet({
         effort,
         eventAt: type === 'HAPPEN' ? fromLocalInput(eventAt) : null,
         eventEnd: type === 'HAPPEN' ? fromLocalInput(eventEnd) : null,
+        showOnCalendar: showOnCal,
         priority: priorityTouched ? priority / 100 : undefined,
         flavourOverride: flavourOverride || null,
         themes: themes
@@ -238,6 +240,23 @@ export default function ItemSheet({
             <div className="field">
               <label>Until (optional)</label>
               <input type="datetime-local" value={eventEnd} onChange={(e) => setEventEnd(e.target.value)} />
+            </div>
+          </div>
+        )}
+
+        {/* Recurrence-only: one-offs always paint their dates. Whether a
+            rhythm earns calendar presence is the parser's guess (§6) — this
+            is the override. */}
+        {(type === 'DO' ? cadence : type === 'HAPPEN' ? item.cadence : null) && (
+          <div className="field">
+            <label>On the calendar</label>
+            <div className="seg">
+              <button className={showOnCal ? 'on' : ''} onClick={() => setShowOnCal(true)}>
+                Show
+              </button>
+              <button className={!showOnCal ? 'on' : ''} onClick={() => setShowOnCal(false)}>
+                Hide
+              </button>
             </div>
           </div>
         )}
