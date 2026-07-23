@@ -509,7 +509,7 @@ export default function App() {
       </header>
 
       <main
-        className={`view${tab === 'map' && nowView === 'descent' && map && (map.bubbles.length > 0 || capturedForToday(map).length > 0) ? ' view-descent' : ''}`}
+        className={`view${tab === 'map' && nowView === 'descent' && map && (map.bubbles.length > 0 || capturedForToday(map).length > 0) ? ' view-descent' : ''}${tab === 'calendar' ? ' view-cal' : ''}`}
       >
         {tab === 'map' && map && (
           <MapView

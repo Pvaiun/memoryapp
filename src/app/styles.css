@@ -1216,73 +1216,285 @@ textarea:focus {
   color: var(--accent);
 }
 
-/* ---------- calendar ---------- */
-.cal-head {
+/* ---------- calendar ----------
+   One continuous strip of weeks with a scroll-driven lens: the focused week
+   is tall and speaks in keywords, the week after it semi-zoomed, the rest
+   compressed to numbers + pips. The calendar owns its scroll (.view-cal). */
+.view-cal {
+  padding: 4px 16px 0;
+  overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
+  flex-direction: column;
 }
-.cal-head h3 {
+.calv {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.calv-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 2px 6px;
+}
+.calv-head h3 {
   font-size: 17px;
   font-weight: 750;
   letter-spacing: -0.01em;
 }
-.cal-grid {
+.calv-sub {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.cal-today-btn {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--accent);
+  border: 1px solid rgba(139, 147, 248, 0.45);
+  border-radius: 999px;
+  padding: 3px 12px;
+  background: var(--accent-soft);
+}
+.calv-dow {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 5px;
-  margin-bottom: 14px;
+  padding-bottom: 6px;
 }
-.cal-grid .dow {
+.calv-dow span {
   text-align: center;
   font-size: 11px;
   font-weight: 650;
   color: var(--text-faint);
-  padding: 4px 0;
 }
-.cal-cell {
-  aspect-ratio: 1;
-  border-radius: 12px;
-  background: rgba(148, 163, 216, 0.05);
+.calv-scroll {
+  /* positioned so row offsetTop reads relative to the scroller, not the page */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* run-out room so the last weeks can still reach the lens line */
+.calv-scroll::after {
+  content: '';
+  display: block;
+  height: max(45vh, 300px);
+}
+.cal-month-mark {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 12px 2px 4px;
+}
+.cal-week {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  overflow: hidden;
+  border-radius: 14px;
   border: 1px solid transparent;
+  margin-bottom: 3px;
+  transition: height 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+.wk-far {
+  height: 44px;
+}
+.wk-near {
+  height: 68px;
+}
+.wk-focus {
+  height: 116px;
+  background: rgba(139, 147, 248, 0.06);
+  border-color: rgba(139, 147, 248, 0.22);
+}
+.cal-day {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
-  font-size: 13px;
+  gap: 2px;
+  padding: 5px 2px 4px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.wk-far .cal-day {
+  padding-top: 3px;
+}
+.cal-day .n {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 12px;
   font-weight: 550;
   color: var(--text-dim);
-  transition: border-color 0.15s, background 0.15s;
 }
-.cal-cell.other {
-  opacity: 0.3;
+.wk-far .cal-day .n {
+  width: 19px;
+  height: 19px;
+  font-size: 11px;
 }
-.cal-cell.today {
-  border-color: rgba(139, 147, 248, 0.5);
+.cal-day.today .n {
+  border: 1px solid rgba(139, 147, 248, 0.55);
+  color: var(--accent);
+  font-weight: 700;
 }
-.cal-cell.selected {
+.wk-focus .cal-day.today .n {
+  border: none;
   background: var(--accent);
   color: #0b0e17;
   font-weight: 750;
 }
-.cal-cell .dots {
-  display: flex;
-  gap: 2px;
-  height: 5px;
+.cal-day.sel {
+  background: var(--accent-soft);
 }
-.cal-cell .dots i {
+.cal-day .band-gap {
+  flex: none;
+  width: 100%;
+}
+/* the pip grammar — permanently visible at every zoom level:
+   solid dot = one-off moment · faint tick = daily rhythm · ring = weekly+ */
+.cal-day .pips {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-top: auto;
+  height: 7px;
+  flex: none;
+}
+.pip-m {
+  display: block;
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  display: block;
 }
-.agenda h4 {
+.pip-t {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  opacity: 0.45;
+}
+.pip-r {
+  display: block;
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid;
+  opacity: 0.8;
+}
+.day-kw {
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  animation: cal-fade 0.25s ease;
+}
+.chip-kw {
+  padding: 1.5px 5px;
+  border-radius: 6px;
+}
+.kw-due {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.day-more {
+  font-size: 9px;
+  color: var(--text-faint);
+}
+/* multi-day one-offs: one continuous band per week, labelled under the lens */
+.wk-band {
+  position: absolute;
+  border-radius: 5px;
+  border-left: 2px solid;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 16px;
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  animation: cal-fade 0.25s ease;
+  height: 16px;
+}
+.wk-near .wk-band {
+  height: 5px;
+  padding: 0;
+}
+.wk-far .wk-band {
+  height: 3px;
+  padding: 0;
+  border-left: none;
+  border-radius: 2px;
+}
+.wk-band.cont-l {
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.wk-band.cont-r {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+@keyframes cal-fade {
+  from {
+    opacity: 0;
+  }
+}
+/* tap-to-expand day detail, unfolds under the focused week */
+.wk-panel {
+  border: 1px solid rgba(139, 147, 248, 0.3);
+  background: rgba(139, 147, 248, 0.06);
+  border-radius: 14px;
+  padding: 8px 12px 6px;
+  margin: 2px 0 8px;
+  animation: cal-fade 0.25s ease;
+}
+.wk-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 2px;
+}
+.wk-panel-head h4 {
   font-size: 13px;
   font-weight: 650;
   color: var(--text-dim);
-  margin: 10px 0 4px;
+}
+.wk-panel-close {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding: 4px 6px;
+}
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  padding: 16px 0 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.cal-legend i {
+  background: var(--text-faint);
+  border-color: var(--text-faint);
+}
+.cal-legend span {
+  margin-right: 6px;
 }
 .time-chip {
   min-width: 58px;
