@@ -244,6 +244,8 @@ export default function DescentView({
   // card's CURRENT track plane, so mid-flight reflows stay drift-corrected
   const zpAnimsRef = useRef(new Map<string, { from: number; t0: number; dur: number }>());
   const dotSlidePendingRef = useRef(false);
+  // the card the camera is riding down as it sinks (null = free camera)
+  const followSinkIdRef = useRef<string | null>(null);
   const engagedIdRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const gaugeActiveUntilRef = useRef(0);
@@ -358,33 +360,7 @@ export default function DescentView({
       if (!scroller || !tr.length || !h) return false;
       const rg = rangeRef.current;
       const isReduced = reducedRef.current;
-      const st = scroller.scrollTop;
-      const c = cameraAt(rg.cStart, st);
-      const cardCx = (w + 28) / 2;
-      const engaged = engagedIndex(tr, c);
-      const engagedCard = tr[engaged];
-      engagedIdRef.current = engagedCard ? engagedCard.id : null;
-
-      let unsettled = Math.abs(c - lastCRef.current) > 0.01;
-      lastCRef.current = c;
-
-      // ----- directional settle: rest always resolves forward -----
-      const delta = st - lastStRef.current;
-      lastStRef.current = st;
-      if (Math.abs(delta) > 0.5) dirRef.current = delta > 0 ? 1 : -1;
-      const interacting = touchActiveRef.current || dollyRef.current !== null;
-      if (interacting || Math.abs(delta) > 0.25) stillFramesRef.current = 0;
-      else stillFramesRef.current++;
-      if (
-        stillFramesRef.current >= 4 &&
-        userScrolledRef.current &&
-        now - lastWheelRef.current > 150 &&
-        !interacting
-      ) {
-        const target = settleTarget(restsRef.current, c, dirRef.current, SETTLE_HYST);
-        const targetScroll = scrollFor(rg.cStart, target);
-        if (Math.abs(targetScroll - st) > 1.5) dollyToRef.current(targetScroll, 180, easeSnap);
-      }
+      let unsettled = false;
 
       // a card mid-sink renders at its animated plane, easing into t.zp
       const zpOf = (t: TrackCard): number => {
@@ -398,6 +374,55 @@ export default function DescentView({
         unsettled = true;
         return t.zp + (anim.from - t.zp) * (1 - easeDolly(x));
       };
+
+      // ----- settle follow: ride the sinking card down -----
+      // The camera locks to the followed card's LIVE animated plane every
+      // frame, so it stays at focus through the whole descent. Driving it
+      // here (not via a fixed-target dolly) is range-agnostic: when the
+      // sinking bubble is itself the scroll-range extreme, its plane and the
+      // range shift together, and a fixed scroll target would be a no-op that
+      // leaves the card culled behind the camera.
+      const followId = followSinkIdRef.current;
+      if (followId) {
+        const ft = tr.find((x) => x.id === followId);
+        if (ft) {
+          scroller.scrollTop = clamp(scrollFor(rg.cStart, zpOf(ft)), 0, rg.maxScroll);
+          if (!zpAnimsRef.current.has(ft.id)) followSinkIdRef.current = null; // landed
+          unsettled = true;
+        } else {
+          followSinkIdRef.current = null;
+        }
+      }
+
+      const st = scroller.scrollTop;
+      const c = cameraAt(rg.cStart, st);
+      const cardCx = (w + 28) / 2;
+      const engaged = engagedIndex(tr, c);
+      const engagedCard = tr[engaged];
+      engagedIdRef.current = engagedCard ? engagedCard.id : null;
+
+      if (Math.abs(c - lastCRef.current) > 0.01) unsettled = true;
+      lastCRef.current = c;
+
+      // ----- directional settle: rest always resolves forward -----
+      // (suspended while a settle-follow owns the camera)
+      const delta = st - lastStRef.current;
+      lastStRef.current = st;
+      if (Math.abs(delta) > 0.5) dirRef.current = delta > 0 ? 1 : -1;
+      const interacting = touchActiveRef.current || dollyRef.current !== null;
+      if (interacting || Math.abs(delta) > 0.25) stillFramesRef.current = 0;
+      else stillFramesRef.current++;
+      if (
+        !followSinkIdRef.current &&
+        stillFramesRef.current >= 4 &&
+        userScrolledRef.current &&
+        now - lastWheelRef.current > 150 &&
+        !interacting
+      ) {
+        const target = settleTarget(restsRef.current, c, dirRef.current, SETTLE_HYST);
+        const targetScroll = scrollFor(rg.cStart, target);
+        if (Math.abs(targetScroll - st) > 1.5) dollyToRef.current(targetScroll, 180, easeSnap);
+      }
 
       for (const t of tr) {
         const els = cardElsRef.current.get(t.id);
@@ -672,6 +697,7 @@ export default function DescentView({
     };
     const onTouchStart = () => {
       touchActiveRef.current = true;
+      followSinkIdRef.current = null; // the user takes the camera back
       cancelDolly();
     };
     const onTouchEnd = () => {
@@ -680,6 +706,7 @@ export default function DescentView({
     };
     const onWheel = () => {
       lastWheelRef.current = performance.now();
+      followSinkIdRef.current = null;
       cancelDolly();
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
@@ -734,20 +761,32 @@ export default function DescentView({
       )
         continue;
       const dur = fallMsRef.current;
-      zpAnimsRef.current.set(t.id, { from: fromZp, t0: nowT, dur });
+      // Clamp the glide's start plane into the (post-settle) reachable camera
+      // band. When the sinking bubble is the range extreme — e.g. the only
+      // bubble on the map — the range recenters on it, and its old plane can
+      // fall outside [cStart, cEnd] entirely; gliding from there would leave
+      // the card culled behind the camera for the first stretch of the fall.
+      const rg = rangeRef.current;
+      const animFrom = clamp(fromZp, rg.cStart, rg.cEnd);
+      zpAnimsRef.current.set(t.id, { from: animFrom, t0: nowT, dur });
       dotSlidePendingRef.current = true;
       // Follow when the settling bubble holds the user's attention: engaged
       // under the camera, or acting through its open sheet — after an
       // uncheck-recheck the camera may have drifted off the plane, but the
-      // sheet still names the bubble being worked.
+      // sheet still names the bubble being worked. The frame loop then rides
+      // the card's live plane down (range-agnostic — see renderFrame), so the
+      // follow holds even when the sinking bubble is the whole map.
       if (info.settled && (engagedIdRef.current === t.id || attentionIdRef.current === t.id)) {
-        dollyToRef.current(scrollFor(rangeRef.current.cStart, t.zp), dur, easeDolly);
+        cancelDolly();
+        followSinkIdRef.current = t.id;
+      } else if (!info.settled && followSinkIdRef.current === t.id) {
+        followSinkIdRef.current = null; // un-settled mid-fall: release the camera
       }
       markActivity();
     }
     prevZpsRef.current = new Map(byTrack.map(({ t }) => [t.id, t.zp]));
     prevSettledRef.current = new Map(byTrack.map(({ t, info }) => [t.id, info.settled]));
-  }, [byTrack, markActivity]);
+  }, [byTrack, cancelDolly, markActivity]);
 
   // ----- track changes: keep the engaged card under the camera ------------
   const trackKeyRef = useRef('');
