@@ -229,8 +229,8 @@ export default function SettingsSheet({
           </div>
 
           <div className="field">
-            <label>
-              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />{' '}
+            <label className="checkbox-label">
+              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />
               Override Brain prompt
             </label>
             {overrideOn && (
