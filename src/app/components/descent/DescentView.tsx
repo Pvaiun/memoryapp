@@ -244,6 +244,9 @@ export default function DescentView({
   // card's CURRENT track plane, so mid-flight reflows stay drift-corrected
   const zpAnimsRef = useRef(new Map<string, { from: number; t0: number; dur: number }>());
   const dotSlidePendingRef = useRef(false);
+  // the bubble the user just acted on (checked a chip), with a timestamp —
+  // the settle-follow anchor that survives the async completion round-trip
+  const actedRef = useRef<{ id: string; at: number } | null>(null);
   const engagedIdRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const gaugeActiveUntilRef = useRef(0);
@@ -736,11 +739,20 @@ export default function DescentView({
       const dur = fallMsRef.current;
       zpAnimsRef.current.set(t.id, { from: fromZp, t0: nowT, dur });
       dotSlidePendingRef.current = true;
-      // Follow when the settling bubble holds the user's attention: engaged
-      // under the camera, or acting through its open sheet — after an
-      // uncheck-recheck the camera may have drifted off the plane, but the
-      // sheet still names the bubble being worked.
-      if (info.settled && (engagedIdRef.current === t.id || attentionIdRef.current === t.id)) {
+      // Follow when the settling bubble holds the user's attention. Three
+      // signals, most reliable first:
+      //  - just-acted (§): the bubble whose chip the user tapped, snapshotted
+      //    at tap time — survives the async completion round-trip, during
+      //    which the live engaged ref can go stale as the rAF loop idles;
+      //  - attention: the bubble whose sheet is open (a prop, always fresh);
+      //  - engaged: the card under the camera right now.
+      const acted = actedRef.current;
+      const actedMatch = !!acted && acted.id === t.id && nowT - acted.at < 4000;
+      if (
+        info.settled &&
+        (actedMatch || attentionIdRef.current === t.id || engagedIdRef.current === t.id)
+      ) {
+        if (actedMatch) actedRef.current = null;
         dollyToRef.current(scrollFor(rangeRef.current.cStart, t.zp), dur, easeDolly);
       }
       markActivity();
@@ -859,9 +871,14 @@ export default function DescentView({
 
   // ----- in-place actions (§7: chips act where they are read) -------------
   const onChipTap = useCallback(
-    (e: ReactMouseEvent, item: ItemView) => {
+    (e: ReactMouseEvent, item: ItemView, bubbleId: string) => {
       // the chip captures its own tap; only body taps fall through to the sheet
       e.stopPropagation();
+      // Anchor the settle-follow to THIS bubble now, at tap time: completion
+      // is async, and by the time the map comes back and the bubble sinks the
+      // live engaged ref may have gone stale. A tap on a chip means the card
+      // was at focus — the camera should ride it down if it settles.
+      if (!isDoneForNow(item)) actedRef.current = { id: bubbleId, at: performance.now() };
       onToggleComplete(item);
     },
     [onToggleComplete],
@@ -1006,7 +1023,7 @@ export default function DescentView({
           role="checkbox"
           aria-checked={done}
           className={`dsc-chip-tok${done ? ' done' : ''}`}
-          onClick={(e) => onChipTap(e, item)}
+          onClick={(e) => onChipTap(e, item, info.bubble.id)}
         >
           <span className="dsc-box" aria-hidden>
             {done ? '✓' : ''}
