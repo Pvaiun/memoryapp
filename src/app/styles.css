@@ -1634,6 +1634,30 @@ textarea:focus {
   color: var(--text-dim);
   margin-bottom: 6px;
 }
+/* captured today: a little log — one row per capture, time of day on the right */
+.dsc-cap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: stretch;
+}
+.dsc-cap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dsc-cap-row > .dsc-chip-tok {
+  margin: 0;
+}
+.dsc-cap-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .dsc-card.rotation .dsc-tok,
 .dsc-card.rotation .dsc-far {
   font-weight: 650;
