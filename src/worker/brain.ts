@@ -20,6 +20,7 @@ import {
 } from '../shared/dates';
 import { llmParse } from './capture';
 import { embed } from './embeddings';
+import { sweepPassedEvents } from './items';
 import {
   getItem,
   getState,
@@ -75,7 +76,10 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
     members.set(m.bubble_id, list);
   }
 
-  const items = await listItems(db, { statuses: ['active', 'completed'] });
+  // Closed statuses ride along so a same-day exit (completed, dismissed,
+  // missed, or an event gone spent) stays greyed in place on today's map
+  // instead of vanishing; tomorrow's rebuild drops it for good.
+  const items = await listItems(db, { statuses: ['active', 'completed', 'dismissed', 'passed', 'missed'] });
   const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
   for (const item of items) views[item.id] = toItemView(item, now, tz);
@@ -149,6 +153,13 @@ export async function rebuildMap(
   }
 
   const tz = await getTzOffset(db);
+  // One-shot events whose moment fell in a previous sleep-day close as
+  // 'passed' here — the daily crystallization of the map's derived greying.
+  try {
+    await sweepPassedEvents(db, now, tz);
+  } catch (err) {
+    console.error('passed-event sweep failed', err);
+  }
   const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now, tz));
 
   // Yesterday's bubbles — supplied separately, framed as "reuse only if apt" (§8.2).
@@ -979,6 +990,11 @@ export function compactEventLines(
       continue;
     }
 
+    // Deletion is app hygiene (a mis-parse, a duplicate) — the same tier as
+    // save, no meaning of its own. It was fetched only to fuel the draft
+    // collapse above; the deliberate "let it go" signal is 'dismissed'.
+    if (e.type === 'rejected') continue;
+
     if (e.type === 'captured' && typeof p.text === 'string') {
       const norm = p.text.trim().toLowerCase();
       if (norm === lastCapture.text && t - lastCapture.ts < 10 * 60_000 && lastCapture.idx >= 0) {
@@ -1027,14 +1043,21 @@ export function compactEventLines(
 // restructures are filtered out at the source: a profile once described the
 // AI's theme merges as the user's filing habit, and capture then filed new
 // items to match — a feedback loop no prompt instruction reliably prevents.
-// 'created'/'rejected' stay: they feed the draft-churn collapse, and a
-// slow-burn rejection (deciding against a thing) is an in-world signal.
+// The lifecycle exits split by meaning: 'dismissed' (deliberately let go) and
+// 'missed' (didn't make an event) are in-world signals; 'passed' (the clock
+// elapsed on an event) asserts nothing about the user and stays out entirely;
+// 'rejected' (delete) is app hygiene on the same tier as save — it is fetched
+// ONLY to fuel the draft-churn collapse in compactEventLines and is never
+// emitted as a line the profile can read.
 export const PROFILE_EVENT_TYPES = [
   'captured',
   'created',
   'recaptured',
   'completed',
   'completion_reverted',
+  'dismissed',
+  'missed',
+  'reopened',
   'rejected',
   'push_sent',
   'first_step_added',
@@ -1065,7 +1088,9 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
 
 Describe the user IN THE WORLD, never the user operating the app: when they check in and get things done; which kinds of items get completed promptly and which linger untouched or keep slipping; what they're chronically late on; what activity spikes before real-world events; which pushes get acted on; what they keep coming back to (recaptures).
 
-DO NOT profile app-administration mechanics: how they file, phrase, edit, or reorganize is out of scope — no reader of this profile acts on it, and describing it crowds out the life patterns that matter. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line. NEVER conclude that a kind of item is a draft, unwanted, or likely to be rejected — wantedness is not yours to judge, and the Brain is forbidden from acting on such claims.
+The lifecycle exits mean exactly what they say: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision worth noticing, e.g. what kinds of plans get let go); "missed" — they didn't make it to an event (patterns of misses — time of day, kind of event — matter a lot). "reopened" reverts a mis-tapped exit. Deletions never appear in this log; beyond an explicit dismissal, wantedness is not yours to judge.
+
+DO NOT profile app-administration mechanics: how they file, phrase, edit, or reorganize is out of scope — no reader of this profile acts on it, and describing it crowds out the life patterns that matter. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line.
 
 Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 

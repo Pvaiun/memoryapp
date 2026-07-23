@@ -1,4 +1,5 @@
 import type { ItemView } from '../../shared/types';
+import { isClosedStatus } from '../../shared/types';
 import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
@@ -50,8 +51,9 @@ export default function ItemRow({
 }) {
   // Recurring DOs never reach status='completed' — their checked state is
   // doneToday, released again when the sleep-cycle day rolls (5am).
+  const closed = isClosedStatus(item.status);
   const done = isDoneForNow(item);
-  const doneToday = done && item.status !== 'completed';
+  const doneToday = !closed && done && item.status !== 'completed';
   // A rhythm without a set time ("read 30 min/day") has no occurrence to tick
   // off — its button is a "did it" ping, rendered as a circle, not a checkbox.
   const rhythm = !!item.cadence && !item.cadence.atTime;
@@ -69,8 +71,8 @@ export default function ItemRow({
     item.type === 'DO' && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
 
   return (
-    <div className={`item-row${done ? ' done' : ''}`} onClick={() => onOpen(item)}>
-      {item.type === 'DO' ? (
+    <div className={`item-row${done || closed ? ' done' : ''}`} onClick={() => onOpen(item)}>
+      {item.type === 'DO' && (item.status === 'active' || item.status === 'completed') ? (
         <button
           className={`check${done ? ' done' : ''}${rhythm ? ' ping' : ''}`}
           aria-label={
@@ -117,6 +119,7 @@ export default function ItemRow({
             </span>
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
+          {closed && item.status !== 'completed' && <span>{item.status}</span>}
           {doneToday && (
             <span className="done-today">done today{nextOcc ? ` · next ${fmtDate(nextOcc.toISOString())}` : ''}</span>
           )}

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
 import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, rebuildMap } from './brain';
-import { browse, calendar, completeItem, editItem, rejectItem, search, uncompleteItem, type ItemEdits } from './items';
+import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
 
@@ -178,7 +178,7 @@ app.get('/api/export', async (c) => {
 app.get('/api/items', async (c) => {
   const now = new Date();
   const tz = await getTzOffset(c.env.DB);
-  const items = await listItems(c.env.DB, { statuses: ['active', 'completed'] });
+  const items = await listItems(c.env.DB, { statuses: ['active', 'completed', 'dismissed', 'passed', 'missed'] });
   return c.json({ items: items.map((i) => toItemView(i, now, tz)) });
 });
 
@@ -196,14 +196,35 @@ app.patch('/api/items/:id', async (c) => {
 });
 
 app.post('/api/items/:id/complete', async (c) => {
-  const item = await completeItem(c.env, c.req.param('id'));
-  if (!item) return c.json({ error: 'not found or not a DO' }, 404);
+  // Optional body { terminal: true } retires a recurring DO for good
+  // ("goal achieved") instead of checking off today's occurrence.
+  const body = await c.req.json<{ terminal?: boolean }>().catch(() => ({ terminal: false }));
+  const item = await completeItem(c.env, c.req.param('id'), { terminal: !!body.terminal });
+  if (!item) return c.json({ error: 'not found or not completable (events pass or are missed)' }, 404);
   return c.json({ item });
 });
 
 app.post('/api/items/:id/uncomplete', async (c) => {
   const item = await uncompleteItem(c.env, c.req.param('id'));
   if (!item) return c.json({ error: 'not found' }, 404);
+  return c.json({ item });
+});
+
+app.post('/api/items/:id/dismiss', async (c) => {
+  const item = await dismissItem(c.env, c.req.param('id'));
+  if (!item) return c.json({ error: 'not found' }, 404);
+  return c.json({ item });
+});
+
+app.post('/api/items/:id/miss', async (c) => {
+  const item = await missItem(c.env, c.req.param('id'));
+  if (!item) return c.json({ error: 'not found or not a one-shot event' }, 404);
+  return c.json({ item });
+});
+
+app.post('/api/items/:id/reopen', async (c) => {
+  const item = await reopenItem(c.env, c.req.param('id'));
+  if (!item) return c.json({ error: 'not found or not closed' }, 404);
   return c.json({ item });
 });
 

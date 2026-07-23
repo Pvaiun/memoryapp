@@ -1,4 +1,5 @@
 import type { Cadence } from './types';
+import { isClosedStatus } from './types';
 import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayOf } from './dates';
 
 // Shared RRULE-like recurrence core (§3.1). For a DO, cadence is a rhythm that
@@ -78,7 +79,8 @@ export function eventPassed(
 }
 
 // Resolved = nothing left to want from the item right now: checked off for
-// the occasion, or an event that already happened.
+// the occasion, closed out of its lifecycle (dismissed / passed / missed),
+// or an event that already happened.
 export function isResolvedForNow(
   item: {
     status: string;
@@ -89,7 +91,7 @@ export function isResolvedForNow(
   },
   now: number,
 ): boolean {
-  return isDoneForNow(item) || eventPassed(item, now);
+  return isDoneForNow(item) || isClosedStatus(item.status) || eventPassed(item, now);
 }
 
 // Captured-today relevance (Now screen, §9.1): does this item carry TODAY's

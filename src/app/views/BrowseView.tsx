@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Cadence, Flavour, ItemView } from '../../shared/types';
+import { isClosedStatus } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { isDoneForNow } from '../../shared/cadence';
 import { sleepDayDiffLocal } from '../../shared/dates';
@@ -93,14 +94,18 @@ function CatalogueRow({
   onOpen: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
 }) {
-  const done = item.status === 'completed';
+  // Every closed status (completed, dismissed, passed, missed) reads as a
+  // past item; the when-column names the non-completed exits.
+  const closed = isClosedStatus(item.status);
   // A recurring DO checked off today (§ done-for-today): still active, so no
   // strikethrough — the checked box and green anchor state the fact instead.
-  const doneNow = !done && isDoneForNow(item);
-  const checked = done || doneNow;
+  const doneNow = !closed && isDoneForNow(item);
+  const checked = item.status === 'completed' || doneNow;
   return (
-    <div className={`cat-row${done ? ' done' : ''}${doneNow ? ' done-today' : ''}`} onClick={() => onOpen(item)}>
-      {item.type === 'DO' ? (
+    <div className={`cat-row${closed ? ' done' : ''}${doneNow ? ' done-today' : ''}`} onClick={() => onOpen(item)}>
+      {/* The tick only where a tap means toggling completion — a dismissed
+          DO reopens from its sheet, not by accidental re-completion. */}
+      {item.type === 'DO' && (item.status === 'active' || item.status === 'completed') ? (
         <button
           className={`tick${checked ? ' done' : ''}`}
           aria-label={checked ? 'Mark not done' : 'Mark done'}
@@ -120,7 +125,7 @@ function CatalogueRow({
           <i key={t.id} title={t.name} style={{ background: themeColor(t.name) }} />
         ))}
       </span>
-      <span className="when">{anchorText(item)}</span>
+      <span className="when">{closed && item.status !== 'completed' ? item.status : anchorText(item)}</span>
     </div>
   );
 }
@@ -161,8 +166,8 @@ export default function BrowseView({
   const derived = useMemo(() => {
     if (!data) return null;
     const all = Object.values(data.items);
-    const active = all.filter((i) => i.status !== 'completed');
-    const doneItems = all.filter((i) => i.status === 'completed');
+    const active = all.filter((i) => !isClosedStatus(i.status));
+    const doneItems = all.filter((i) => isClosedStatus(i.status));
 
     // Theme "shelves" as raw id lists, plus an Unfiled shelf for items that
     // belong to no theme (invisible in the old theme-only rendering).
@@ -178,7 +183,7 @@ export default function BrowseView({
 
     const themeCount = new Map<string, number>();
     for (const t of themeShelves) {
-      themeCount.set(t.id, t.itemIds.filter((id) => data.items[id]?.status !== 'completed').length);
+      themeCount.set(t.id, t.itemIds.filter((id) => { const it = data.items[id]; return it && !isClosedStatus(it.status); }).length);
     }
 
     return { all, active, doneItems, themeShelves, flavourCount, themeCount };
@@ -201,8 +206,8 @@ export default function BrowseView({
   let sections: Section[] = [];
 
   const split = (items: ItemView[]) => ({
-    active: items.filter((i) => i.status !== 'completed').sort(catalogueOrder),
-    done: items.filter((i) => i.status === 'completed').sort(catalogueOrder),
+    active: items.filter((i) => !isClosedStatus(i.status)).sort(catalogueOrder),
+    done: items.filter((i) => isClosedStatus(i.status)).sort(catalogueOrder),
   });
 
   if (shelveBy === 'theme') {
@@ -214,14 +219,14 @@ export default function BrowseView({
       // done" if that's what it holds); it earns a stated line only when
       // the flavour filter is what emptied it.
       if (!act.length && !(showDone && done.length)) {
-        if (flavourFilter && items.some((i) => i.status !== 'completed')) emptyNames.push(shelf.name);
+        if (flavourFilter && items.some((i) => !isClosedStatus(i.status))) emptyNames.push(shelf.name);
         continue;
       }
       const digest = act.length
         ? FLAVOURS.filter((f) => act.some((i) => i.flavour === f))
             .map((f) => `${FLAVOUR_ICONS[f]}${act.filter((i) => i.flavour === f).length}`)
             .join(' ')
-        : `${done.length} done`;
+        : `${done.length} past`;
       sections.push({
         key: shelf.id,
         name: shelf.name,
@@ -239,7 +244,7 @@ export default function BrowseView({
       const kept = items.filter(matchesFilters);
       const { active: act, done } = split(kept);
       if (!act.length && !(showDone && done.length)) {
-        if (themeFilter.length && items.some((i) => i.status !== 'completed')) emptyNames.push(plural(f).toLowerCase());
+        if (themeFilter.length && items.some((i) => !isClosedStatus(i.status))) emptyNames.push(plural(f).toLowerCase());
         continue;
       }
       sections.push({
@@ -247,7 +252,7 @@ export default function BrowseView({
         name: plural(f),
         color: null,
         glyph: FLAVOUR_ICONS[f],
-        digest: act.length ? '' : `${done.length} done`,
+        digest: act.length ? '' : `${done.length} past`,
         active: act,
         done,
         alwaysOpen: false,
@@ -256,7 +261,7 @@ export default function BrowseView({
   } else {
     const kept = derived.all
       .filter(matchesFilters)
-      .filter((i) => showDone || i.status !== 'completed')
+      .filter((i) => showDone || !isClosedStatus(i.status))
       .sort((a, b) => a.title.localeCompare(b.title));
     const byLetter = new Map<string, ItemView[]>();
     for (const i of kept) {
@@ -276,7 +281,7 @@ export default function BrowseView({
   const hiddenDone = derived.doneItems.filter(matchesFilters).length;
   // Themes with nothing active don't count as part of the spread either.
   const liveThemeCount = data.themes.filter((t) =>
-    t.itemIds.some((id) => data.items[id]?.status !== 'completed'),
+    t.itemIds.some((id) => { const it = data.items[id]; return it && !isClosedStatus(it.status); }),
   ).length;
   const filtered = shelveBy === 'theme' ? flavourFilter !== null : themeFilter.length > 0;
 
@@ -444,8 +449,8 @@ export default function BrowseView({
       {hiddenDone > 0 && (
         <button className="done-foot" onClick={() => setShowDone(!showDone)}>
           {showDone
-            ? 'Hide completed items'
-            : `${hiddenDone} completed item${hiddenDone === 1 ? '' : 's'} hidden · show`}
+            ? 'Hide past items'
+            : `${hiddenDone} past item${hiddenDone === 1 ? '' : 's'} hidden · show`}
         </button>
       )}
     </div>

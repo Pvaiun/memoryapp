@@ -14,7 +14,21 @@ export type Effort = 'quick' | 'medium' | 'large';
 
 export type PriorityLevel = 'low' | 'medium' | 'high';
 
-export type ItemStatus = 'active' | 'completed' | 'deleted';
+// Lifecycle (§7): 'completed' is the one positive terminal for every flavour
+// (labelled per flavour in the UI — Done / Achieved / Got it). 'dismissed' is
+// the user saying a thing stopped mattering. 'passed' is system-asserted on
+// one-shot events whose moment elapsed — it claims nothing about the user;
+// 'missed' is the user's explicit "didn't make it" on such an event.
+// 'deleted' is pure hygiene (a mis-parse, a duplicate) and carries no meaning.
+export type ItemStatus = 'active' | 'completed' | 'dismissed' | 'passed' | 'missed' | 'deleted';
+
+// Every non-hygiene exit: the item's lifecycle has ended but it remains part
+// of the user's record (searchable, browsable under "past").
+export const CLOSED_STATUSES = ['completed', 'dismissed', 'passed', 'missed'] as const;
+
+export function isClosedStatus(status: string): boolean {
+  return (CLOSED_STATUSES as readonly string[]).includes(status);
+}
 
 // Shared RRULE-like core model (§3.1). Exotic rules deliberately parked (§14.1).
 export interface Cadence {

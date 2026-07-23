@@ -228,11 +228,15 @@ describe('passed events read as done (Now screen)', () => {
       ),
     ).toBe(false);
   });
-  it('isResolvedForNow: checked off OR already happened', () => {
+  it('isResolvedForNow: checked off OR closed OR already happened', () => {
     const base = { status: 'active', cadence: null, doneToday: false, eventAt: null, eventEnd: null };
     expect(isResolvedForNow(base, now)).toBe(false);
     expect(isResolvedForNow({ ...base, status: 'completed' }, now)).toBe(true);
     expect(isResolvedForNow({ ...base, eventAt: '2026-07-22T12:00:00Z' }, now)).toBe(true);
+    // Every lifecycle exit quiets the item on the map, same as a completion.
+    expect(isResolvedForNow({ ...base, status: 'dismissed' }, now)).toBe(true);
+    expect(isResolvedForNow({ ...base, status: 'passed' }, now)).toBe(true);
+    expect(isResolvedForNow({ ...base, status: 'missed' }, now)).toBe(true);
   });
 });
 
