@@ -230,8 +230,8 @@ export default function SettingsSheet({
 
           <div className="field">
             <label className="checkbox-label">
-              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />
               Override Brain prompt
+              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />
             </label>
             {overrideOn && (
               <>
