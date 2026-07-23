@@ -28,7 +28,10 @@ function brainTime(iso: string): string {
 // set rhythm's time, or a timed deadline. Date-only deadlines (stored at
 // noon) carry no time; undated captures never reach this bucket.
 function capturedDue(item: ItemView): string | null {
-  if (item.type === 'HAPPEN' && item.eventAt) return brainTime(item.eventAt);
+  // Date-only dates anchor at noon (dates.localNoonIso); the T12:00:00 marker
+  // is how the app tells "all day" from a real clock time (same test ItemRow
+  // uses), so an all-day event or dateless deadline shows no time.
+  if (item.type === 'HAPPEN' && item.eventAt && !item.eventAt.includes('T12:00:00')) return brainTime(item.eventAt);
   if (item.cadence?.atTime) return describeAtTime(item.cadence.atTime);
   if (item.deadline && !item.deadline.includes('T12:00:00')) return brainTime(item.deadline);
   return null;
