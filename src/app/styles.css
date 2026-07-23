@@ -1634,27 +1634,20 @@ textarea:focus {
   color: var(--text-dim);
   margin-bottom: 6px;
 }
-/* captured today: a little log — one row per capture, time of day on the right */
+/* captured today: a little log — one capture per row */
 .dsc-cap-list {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  align-items: stretch;
+  align-items: flex-start;
 }
-.dsc-cap-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dsc-cap-row > .dsc-chip-tok {
+.dsc-cap-list > .dsc-chip-tok {
   margin: 0;
 }
-.dsc-cap-time {
-  margin-left: auto;
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--text-faint);
+/* the due time, inline in the label — muted, tabular so times line up */
+.dsc-chip-due {
+  font-weight: 600;
+  color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
