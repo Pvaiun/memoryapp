@@ -119,6 +119,35 @@ export function inferOptionality(text: string): 'must' | 'nice' {
   return OPTIONAL_CUES.test(text) ? 'nice' : 'must';
 }
 
+// ---------- Canonical sleep-cycle day math ----------
+// The app has ONE answer to "what day is it": the sleep-cycle day, running
+// 5am → 5am (EARLY_MORNING_CUTOFF_MINUTES). A 1am deadline belongs to the
+// evening before it. Every day-distance the user sees — the Descent notch,
+// the tile chip, the Brain's due=+Nd tokens, row date labels — must come
+// from these helpers so two surfaces can never disagree about "4 days".
+
+const DAY_MS = 86_400_000;
+
+// The sleep-day index of a UTC instant, given the user's UTC offset in
+// minutes (Date#getTimezoneOffset sign-flipped). Same arithmetic as
+// completedWithinSleepDay/happeningToday.
+export function sleepDayOf(msUtc: number, tzOffsetMinutes: number): number {
+  return Math.floor((msUtc + (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000) / DAY_MS);
+}
+
+// Whole sleep-days from `now` to `t` (negative = past). Fixed-offset flavour
+// for the worker, which runs in UTC and receives the client's offset.
+export function sleepDayDiff(t: number, now: number, tzOffsetMinutes: number): number {
+  return sleepDayOf(t, tzOffsetMinutes) - sleepDayOf(now, tzOffsetMinutes);
+}
+
+// Browser flavour: reads each instant's own local offset, so a DST change
+// between now and the target can't skew the count.
+export function sleepDayDiffLocal(t: number, now: number): number {
+  const idx = (ms: number) => sleepDayOf(ms, -new Date(ms).getTimezoneOffset());
+  return idx(t) - idx(now);
+}
+
 export function dayKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');

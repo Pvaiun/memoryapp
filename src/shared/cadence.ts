@@ -1,5 +1,5 @@
 import type { Cadence } from './types';
-import { EARLY_MORNING_CUTOFF_MINUTES } from './dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayOf } from './dates';
 
 // Shared RRULE-like recurrence core (§3.1). For a DO, cadence is a rhythm that
 // drives neglect-nudging (now − lastCompleted vs cadence), not a hard gate.
@@ -53,9 +53,7 @@ export function completedWithinSleepDay(
   tzOffsetMinutes: number,
 ): boolean {
   if (!lastCompletedAt) return false;
-  const shift = (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000;
-  const sleepDayOf = (t: number) => Math.floor((t + shift) / DAY_MS);
-  return sleepDayOf(new Date(lastCompletedAt).getTime()) === sleepDayOf(now.getTime());
+  return sleepDayOf(new Date(lastCompletedAt).getTime(), tzOffsetMinutes) === sleepDayOf(now.getTime(), tzOffsetMinutes);
 }
 
 // The user-facing "checked" state of a DO. One-shots check by status; a
@@ -115,13 +113,13 @@ export function happeningToday(
   tzOffsetMinutes: number,
 ): boolean {
   const shift = (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000;
-  const sleepDayOf = (t: number) => Math.floor((t + shift) / DAY_MS);
-  const today = sleepDayOf(now.getTime());
-  if (item.deadline && sleepDayOf(new Date(item.deadline).getTime()) <= today) return true;
+  const dayOf = (t: number) => sleepDayOf(t, tzOffsetMinutes);
+  const today = dayOf(now.getTime());
+  if (item.deadline && dayOf(new Date(item.deadline).getTime()) <= today) return true;
   if (item.eventAt) {
     const at = new Date(item.eventAt).getTime();
     const end = item.eventEnd ? new Date(item.eventEnd).getTime() : at;
-    if (sleepDayOf(at) <= today && sleepDayOf(end) >= today) return true;
+    if (dayOf(at) <= today && dayOf(end) >= today) return true;
   }
   if (item.cadence) {
     // Walk from the START of the current sleep day, not from `now` — an
@@ -130,7 +128,7 @@ export function happeningToday(
     const next = item.cadence.atTime
       ? nextAtTimeOccurrence(item.cadence, item.createdAt, dayStart, tzOffsetMinutes)
       : nextOccurrence(item.cadence, item.eventAt ?? item.createdAt, dayStart);
-    if (sleepDayOf(next.getTime()) === today) return true;
+    if (dayOf(next.getTime()) === today) return true;
   }
   return false;
 }

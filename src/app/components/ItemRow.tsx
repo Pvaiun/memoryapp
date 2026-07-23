@@ -1,6 +1,6 @@
 import type { ItemView } from '../../shared/types';
 import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
-import { EARLY_MORNING_CUTOFF_MINUTES } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
 export function priorityColor(p: number): string {
@@ -9,13 +9,14 @@ export function priorityColor(p: number): string {
   return 'var(--text-faint)';
 }
 
+// Day distances are sleep-cycle days (5am boundary, same as localDay): a 1am
+// deadline reads "today" through the evening before it, not as tomorrow.
 function fmtDate(iso: string): string {
   const d = new Date(iso);
-  const now = new Date();
-  const days = Math.round((d.getTime() - now.getTime()) / 86_400_000);
+  const days = sleepDayDiffLocal(d.getTime(), Date.now());
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (Math.abs(days) < 1 && d.getDate() === now.getDate()) return `today ${time}`;
-  if (days >= 0 && days < 7)
+  if (days === 0) return `today ${time}`;
+  if (days > 0 && days < 7)
     return d.toLocaleDateString([], { weekday: 'short' }) + (iso.includes('T12:00:00') ? '' : ` ${time}`);
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }

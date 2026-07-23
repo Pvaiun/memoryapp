@@ -1,5 +1,6 @@
 import type { Bubble, ItemView } from '../../shared/types';
 import { isResolvedForNow } from '../../shared/cadence';
+import { sleepDayDiffLocal } from '../../shared/dates';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
 // bubble's ACTIVE items, so the scale needs no legend and completing the
@@ -25,19 +26,14 @@ export interface BubbleStatus {
   label: string;
 }
 
-// Calendar-day distance (local), so an event at 9am tomorrow says "tomorrow"
-// even when it's under 24h away.
-function calDayDiff(t: number, now: number): number {
-  const a = new Date(t);
-  const b = new Date(now);
-  a.setHours(0, 0, 0, 0);
-  b.setHours(0, 0, 0, 0);
-  return Math.round((a.getTime() - b.getTime()) / DAY_MS);
-}
+// All day distances here are sleep-cycle days (5am boundary, sleepDayDiffLocal)
+// — the app's one day system, shared with the Descent notch and the Brain's
+// due=+Nd tokens, so an event at 9am tomorrow says "tomorrow" even when it's
+// under 24h away, and every surface prints the same count.
 
 function fmtEventDay(t: number, now: number): string {
   const d = new Date(t);
-  if (calDayDiff(t, now) < 7) return d.toLocaleDateString([], { weekday: 'short' });
+  if (sleepDayDiffLocal(t, now) < 7) return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -47,8 +43,8 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
   let overdue = false;
   let dueToday = false;
   let happeningNow = false;
-  let redEventDiff = Infinity; // calendar-day distance of the nearest <48h event
-  let soonestDue = Infinity;
+  let redEventDiff = Infinity; // sleep-day distance of the nearest ≤2-day event
+  let soonestDueDays = Infinity; // sleep-day distance of the nearest deadline
   let slipped = false;
   let nextEvent = Infinity;
   for (const id of bubble.itemIds) {
@@ -59,18 +55,18 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
     if (!it || isResolvedForNow(it, now)) continue;
     if (it.deadline) {
       const due = new Date(it.deadline).getTime();
+      const dueDays = sleepDayDiffLocal(due, now);
       if (due < now) overdue = true;
-      else if (due < now + DAY_MS) dueToday = true;
-      else if (due < now + 7 * DAY_MS) soonestDue = Math.min(soonestDue, due);
+      else if (dueDays <= 0) dueToday = true;
+      else if (dueDays < 7) soonestDueDays = Math.min(soonestDueDays, dueDays);
     }
     if (it.neglected) slipped = true;
     if (it.eventAt) {
       const at = new Date(it.eventAt).getTime();
       const end = it.eventEnd ? new Date(it.eventEnd).getTime() : at;
-      if (at < now + 2 * DAY_MS && end > now - DAY_MS) {
-        if (at <= now) happeningNow = true;
-        else redEventDiff = Math.min(redEventDiff, calDayDiff(at, now));
-      } else if (at > now) nextEvent = Math.min(nextEvent, at);
+      if (at <= now && end > now - DAY_MS) happeningNow = true;
+      else if (at > now && sleepDayDiffLocal(at, now) <= 2) redEventDiff = Math.min(redEventDiff, sleepDayDiffLocal(at, now));
+      else if (at > now) nextEvent = Math.min(nextEvent, at);
     }
   }
   if (overdue || dueToday || happeningNow || redEventDiff < Infinity) {
@@ -87,9 +83,12 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
               : 'in 2 days';
     return { tone: 'red', color: TONE_COLORS.red, label };
   }
-  if (soonestDue < Infinity) {
-    const days = Math.max(2, Math.ceil((soonestDue - now) / DAY_MS));
-    return { tone: 'amber', color: TONE_COLORS.amber, label: `${days} days` };
+  if (soonestDueDays < Infinity) {
+    return {
+      tone: 'amber',
+      color: TONE_COLORS.amber,
+      label: soonestDueDays === 1 ? 'tomorrow' : `${soonestDueDays} days`,
+    };
   }
   if (slipped) return { tone: 'amber', color: TONE_COLORS.amber, label: 'slipped' };
   if (bubble.prominence >= 0.7) return { tone: 'amber', color: TONE_COLORS.amber, label: 'pressing' };

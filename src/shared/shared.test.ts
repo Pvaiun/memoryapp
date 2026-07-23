@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -375,5 +375,30 @@ describe('heuristic fallback parser', () => {
   it('a recurring DO without a stated time gets no atTime', () => {
     const r = heuristicParse('water the plants every monday', ref, 0);
     expect(r.items[0].cadence).toEqual({ freq: 'weekly', interval: 1, byWeekday: [1] });
+  });
+});
+
+describe('sleepDayDiff — the one day-counting system (5am boundary)', () => {
+  const tz = -240; // UTC-4
+
+  it('counts whole sleep days, not rolling 24h windows', () => {
+    // 9am local Jul 23 → noon local Jul 27: 4.1×24h away, but 4 days — the
+    // rolling ceil/round variants printed 5 while the calendar diff said 4.
+    expect(sleepDayDiff(Date.parse('2026-07-27T16:00:00Z'), Date.parse('2026-07-23T13:00:00Z'), tz)).toBe(4);
+  });
+
+  it('a 1am deadline belongs to the evening before it (the dishes case)', () => {
+    // Tuesday 10pm local; "do the dishes at 1am" is still Tuesday's day.
+    expect(sleepDayDiff(Date.parse('2026-07-22T05:00:00Z'), Date.parse('2026-07-22T02:00:00Z'), tz)).toBe(0);
+  });
+
+  it('the boundary sits exactly at 5am local', () => {
+    const now = Date.parse('2026-07-22T02:00:00Z'); // Tuesday 10pm local
+    expect(sleepDayDiff(Date.parse('2026-07-22T08:59:00Z'), now, tz)).toBe(0); // 4:59am Wednesday
+    expect(sleepDayDiff(Date.parse('2026-07-22T09:00:00Z'), now, tz)).toBe(1); // 5:00am Wednesday
+  });
+
+  it('negative for past sleep days', () => {
+    expect(sleepDayDiff(Date.parse('2026-07-20T16:00:00Z'), Date.parse('2026-07-23T13:00:00Z'), tz)).toBe(-3);
   });
 });

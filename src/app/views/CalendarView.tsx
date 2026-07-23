@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ItemView } from '../../shared/types';
 import { dayKey } from '../../shared/dates';
-import { api, itemColor } from '../api';
+import { api, itemColor, localDay } from '../api';
 import ItemRow from '../components/ItemRow';
 
 // Calendar (§6): a presentation lens over the same backend — HAPPENs on their
@@ -26,7 +26,9 @@ export default function CalendarView({
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [selected, setSelected] = useState(dayKey(new Date()));
+  // "Today" is the sleep-cycle day (5am boundary): at 1am the highlight stays
+  // on the evening's date. Cell placement stays wall-clock — it's a calendar.
+  const [selected, setSelected] = useState(localDay());
   const [entries, setEntries] = useState<Entry[]>([]);
   const [items, setItems] = useState<Record<string, ItemView>>({});
 
@@ -64,7 +66,7 @@ export default function CalendarView({
     });
   }, [month]);
 
-  const today = dayKey(new Date());
+  const today = localDay();
   const selectedEntries = byDay.get(selected) ?? [];
 
   return (
