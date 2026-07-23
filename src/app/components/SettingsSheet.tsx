@@ -1,6 +1,33 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api } from '../api';
 import type { NowView } from '../views/MapView';
+
+// Collapsible settings group — the sheet groups its controls so the whole
+// menu isn't one long wall. Bodies render only while open, but every input's
+// value lives in SettingsSheet state, so collapsing never drops a draft.
+function Section({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`settings-section${open ? ' open' : ''}`}>
+      <button className="settings-section-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span>{title}</span>
+        <span className="chevron" aria-hidden>
+          ›
+        </span>
+      </button>
+      {open && <div className="settings-section-body">{children}</div>}
+    </div>
+  );
+}
 
 interface Status {
   items: number;
@@ -23,6 +50,8 @@ interface Status {
 export default function SettingsSheet({
   pushOn,
   nowView,
+  fallSpeed,
+  onSetFallSpeed,
   onSetNowView,
   onEnablePush,
   onRebuild,
@@ -33,6 +62,8 @@ export default function SettingsSheet({
 }: {
   pushOn: boolean | null;
   nowView: NowView;
+  fallSpeed: number;
+  onSetFallSpeed: (v: number) => void;
   onSetNowView: (v: NowView) => void;
   onEnablePush: () => void;
   onRebuild: () => void;
@@ -121,168 +152,194 @@ export default function SettingsSheet({
         <div className="sheet-grabber" />
         <h2>Settings</h2>
 
-        {status && (
-          <div className="settings-status">
-            <div className="settings-row">
-              <span>Map built</span>
-              <span>
-                {status.mapBuiltAt
-                  ? `${new Date(status.mapBuiltAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })} (for ${status.mapDay})`
-                  : 'never'}
-              </span>
+        <Section title="Display" defaultOpen>
+          <div className="field">
+            <label>Now view</label>
+            <div className="seg">
+              <button className={nowView === 'descent' ? 'on' : ''} onClick={() => onSetNowView('descent')}>
+                Descent
+              </button>
+              <button className={nowView === 'tiles' ? 'on' : ''} onClick={() => onSetNowView('tiles')}>
+                Tiles (classic)
+              </button>
             </div>
-            <div className="settings-row">
-              <span>Items</span>
-              <span>
-                {status.activeItems} active · {status.items} total · {status.themes} themes
-              </span>
-            </div>
-            <div className="settings-row">
-              <span>History log</span>
-              <span>{status.events} events</span>
-            </div>
-            <div className="settings-row">
-              <span>AI</span>
-              <span>{status.llm ? `${status.captureModel} + ${status.brainModel}` : 'not configured — fallback mode'}</span>
-            </div>
-            <div className="settings-row">
-              <span>Alerts</span>
-              <span>
-                {!status.push
-                  ? 'server keys missing'
-                  : pushOn
-                    ? `on (${status.pushSubscriptions} device${status.pushSubscriptions === 1 ? '' : 's'})`
-                    : 'off on this device'}
-              </span>
-            </div>
+            <small className="settings-hint">
+              Descent is the new depth instrument — experimental. Tiles is the previous mosaic.
+            </small>
           </div>
-        )}
 
-        <div className="field">
-          <label>Now view</label>
-          <div className="seg">
-            <button className={nowView === 'descent' ? 'on' : ''} onClick={() => onSetNowView('descent')}>
-              Descent
-            </button>
-            <button className={nowView === 'tiles' ? 'on' : ''} onClick={() => onSetNowView('tiles')}>
-              Tiles (classic)
-            </button>
-          </div>
-          <small className="settings-hint">
-            Descent is the new depth instrument — experimental. Tiles is the previous mosaic.
-          </small>
-        </div>
-
-        <div className="field">
-          <label>Morning Brain prompt</label>
-          <div className="seg">
-            <button className={brainPrompt === 'minimal' ? 'on' : ''} onClick={() => pickPrompt('minimal')}>
-              Minimal
-            </button>
-            <button className={brainPrompt === 'full' ? 'on' : ''} onClick={() => pickPrompt('full')}>
-              Full
-            </button>
-          </div>
-          <small className="settings-hint">
-            Which prompt builds tomorrow's map — comparing them over days. Workshop rebuilds override per run.
-          </small>
-        </div>
-
-        <div className="field">
-          <label>Brain prompt addendum</label>
-          <textarea
-            rows={4}
-            value={addendum}
-            onChange={(e) => setAddendum(e.target.value)}
-            placeholder="Extra instructions appended verbatim to the Brain prompt — try tone, emphasis, anything"
-          />
-          <div className="seg">
-            <button disabled={addendum.trim() === savedAddendum} onClick={saveAddendum}>
-              {addendum.trim() === savedAddendum && savedAddendum ? 'Saved' : 'Save'}
-            </button>
-            <button disabled={!addendum && !savedAddendum} onClick={clearAddendum}>
-              Clear
-            </button>
-          </div>
-          <small className="settings-hint">
-            Applies to every rebuild until cleared. The Brain snapshot records what was active.
-          </small>
-        </div>
-
-        <div className="field">
-          <label>
+          <div className="field">
+            <label>Fall speed</label>
             <input
-              type="checkbox"
-              checked={overrideOn}
-              onChange={(e) => toggleOverride(e.target.checked)}
-            />{' '}
-            Override Brain prompt
-          </label>
-          {overrideOn && (
-            <>
-              <textarea
-                rows={14}
-                value={overrideText}
-                onChange={(e) => setOverrideText(e.target.value)}
-                placeholder="The entire Brain prompt, verbatim"
-              />
-              <div className="seg">
-                <button disabled={overrideText.trim() === savedOverride} onClick={saveOverride}>
-                  {overrideText.trim() === savedOverride && savedOverride ? 'Saved' : 'Save'}
-                </button>
-                <button onClick={resetOverride}>Reset to default</button>
-              </div>
-              <small className="settings-hint">
-                While checked, the saved text above IS the whole Brain prompt — the Minimal/Full toggle and the
-                addendum are ignored. Unsaved edits and an empty box don't run: the normal flow stays in charge.
-                Unchecking returns to the normal flow; the text stays saved but inert.
-              </small>
-            </>
-          )}
-        </div>
+              type="range"
+              className="slider"
+              min={0.4}
+              max={2.5}
+              step={0.1}
+              value={fallSpeed}
+              onChange={(e) => onSetFallSpeed(parseFloat(e.target.value))}
+              disabled={nowView !== 'descent'}
+            />
+            <div className="slider-scale">
+              <span>Slow</span>
+              <span>{fallSpeed.toFixed(1)}×</span>
+              <span>Fast</span>
+            </div>
+            <small className="settings-hint">
+              How fast a finished bubble drops to the floor when it settles in the Descent view.
+            </small>
+          </div>
+        </Section>
 
-        <div className="settings-actions">
-          <button
-            className="settings-btn primary"
-            onClick={() => {
-              onClose();
-              onRebuild();
-            }}
-          >
-            Rebuild map now
-            <small>Re-runs the Brain for today — clusters, summaries, profile</small>
-          </button>
-          <button
-            className="settings-btn"
-            onClick={() => {
-              onClose();
-              onRebuildNoHistory();
-            }}
-          >
-            Rebuild map now — no history
-            <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
-          </button>
-          {!pushOn && (
+        <Section title="Morning Brain">
+          <div className="field">
+            <label>Morning Brain prompt</label>
+            <div className="seg">
+              <button className={brainPrompt === 'minimal' ? 'on' : ''} onClick={() => pickPrompt('minimal')}>
+                Minimal
+              </button>
+              <button className={brainPrompt === 'full' ? 'on' : ''} onClick={() => pickPrompt('full')}>
+                Full
+              </button>
+            </div>
+            <small className="settings-hint">
+              Which prompt builds tomorrow's map — comparing them over days. Workshop rebuilds override per run.
+            </small>
+          </div>
+
+          <div className="field">
+            <label>Brain prompt addendum</label>
+            <textarea
+              rows={4}
+              value={addendum}
+              onChange={(e) => setAddendum(e.target.value)}
+              placeholder="Extra instructions appended verbatim to the Brain prompt — try tone, emphasis, anything"
+            />
+            <div className="seg">
+              <button disabled={addendum.trim() === savedAddendum} onClick={saveAddendum}>
+                {addendum.trim() === savedAddendum && savedAddendum ? 'Saved' : 'Save'}
+              </button>
+              <button disabled={!addendum && !savedAddendum} onClick={clearAddendum}>
+                Clear
+              </button>
+            </div>
+            <small className="settings-hint">
+              Applies to every rebuild until cleared. The Brain snapshot records what was active.
+            </small>
+          </div>
+
+          <div className="field">
+            <label>
+              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />{' '}
+              Override Brain prompt
+            </label>
+            {overrideOn && (
+              <>
+                <textarea
+                  rows={14}
+                  value={overrideText}
+                  onChange={(e) => setOverrideText(e.target.value)}
+                  placeholder="The entire Brain prompt, verbatim"
+                />
+                <div className="seg">
+                  <button disabled={overrideText.trim() === savedOverride} onClick={saveOverride}>
+                    {overrideText.trim() === savedOverride && savedOverride ? 'Saved' : 'Save'}
+                  </button>
+                  <button onClick={resetOverride}>Reset to default</button>
+                </div>
+                <small className="settings-hint">
+                  While checked, the saved text above IS the whole Brain prompt — the Minimal/Full toggle and the
+                  addendum are ignored. Unsaved edits and an empty box don't run: the normal flow stays in charge.
+                  Unchecking returns to the normal flow; the text stays saved but inert.
+                </small>
+              </>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Map & data">
+          {status && (
+            <div className="settings-status">
+              <div className="settings-row">
+                <span>Map built</span>
+                <span>
+                  {status.mapBuiltAt
+                    ? `${new Date(status.mapBuiltAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })} (for ${status.mapDay})`
+                    : 'never'}
+                </span>
+              </div>
+              <div className="settings-row">
+                <span>Items</span>
+                <span>
+                  {status.activeItems} active · {status.items} total · {status.themes} themes
+                </span>
+              </div>
+              <div className="settings-row">
+                <span>History log</span>
+                <span>{status.events} events</span>
+              </div>
+              <div className="settings-row">
+                <span>AI</span>
+                <span>
+                  {status.llm ? `${status.captureModel} + ${status.brainModel}` : 'not configured — fallback mode'}
+                </span>
+              </div>
+              <div className="settings-row">
+                <span>Alerts</span>
+                <span>
+                  {!status.push
+                    ? 'server keys missing'
+                    : pushOn
+                      ? `on (${status.pushSubscriptions} device${status.pushSubscriptions === 1 ? '' : 's'})`
+                      : 'off on this device'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="settings-actions">
+            <button
+              className="settings-btn primary"
+              onClick={() => {
+                onClose();
+                onRebuild();
+              }}
+            >
+              Rebuild map now
+              <small>Re-runs the Brain for today — clusters, summaries, profile</small>
+            </button>
             <button
               className="settings-btn"
               onClick={() => {
                 onClose();
-                onEnablePush();
+                onRebuildNoHistory();
               }}
             >
-              Enable alerts on this device
-              <small>Punctual pushes for events and hard deadlines</small>
+              Rebuild map now — no history
+              <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
             </button>
-          )}
-          <button className="settings-btn" onClick={onCopyBrainSnapshot}>
-            Copy Brain snapshot
-            <small>What the Brain sees + the map it built — for workshopping</small>
-          </button>
-          <button className="settings-btn" onClick={onExport}>
-            Download full backup
-            <small>Everything as one JSON file — items, history, themes</small>
-          </button>
-        </div>
+            {!pushOn && (
+              <button
+                className="settings-btn"
+                onClick={() => {
+                  onClose();
+                  onEnablePush();
+                }}
+              >
+                Enable alerts on this device
+                <small>Punctual pushes for events and hard deadlines</small>
+              </button>
+            )}
+            <button className="settings-btn" onClick={onCopyBrainSnapshot}>
+              Copy Brain snapshot
+              <small>What the Brain sees + the map it built — for workshopping</small>
+            </button>
+            <button className="settings-btn" onClick={onExport}>
+              Download full backup
+              <small>Everything as one JSON file — items, history, themes</small>
+            </button>
+          </div>
+        </Section>
       </div>
     </div>
   );

@@ -28,12 +28,14 @@ export function capturedForToday(map: MapPayload): string[] {
 export default function MapView({
   map,
   nowView,
+  fallSpeed = 1,
   onOpenItem,
   onToggleComplete,
   onAddFirstStep,
 }: {
   map: MapPayload;
   nowView: NowView;
+  fallSpeed?: number;
   onOpenItem: (item: ItemView) => void;
   onToggleComplete: (item: ItemView) => void;
   onAddFirstStep?: (bubbleId: string, title: string) => void;
@@ -129,6 +131,7 @@ export default function MapView({
           builtAt={map.builtAt}
           capturedSpawnNonce={spawnNonce}
           attentionId={openBubble?.id ?? null}
+          fallSpeed={fallSpeed}
           onOpen={setOpenBubble}
           onToggleComplete={onToggleComplete}
           onAddFirstStep={onAddFirstStep}
