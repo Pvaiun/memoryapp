@@ -51,8 +51,6 @@
   /* ---------- app tokens (fixed — the app is dark-only) ---------- */
   :root {
     --a-bg: #0b0e17;
-    --a-card: #151a28;
-    --a-tile: rgba(148, 163, 216, 0.07);
     --a-line: rgba(148, 163, 216, 0.14);
     --a-text: #eef0fa;
     --a-dim: #9aa3c0;
@@ -94,17 +92,8 @@
     text-wrap: balance;
     margin-bottom: 16px;
   }
-  .lede {
-    font-size: 16.5px;
-    color: var(--ink-dim);
-    max-width: 62ch;
-  }
-  h2 {
-    font-size: 22px;
-    font-weight: 750;
-    letter-spacing: -0.015em;
-    margin-bottom: 6px;
-  }
+  .lede { font-size: 16.5px; color: var(--ink-dim); max-width: 62ch; }
+  h2 { font-size: 22px; font-weight: 750; letter-spacing: -0.015em; margin-bottom: 6px; }
   .kicker {
     font-size: 11.5px;
     font-weight: 700;
@@ -165,7 +154,6 @@
   .verdict .prose { max-width: 70ch; }
 
   /* ---------- phone frame ---------- */
-  .shot { position: relative; width: 360px; max-width: 100%; }
   .phone {
     width: 360px;
     max-width: 100%;
@@ -198,10 +186,7 @@
     color: var(--a-dim); font-size: 14px;
   }
   .p-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  .p-capture {
-    display: flex; gap: 7px; align-items: center;
-    padding-top: 10px;
-  }
+  .p-capture { display: flex; gap: 7px; align-items: center; padding-top: 10px; }
   .p-cap-input {
     flex: 1;
     background: rgba(148, 163, 216, 0.07);
@@ -234,578 +219,468 @@
   .p-tabs i { font-style: normal; font-size: 15px; line-height: 1; }
   .p-tabs .on { color: var(--a-accent); }
 
-  /* ---------- shared agenda rows ---------- */
-  .ag-h {
-    font-size: 11px; font-weight: 700;
-    letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--a-faint);
-    padding: 12px 4px 7px;
-  }
-  .ag-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 6px;
-    border-radius: 14px;
-  }
-  .ag-row + .ag-row { border-top: 1px solid rgba(148, 163, 216, 0.08); }
-  .ag-time {
-    flex: none; width: 42px;
-    font-size: 12px; color: var(--a-dim);
-    text-align: right;
-  }
-  .ag-time.due { color: var(--t-gold); font-weight: 650; font-size: 11px; }
-  .ag-glyph {
-    flex: none;
-    width: 30px; height: 30px;
-    border-radius: 10px;
-    display: grid; place-items: center;
-    font-size: 13px;
-  }
-  .ag-body { flex: 1; min-width: 0; line-height: 1.3; }
-  .ag-body b {
-    display: block;
-    font-size: 14.5px; font-weight: 600;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .ag-body span {
-    display: block;
-    font-size: 11.5px; color: var(--a-faint);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .ag-check {
-    flex: none;
-    width: 22px; height: 22px;
-    border-radius: 8px;
-    border: 1.5px solid rgba(148, 163, 216, 0.4);
-  }
-
-  /* ---------- CURRENT view recreation ---------- */
-  .cur-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 10px; }
-  .cur-head b { font-size: 16px; font-weight: 750; }
-  .cur-nav {
-    width: 34px; height: 34px; border-radius: 12px;
+  .cal-top { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 8px; }
+  .cal-top b { font-size: 16px; font-weight: 750; }
+  .cal-nav {
+    width: 32px; height: 32px; border-radius: 11px;
     background: rgba(148, 163, 216, 0.08); border: 1px solid var(--a-line);
     display: grid; place-items: center; color: var(--a-dim); font-size: 13px;
   }
-  .cur-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-  .cur-grid .dw { text-align: center; font-size: 10px; font-weight: 650; color: var(--a-faint); padding: 3px 0; }
-  .cur-c {
-    aspect-ratio: 1;
-    border-radius: 11px;
-    background: var(--a-tile);
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-    font-size: 12.5px; font-weight: 550; color: var(--a-dim);
-  }
-  .cur-c.ghost { opacity: 0.3; }
-  .cur-c.today { border: 1px solid rgba(139, 147, 248, 0.5); }
-  .cur-c.sel { background: var(--a-accent); color: #0b0e17; font-weight: 750; }
-  .cur-c .dd { display: flex; gap: 2px; height: 5px; }
-  .dd i { width: 5px; height: 5px; border-radius: 50%; display: block; }
-  .cur-agh { font-size: 12.5px; font-weight: 650; color: var(--a-dim); margin: 12px 0 2px; padding: 0 2px; }
-  .cur-row { display: flex; gap: 8px; align-items: flex-start; padding: 9px 2px 0; }
-  .cur-row .t { flex: none; width: 40px; font-size: 12px; color: var(--a-dim); padding-top: 4px; }
-  .cur-row .cb { flex: none; width: 26px; height: 26px; border-radius: 9px; border: 1.5px solid rgba(148, 163, 216, 0.4); margin-top: 2px; }
-  .cur-row .bd { flex: 1; min-width: 0; line-height: 1.25; }
-  .cur-row .bd b { font-size: 15px; font-weight: 650; display: block; }
-  .cur-row .bd span { font-size: 11.5px; color: var(--a-faint); display: block; }
-  .cur-row .bd .theme { color: var(--t-pink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cur-row .pd { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--t-gold); margin-top: 8px; box-shadow: 0 0 8px var(--t-gold); }
+  .dow7 { display: grid; grid-template-columns: repeat(7, 1fr); padding-bottom: 4px; }
+  .dow7 span { text-align: center; font-size: 10px; font-weight: 650; color: var(--a-faint); }
 
-  .mark {
+  .cap { margin-top: 14px; font-size: 12.5px; color: var(--ink-faint); max-width: 360px; }
+
+  /* shared micro-marks */
+  .kw {
+    font-size: 9px; font-weight: 650;
+    line-height: 1.15;
+    padding: 2px 4px;
+    border-radius: 5px;
+    max-width: 100%;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .ticks { display: flex; gap: 2.5px; justify-content: center; }
+  .ticks i { width: 3px; height: 3px; border-radius: 50%; display: block; opacity: 0.4; }
+  .wring { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--t-blue); opacity: 0.75; }
+  .nsel {
+    background: var(--a-accent); color: #0b0e17 !important; font-weight: 750 !important;
+    border-radius: 50%;
+  }
+
+  /* ---------- Concept A: fisheye weeks ---------- */
+  .fz { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .fz-row { display: grid; grid-template-columns: repeat(7, 1fr); border-radius: 14px; }
+  .fz-row .c { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+  .fz-row .n { font-size: 12px; font-weight: 550; color: var(--a-dim); }
+  .fz-row .n.out { opacity: 0.3; }
+  .fz-row .bar { width: 12px; height: 2.5px; border-radius: 2px; background: var(--a-accent); }
+  .b0 { opacity: 0; } .b1 { opacity: 0.35; } .b2 { opacity: 0.65; } .b3 { opacity: 1; }
+  .fz-far { height: 40px; padding-top: 5px; }
+  .fz-far .n { font-size: 11px; }
+  .fz-near { height: 62px; padding-top: 6px; }
+  .fz-near .mk { font-size: 8.5px; color: var(--a-dim); max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 2px; }
+  .fz-focus {
+    height: 238px;
+    position: relative;
+    background: rgba(139, 147, 248, 0.055);
+    border: 1px solid rgba(139, 147, 248, 0.2);
+    padding: 8px 3px 8px;
+  }
+  .fz-focus .c { justify-content: flex-start; gap: 4px; padding: 0 2px; }
+  .fz-focus .n {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    font-size: 13px;
+  }
+  .fz-focus .band-gap { height: 20px; flex: none; }
+  .fz-focus .ticks { margin-top: auto; padding-bottom: 2px; }
+  .fz-band {
     position: absolute;
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--chip-ink);
-    font-size: 12.5px; font-weight: 750;
-    display: grid; place-items: center;
-    border: 2px solid var(--ground);
-    box-shadow: 0 4px 12px rgba(8, 10, 22, 0.35);
+    top: 42px;
+    left: calc(100% / 7 * 1 + 3px);
+    width: calc(100% / 7 * 5 - 6px);
+    height: 17px;
+    border-radius: 5px;
+    background: rgba(239, 127, 174, 0.16);
+    border-left: 2px solid var(--t-pink);
+    color: var(--t-pink);
+    font-size: 9px; font-weight: 650;
+    line-height: 17px;
+    padding: 0 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-
-  .cap {
-    margin-top: 14px;
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    max-width: 360px;
-  }
-
-  /* ---------- Direction 1: open grid ---------- */
-  .g1 { display: grid; grid-template-columns: repeat(7, 1fr); }
-  .g1 .dw { text-align: center; font-size: 10px; font-weight: 650; color: var(--a-faint); padding: 2px 0 6px; }
-  .g1 .c { height: 44px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 2px; }
-  .g1 .n {
-    width: 28px; height: 28px;
-    display: grid; place-items: center;
-    border-radius: 50%;
-    font-size: 13px; font-weight: 550; color: var(--a-dim);
-  }
-  .g1 .today .n { box-shadow: inset 0 0 0 1.5px rgba(139, 147, 248, 0.55); }
-  .g1 .sel .n { background: var(--a-accent); color: #0b0e17; font-weight: 750; box-shadow: none; }
-  .g1 .dd { height: 4px; }
-  .g1 .dd i { width: 4px; height: 4px; }
-
-  /* ---------- Direction 2: week strip ---------- */
-  .strip-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 10px; }
-  .strip-head b { font-size: 16px; font-weight: 750; }
-  .strip-head .chev { color: var(--a-faint); font-size: 11px; }
-  .strip-head .today-chip {
-    margin-left: auto;
-    font-size: 11.5px; font-weight: 650;
+  .fz-week-label {
+    position: absolute;
+    top: -1px; right: 10px;
+    transform: translateY(-50%);
+    font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--a-accent);
-    background: var(--a-accent-soft);
-    border-radius: 999px;
-    padding: 4px 11px;
+    background: var(--a-bg);
+    padding: 0 6px;
   }
-  .strip { display: grid; grid-template-columns: repeat(7, 1fr); padding-bottom: 6px; border-bottom: 1px solid var(--a-line); }
-  .strip .c { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-  .strip .dw { font-size: 10px; font-weight: 650; color: var(--a-faint); }
-  .strip .n {
-    width: 32px; height: 32px;
-    display: grid; place-items: center;
-    border-radius: 50%;
-    font-size: 13.5px; font-weight: 550; color: var(--a-dim);
-  }
-  .strip .sel .n { background: var(--a-accent); color: #0b0e17; font-weight: 750; }
-  .strip .tick { width: 14px; height: 3px; border-radius: 2px; background: var(--a-accent); }
-  .strip .t0 { opacity: 0; } .strip .t1 { opacity: 0.3; } .strip .t2 { opacity: 0.6; } .strip .t3 { opacity: 1; }
-  .strip .sel .tick { opacity: 0; }
 
-  /* ---------- Direction 3: quiet month ---------- */
-  .g3 { display: grid; grid-template-columns: repeat(7, 1fr); }
-  .g3 .dw { text-align: center; font-size: 10px; font-weight: 650; color: var(--a-faint); padding: 2px 0 6px; }
-  .g3 .c { height: 42px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 2px; }
-  .g3 .n {
-    width: 28px; height: 28px;
-    display: grid; place-items: center;
-    border-radius: 50%;
-    font-size: 13px; font-weight: 550; color: var(--a-dim);
+  /* ---------- Concept B: weighted days ---------- */
+  .wk { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+  .wk-bar { display: flex; gap: 3px; }
+  .wk-day {
+    border-radius: 10px;
+    background: rgba(148, 163, 216, 0.06);
+    padding: 4px 5px;
+    min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+    overflow: hidden;
   }
-  .g3 .today .n { box-shadow: inset 0 0 0 1.5px rgba(139, 147, 248, 0.55); }
-  .g3 .sel .n { background: var(--a-accent); color: #0b0e17; font-weight: 750; box-shadow: none; }
-  .g3 .bar { width: 15px; height: 3px; border-radius: 2px; background: var(--a-accent); }
-  .g3 .b0 { opacity: 0; } .g3 .b1 { opacity: 0.3; } .g3 .b2 { opacity: 0.6; } .g3 .b3 { opacity: 1; }
-  .g3-legend {
+  .wk-day .d { font-size: 9px; font-weight: 650; color: var(--a-faint); white-space: nowrap; }
+  .wk-day.hot { background: rgba(139, 147, 248, 0.1); }
+  .wk-day.sel { background: var(--a-accent-soft); border: 1px solid rgba(139, 147, 248, 0.5); }
+  .wk-day.sel .d { color: var(--a-accent); }
+  .wk-day .ticks { justify-content: flex-start; margin-top: auto; }
+  .wk-legend {
     display: flex; align-items: center; gap: 6px;
-    justify-content: flex-end;
-    padding: 5px 4px 0;
+    padding: 8px 4px 0;
     font-size: 10.5px; color: var(--a-faint);
   }
-  .g3-legend i { width: 12px; height: 3px; border-radius: 2px; background: var(--a-accent); display: block; }
+  .wk-legend i { display: block; height: 3px; border-radius: 2px; background: var(--a-accent); }
+
+  /* ---------- Concept C: rhythms & moments ---------- */
+  .g4 { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+  .g4-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; position: relative; }
+  .g4-row .c {
+    height: 58px;
+    border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 4px 2px 4px;
+    min-width: 0;
+  }
+  .g4-row .n { font-size: 11.5px; font-weight: 550; color: var(--a-dim); width: 20px; height: 20px; display: grid; place-items: center; }
+  .g4-row .n.out { opacity: 0.3; }
+  .g4-row .c.sel { background: var(--a-accent-soft); border: 1px solid rgba(139, 147, 248, 0.45); }
+  .g4-row .ticks { margin-top: auto; }
+  .g4-band {
+    position: absolute;
+    top: 27px;
+    left: calc(100% / 7 * 1 + 4px);
+    width: calc(100% / 7 * 5 - 8px);
+    height: 14px;
+    border-radius: 4px;
+    background: rgba(239, 127, 174, 0.16);
+    border-left: 2px solid var(--t-pink);
+    color: var(--t-pink);
+    font-size: 8.5px; font-weight: 650;
+    line-height: 14px;
+    padding: 0 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .day-x {
+    border: 1px solid rgba(139, 147, 248, 0.3);
+    background: rgba(139, 147, 248, 0.06);
+    border-radius: 14px;
+    padding: 8px 10px 6px;
+    margin-top: 2px;
+  }
+  .day-x-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--a-accent);
+    padding: 0 2px 4px;
+  }
+  .day-x-head span { color: var(--a-faint); font-size: 12px; letter-spacing: 0; text-transform: none; }
+  .xr { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+  .xr + .xr { border-top: 1px solid rgba(148, 163, 216, 0.08); }
+  .xr .t { flex: none; width: 40px; font-size: 11px; color: var(--a-dim); text-align: right; }
+  .xr .gl {
+    flex: none; width: 26px; height: 26px; border-radius: 9px;
+    display: grid; place-items: center; font-size: 12px;
+  }
+  .xr .bd { flex: 1; min-width: 0; line-height: 1.25; }
+  .xr .bd b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xr .bd span { display: block; font-size: 10.5px; color: var(--a-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .xr .cb { flex: none; width: 19px; height: 19px; border-radius: 7px; border: 1.5px solid rgba(148, 163, 216, 0.4); }
 </style>
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Memory · Calendar view · 3 directions</div>
-    <h1>Calming the calendar</h1>
+    <div class="eyebrow">Memory · Calendar view · Round 2</div>
+    <h1>The calendar is the page</h1>
     <p class="lede">
-      The month grid currently claims about 60% of the screen — 42 boxed tiles, rainbow dots, and the
-      actual schedule squeezed into two rows at the bottom. These three static mock-ups keep Memory's
-      existing dark palette, accent, and type, and each one reduces the noise a different way.
+      Building on the open-grid direction: no persistent task list. The month fills the screen, days speak
+      in keywords, and detail only appears when you expand a day. Three mechanisms, one per mock-up — a
+      fisheye lens on the current week, days sized by what they hold, and a visual grammar that separates
+      recurring rhythms from one-off moments. The data model already knows the difference
+      (<span style="font-family: ui-monospace, monospace; font-size: 0.88em;">item.cadence</span> vs.
+      <span style="font-family: ui-monospace, monospace; font-size: 0.88em;">eventAt</span>), so the
+      "smart parsing" costs one filter.
     </p>
   </header>
 
-  <!-- ================= DIAGNOSIS ================= -->
+  <!-- ================= CONCEPT A ================= -->
   <section>
-    <div class="kicker">Diagnosis</div>
-    <h2>What makes today's view heavy</h2>
+    <div class="kicker">Concept A · Zoom without leaving the month</div>
+    <h2>Fisheye weeks</h2>
     <div class="row" style="margin-top: 22px;">
-      <div class="shot">
-        <div class="phone">
-          <div class="p-head">
-            <span class="p-orb"></span>
-            <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
-            <span class="p-gear">⚙</span>
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="dow7"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+          <div class="fz">
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n out">28</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n out">29</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n out">30</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">1</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">2</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">3</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">4</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n">5</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">6</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">7</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">8</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">9</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">10</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">11</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-far">
+              <span class="c"><span class="n">12</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">13</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">14</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">15</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">16</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">17</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">18</span><span class="bar b0"></span></span>
+            </div>
+            <div class="fz-row fz-focus">
+              <span class="fz-week-label">This week</span>
+              <span class="fz-band">Sarah &amp; Deidra · until Fri 10:00</span>
+              <span class="c"><span class="n">19</span><span class="band-gap"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">20</span><span class="band-gap"></span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 arrive</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">21</span><span class="band-gap"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">22</span><span class="band-gap"></span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Insurance</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n nsel">23</span><span class="band-gap"></span><span class="kw" style="background:rgba(139,147,248,0.16); color:var(--a-accent);">3 items</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">24</span><span class="band-gap"></span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 leave</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span><span class="wring" style="margin-bottom:2px;"></span></span>
+              <span class="c"><span class="n">25</span><span class="band-gap"></span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="fz-row fz-near">
+              <span class="c"><span class="n">26</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">27</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">28</span><span class="mk">Car svc</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">29</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+              <span class="c"><span class="n">30</span><span class="mk">Anna</span><span class="bar b1"></span></span>
+              <span class="c"><span class="n">31</span><span class="mk">Rent</span><span class="bar b2"></span></span>
+              <span class="c"><span class="n out">1</span><span class="mk">&nbsp;</span><span class="bar b0"></span></span>
+            </div>
           </div>
-          <div class="p-body">
-            <div class="cur-head">
-              <span class="cur-nav">‹</span><b>July 2026</b><span class="cur-nav">›</span>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>The whole month stays on screen; the lens does the prioritizing.</strong> The selected
+        week gets ~5× the height of a distant week and is the only place that renders words. Tap any other
+        week (or scroll) and the lens glides there — you never lose the month's shape to see the week's
+        content.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>Three zoom levels, three vocabularies.</b> Far weeks: number +
+          density bar. The adjacent week: number + a one-word whisper ("Rent", "Anna"). The focus week:
+          keyword chips, time hints, and multi-day spans as a continuous band — Sarah &amp; Deidra reads as
+          one visit, not five dots.</span></li>
+          <li><span class="pt-num">2</span><span><b>Rhythms don't inflate density.</b> Daily/weekly cadence items
+          would light up every bar, so they're excluded from the bars and appear only as faint ticks
+          inside the focus week. The bars answer "which days are <em>unusual</em>?"</span></li>
+          <li><span class="pt-num">3</span><span><b>Detail is one tap deeper.</b> Today shows a "3 items" pill;
+          tapping any focus-week day expands it (see Concept C's panel) rather than keeping a permanent
+          agenda below.</span></li>
+        </ul>
+        <p class="code-note">The grid rows in <code>.cal-grid</code> become per-week rows with a height class
+        driven by distance from the selected week; <code>byDay</code> in <code>CalendarView.tsx</code> already
+        holds per-day entries for chips and counts. A CSS height transition makes the lens glide.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONCEPT B ================= -->
+  <section>
+    <div class="kicker">Concept B · Space follows weight</div>
+    <h2>Weighted days</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="wk">
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">W 1</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 2</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 3</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 4</span></span>
             </div>
-            <div class="cur-grid">
-              <span class="dw">S</span><span class="dw">M</span><span class="dw">T</span><span class="dw">W</span><span class="dw">T</span><span class="dw">F</span><span class="dw">S</span>
-              <div class="cur-c ghost">28</div><div class="cur-c ghost">29</div><div class="cur-c ghost">30</div>
-              <div class="cur-c">1</div>
-              <div class="cur-c">2<span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">3</div><div class="cur-c">4</div>
-              <div class="cur-c">5<span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="cur-c">6</div>
-              <div class="cur-c">7<span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">8</div>
-              <div class="cur-c">9<span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">10</div><div class="cur-c">11</div>
-              <div class="cur-c">12<span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="cur-c">13</div>
-              <div class="cur-c">14<span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">15</div>
-              <div class="cur-c">16<span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">17</div><div class="cur-c">18</div>
-              <div class="cur-c">19<span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="cur-c">20<span class="dd"><i style="background:var(--t-pink)"></i></span></div>
-              <div class="cur-c">21<span class="dd"><i style="background:var(--t-purple)"></i><i style="background:var(--t-pink)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">22<span class="dd"><i style="background:var(--t-gold)"></i><i style="background:var(--t-pink)"></i><i style="background:var(--t-purple)"></i></span></div>
-              <div class="cur-c today sel">23<span class="dd"><i style="background:#c94f7c"></i><i style="background:#c94f7c"></i><i style="background:#3f478f"></i></span></div>
-              <div class="cur-c">24<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="cur-c">25<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="cur-c">26<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i><i style="background:var(--t-purple)"></i></span></div>
-              <div class="cur-c">27<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="cur-c">28<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="cur-c">29<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="cur-c">30<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c">31<span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="cur-c ghost">1</div>
-              <div class="cur-c ghost">2</div><div class="cur-c ghost">3</div><div class="cur-c ghost">4</div><div class="cur-c ghost">5</div><div class="cur-c ghost">6</div><div class="cur-c ghost">7</div><div class="cur-c ghost">8</div>
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 5</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 6</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 7</span><span class="kw" style="background:rgba(154,141,242,0.14); color:var(--t-purple);">Dentist</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 8</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 9</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 10</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 11</span></span>
             </div>
-            <div class="cur-agh">Thursday 23 July</div>
-            <div class="cur-row">
-              <span class="t">0:00</span>
-              <span class="cb"></span>
-              <div class="bd">
-                <b>Start the dishwasher</b>
-                <span>◎ Goal · daily at 12am · today 0:00 · Home</span>
+            <div class="wk-bar" style="height: 42px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 12</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 13</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">T 14</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 15</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 16</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Payday</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">F 17</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">S 18</span></span>
+            </div>
+            <div class="wk-bar" style="height: 108px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 19</span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">M 20</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Sarah + Deidra arrive</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">10:00</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 21</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">visit · d2</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">W 22</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Insurance due</span><span class="kw" style="background:rgba(239,127,174,0.1); color:var(--t-pink);">visit · d3</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day sel" style="flex: 4;"><span class="d">T 23 · TODAY</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">visit · d4</span><span class="kw" style="background:rgba(139,147,248,0.18); color:var(--a-accent);">3 items ↓</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="wk-day hot" style="flex: 3;"><span class="d">F 24</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">10:00 leave</span><span class="ticks"><i style="background:var(--t-gold)"></i></span><span class="wring"></span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">S 25</span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="wk-bar" style="height: 66px;">
+              <span class="wk-day" style="flex: 1;"><span class="d">S 26</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">M 27</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 28</span><span class="kw" style="background:rgba(106,165,240,0.14); color:var(--t-blue);">Car svc</span></span>
+              <span class="wk-day" style="flex: 1;"><span class="d">W 29</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">T 30</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Anna 🎂</span></span>
+              <span class="wk-day hot" style="flex: 2;"><span class="d">F 31</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Rent</span></span>
+            </div>
+            <div class="wk-legend"><i style="width: 10px; opacity: 0.35;"></i><i style="width: 22px; opacity: 0.7;"></i><i style="width: 38px; opacity: 1;"></i> day width grows with what's on · rhythms excluded</div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>The boldest option: the grid itself becomes the chart.</strong> Each week is a bar; each
+        day's width is proportional to its load (rhythms excluded, so the proportions mean something).
+        Empty days compress to labeled slivers, busy days earn enough room to speak in words. Week height
+        scales too — the week of the visit is physically the biggest thing on screen.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>You read the month like a skyline.</b> Where the space is,
+          the life is. No counting dots — the visit week and the end-of-month cluster are visible from
+          arm's length.</span></li>
+          <li><span class="pt-num">2</span><span><b>Partial weeks stop pretending.</b> July 1–4 renders as a
+          four-day bar; there are no ghost cells from June or August at all.</span></li>
+          <li><span class="pt-num">3</span><span><b>The honest tradeoff:</b> weekday columns no longer align
+          vertically, so each day carries its own "T 23" label. You trade "all Mondays in a column" for
+          "busy days are big." Worth prototyping; feels great or infuriating, nothing in between.</span></li>
+        </ul>
+        <p class="code-note">Each week becomes a flex row with <code>flex: 1 + moments.length</code> per day —
+        about 30 lines in <code>CalendarView.tsx</code>. Cap the ratio (e.g. max 4:1) so quiet days stay
+        tappable.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONCEPT C ================= -->
+  <section>
+    <div class="kicker">Concept C · A grammar for time</div>
+    <h2>Rhythms &amp; moments</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top"><span class="cal-nav">‹</span><b>July 2026</b><span class="cal-nav">›</span></div>
+          <div class="dow7"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+          <div class="g4">
+            <div class="g4-row">
+              <span class="c"><span class="n out">28</span></span>
+              <span class="c"><span class="n out">29</span></span>
+              <span class="c"><span class="n out">30</span></span>
+              <span class="c"><span class="n">1</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">2</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">3</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">4</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="c"><span class="n">5</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">6</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">7</span><span class="kw" style="background:rgba(154,141,242,0.14); color:var(--t-purple);">Dentist</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">8</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">9</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">10</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">11</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="c"><span class="n">12</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">13</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">14</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">15</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">16</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Payday</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">17</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">18</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+            </div>
+            <div class="g4-row">
+              <span class="g4-band">Sarah &amp; Deidra</span>
+              <span class="c"><span class="n">19</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">20</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">21</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">22</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c sel"><span class="n nsel">23</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">24</span><span class="wring"></span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">25</span><span class="kw" style="background:rgba(111,208,140,0.14); color:var(--t-green);">Market</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+            </div>
+            <div class="day-x">
+              <div class="day-x-head">Thursday 23 <span>3 items · ✕</span></div>
+              <div class="xr">
+                <span class="t">0:00</span>
+                <span class="gl" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">◎</span>
+                <div class="bd"><b>Start the dishwasher</b><span>rhythm · daily at 12am · Home</span></div>
+                <span class="cb"></span>
               </div>
-              <span class="pd"></span>
-            </div>
-            <div class="cur-row">
-              <span class="t">12:00</span>
-              <span class="cb" style="border-style: dotted; border-radius: 50%;"></span>
-              <div class="bd">
-                <b>Sarah and Deidra visiting</b>
-                <span>📅 Event · 20 Jul – Fri 10:00</span>
-                <span class="theme">Sarah and Deidra Visit</span>
+              <div class="xr">
+                <span class="t">all day</span>
+                <span class="gl" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">📅</span>
+                <div class="bd"><b>Sarah and Deidra visiting</b><span>moment · day 4 of 5 · leaves Fri 10:00</span></div>
               </div>
-              <span class="pd"></span>
+              <div class="xr">
+                <span class="t">18:30</span>
+                <span class="gl" style="background:rgba(111,208,140,0.14); color:var(--t-green);">✓</span>
+                <div class="bd"><b>Water the garden</b><span>rhythm · every 2 days · Garden</span></div>
+                <span class="cb"></span>
+              </div>
             </div>
-          </div>
-          <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
-          <div class="p-tabs">
-            <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+            <div class="g4-row">
+              <span class="c"><span class="n">26</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">27</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">28</span><span class="kw" style="background:rgba(106,165,240,0.14); color:var(--t-blue);">Car svc</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">29</span><span class="ticks"><i style="background:var(--t-gold)"></i></span></span>
+              <span class="c"><span class="n">30</span><span class="kw" style="background:rgba(239,127,174,0.14); color:var(--t-pink);">Anna 🎂</span><span class="ticks"><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></span>
+              <span class="c"><span class="n">31</span><span class="kw" style="background:rgba(232,194,106,0.14); color:var(--t-gold);">Rent</span><span class="wring"></span></span>
+              <span class="c"><span class="n out">1</span></span>
+            </div>
           </div>
         </div>
-        <span class="mark" style="right: -11px; top: 210px;">1</span>
-        <span class="mark" style="right: -11px; top: 420px;">2</span>
-        <span class="mark" style="right: -11px; top: 545px;">3</span>
-      </div>
-      <div>
-        <ul class="points">
-          <li>
-            <span class="pt-num">1</span>
-            <span><b>Every day is a box, whether it holds anything or not.</b> 42 equal tiles — including six ghosted
-            out-of-month cells per edge row — give the eye no shortcut to the days that matter. The square
-            aspect ratio also makes the grid ~430px tall, pushing everything else below the fold.</span>
-          </li>
-          <li>
-            <span class="pt-num">2</span>
-            <span><b>Color carries no consistent meaning.</b> Up to three theme-colored dots per day produce a
-            rainbow across the month. Without a legend, green-green-blue vs. green-gold-purple is texture,
-            not information — and busy days don't look busier than lightly scheduled ones.</span>
-          </li>
-          <li>
-            <span class="pt-num">3</span>
-            <span><b>The payoff is squeezed out.</b> The agenda — the reason to open this tab — gets roughly two
-            visible rows, each stacking flavour, cadence, date range, and theme into a wrapping metadata
-            line that competes with the title.</span>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= DIRECTION 1 ================= -->
-  <section>
-    <div class="kicker">Direction 1 · Low-risk refinement</div>
-    <h2>Open grid</h2>
-    <div class="row" style="margin-top: 22px;">
-      <div class="shot">
-        <div class="phone">
-          <div class="p-head">
-            <span class="p-orb"></span>
-            <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
-            <span class="p-gear">⚙</span>
-          </div>
-          <div class="p-body">
-            <div class="cur-head">
-              <span class="cur-nav">‹</span><b>July 2026</b><span class="cur-nav">›</span>
-            </div>
-            <div class="g1">
-              <span class="dw">S</span><span class="dw">M</span><span class="dw">T</span><span class="dw">W</span><span class="dw">T</span><span class="dw">F</span><span class="dw">S</span>
-              <div class="c"></div><div class="c"></div><div class="c"></div>
-              <div class="c"><span class="n">1</span></div>
-              <div class="c"><span class="n">2</span><span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">3</span></div>
-              <div class="c"><span class="n">4</span></div>
-              <div class="c"><span class="n">5</span><span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c"><span class="n">6</span></div>
-              <div class="c"><span class="n">7</span><span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">8</span></div>
-              <div class="c"><span class="n">9</span><span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">10</span></div>
-              <div class="c"><span class="n">11</span></div>
-              <div class="c"><span class="n">12</span><span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c"><span class="n">13</span></div>
-              <div class="c"><span class="n">14</span><span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">15</span></div>
-              <div class="c"><span class="n">16</span><span class="dd"><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">17</span></div>
-              <div class="c"><span class="n">18</span></div>
-              <div class="c"><span class="n">19</span><span class="dd"><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c"><span class="n">20</span><span class="dd"><i style="background:var(--t-pink)"></i></span></div>
-              <div class="c"><span class="n">21</span><span class="dd"><i style="background:var(--t-purple)"></i><i style="background:var(--t-pink)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">22</span><span class="dd"><i style="background:var(--t-gold)"></i><i style="background:var(--t-pink)"></i><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c today sel"><span class="n">23</span><span class="dd"><i style="background:var(--t-pink)"></i><i style="background:var(--t-pink)"></i><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c"><span class="n">24</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="c"><span class="n">25</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="c"><span class="n">26</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i><i style="background:var(--t-purple)"></i></span></div>
-              <div class="c"><span class="n">27</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="c"><span class="n">28</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="c"><span class="n">29</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i><i style="background:var(--t-blue)"></i></span></div>
-              <div class="c"><span class="n">30</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"><span class="n">31</span><span class="dd"><i style="background:var(--t-green)"></i><i style="background:var(--t-gold)"></i><i style="background:var(--t-green)"></i></span></div>
-              <div class="c"></div>
-            </div>
-            <div class="ag-h">Thursday 23 July</div>
-            <div class="ag-row">
-              <span class="ag-time">0:00</span>
-              <span class="ag-glyph" style="background: rgba(232,194,106,0.14); color: var(--t-gold);">◎</span>
-              <div class="ag-body"><b>Start the dishwasher</b><span>Goal · daily at 12am · Home</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">10:00</span>
-              <span class="ag-glyph" style="background: rgba(239,127,174,0.14); color: var(--t-pink);">📅</span>
-              <div class="ag-body"><b>Sarah and Deidra visiting</b><span>Event · until Fri · Sarah and Deidra Visit</span></div>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">18:30</span>
-              <span class="ag-glyph" style="background: rgba(111,208,140,0.14); color: var(--t-green);">✓</span>
-              <div class="ag-body"><b>Water the garden</b><span>Task · Garden</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time due">DUE</span>
-              <span class="ag-glyph" style="background: rgba(154,141,242,0.14); color: var(--t-purple);">⏰</span>
-              <div class="ag-body"><b>Renew car insurance</b><span>Reminder · due today (soft)</span></div>
-              <span class="ag-check"></span>
-            </div>
-          </div>
-          <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
-          <div class="p-tabs">
-            <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
-          </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
         </div>
       </div>
       <div class="prose">
-        <p><strong>Same layout, most of the weight removed.</strong> The tiles disappear: day numbers sit
-        directly on the background, so an empty day is just a quiet number and a scheduled day visibly
-        carries something. Days outside July vanish instead of ghosting.</p>
+        <p><strong>Every mark answers "what kind of time is this?"</strong> Recurring rhythms (daily
+        dishwasher, every-other-day garden) recede into faint ticks at the cell floor — present, never
+        loud. Weekly recurrences render as a hollow ring that visibly repeats down the Friday column.
+        One-off moments get the only words on the grid: an auto-keyword clipped from the title. Multi-day
+        events run as a single band.</p>
         <ul class="points">
-          <li><span class="pt-num">1</span><span><b>The grid drops from ~430px to ~270px tall</b> by giving up the
-          square aspect ratio. Nothing is lost — the tiles were mostly padding — and the agenda gains
-          two to three visible rows.</span></li>
-          <li><span class="pt-num">2</span><span><b>Today and selected become circles, not tiles.</b> A thin accent
-          ring marks today; a filled accent circle marks the selection. Both read instantly because
-          they're the only enclosed shapes left in the grid.</span></li>
-          <li><span class="pt-num">3</span><span><b>Agenda rows get one metadata line, ever.</b> Flavour moves into a
-          theme-tinted glyph chip on the left, so the text line only carries what varies: cadence, range,
-          theme. Titles stop wrapping under the noise.</span></li>
+          <li><span class="pt-num">1</span><span><b>The month becomes scannable prose.</b> "Dentist… Payday…
+          Sarah &amp; Deidra… Market… Rent" is the month, readable top to bottom, because rhythms no
+          longer camouflage the moments.</span></li>
+          <li><span class="pt-num">2</span><span><b>Detail lives behind the tap.</b> Selecting a day unfolds an
+          inline panel under its own week row — full titles, cadence, checkboxes — labeled
+          <em>rhythm</em> or <em>moment</em>. Close it and the calendar is all there is.</span></li>
+          <li><span class="pt-num">3</span><span><b>The parse is one line.</b> <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">item.cadence</code>
+          → tick (or ring if weekly); <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">eventAt / deadline</code>
+          → keyword chip; <code style="font-family: ui-monospace, monospace; font-size: 0.9em;">eventEnd</code>
+          spanning days → band. The keyword is the title's first two significant words.</span></li>
         </ul>
-        <p class="code-note">Cheapest to ship: this is mostly CSS on <code>.cal-cell</code> /
-        <code>.cal-grid</code> in <code>src/app/styles.css</code>, hiding <code>.other</code> cells, and a
-        slimmer row renderer in the agenda section of <code>CalendarView.tsx</code>.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= DIRECTION 2 ================= -->
-  <section>
-    <div class="kicker">Direction 2 · Structural change</div>
-    <h2>Agenda first, week strip</h2>
-    <div class="row" style="margin-top: 22px;">
-      <div class="shot">
-        <div class="phone">
-          <div class="p-head">
-            <span class="p-orb"></span>
-            <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
-            <span class="p-gear">⚙</span>
-          </div>
-          <div class="p-body">
-            <div class="strip-head">
-              <b>July 2026</b><span class="chev">▼</span>
-              <span class="today-chip">Today</span>
-            </div>
-            <div class="strip">
-              <div class="c"><span class="dw">S</span><span class="n">19</span><span class="tick t1"></span></div>
-              <div class="c"><span class="dw">M</span><span class="n">20</span><span class="tick t1"></span></div>
-              <div class="c"><span class="dw">T</span><span class="n">21</span><span class="tick t3"></span></div>
-              <div class="c"><span class="dw">W</span><span class="n">22</span><span class="tick t3"></span></div>
-              <div class="c sel"><span class="dw">T</span><span class="n">23</span><span class="tick t3"></span></div>
-              <div class="c"><span class="dw">F</span><span class="n">24</span><span class="tick t2"></span></div>
-              <div class="c"><span class="dw">S</span><span class="n">25</span><span class="tick t3"></span></div>
-            </div>
-            <div class="ag-h">Today · Thursday 23</div>
-            <div class="ag-row">
-              <span class="ag-time">0:00</span>
-              <span class="ag-glyph" style="background: rgba(232,194,106,0.14); color: var(--t-gold);">◎</span>
-              <div class="ag-body"><b>Start the dishwasher</b><span>Goal · daily at 12am · Home</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">10:00</span>
-              <span class="ag-glyph" style="background: rgba(239,127,174,0.14); color: var(--t-pink);">📅</span>
-              <div class="ag-body"><b>Sarah and Deidra visiting</b><span>Event · until Fri 10:00</span></div>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">18:30</span>
-              <span class="ag-glyph" style="background: rgba(111,208,140,0.14); color: var(--t-green);">✓</span>
-              <div class="ag-body"><b>Water the garden</b><span>Task · Garden</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time due">DUE</span>
-              <span class="ag-glyph" style="background: rgba(154,141,242,0.14); color: var(--t-purple);">⏰</span>
-              <div class="ag-body"><b>Renew car insurance</b><span>Reminder · due today (soft)</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-h">Tomorrow · Friday 24</div>
-            <div class="ag-row">
-              <span class="ag-time">7:30</span>
-              <span class="ag-glyph" style="background: rgba(106,165,240,0.14); color: var(--t-blue);">📅</span>
-              <div class="ag-body"><b>Gym class</b><span>Event · weekly · Health</span></div>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">10:00</span>
-              <span class="ag-glyph" style="background: rgba(239,127,174,0.14); color: var(--t-pink);">📅</span>
-              <div class="ag-body"><b>Sarah and Deidra leave</b><span>Event · Sarah and Deidra Visit</span></div>
-            </div>
-            <div class="ag-h">Saturday 25</div>
-            <div class="ag-row">
-              <span class="ag-time">9:00</span>
-              <span class="ag-glyph" style="background: rgba(111,208,140,0.14); color: var(--t-green);">✓</span>
-              <div class="ag-body"><b>Farmers market run</b><span>Task · Home</span></div>
-              <span class="ag-check"></span>
-            </div>
-          </div>
-          <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
-          <div class="p-tabs">
-            <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
-          </div>
-        </div>
-      </div>
-      <div class="prose">
-        <p><strong>Flip the hierarchy: the schedule is the page, the grid is navigation.</strong> The month
-        collapses into a single week strip; tapping the month name (▼) expands the full grid only when
-        you need to jump far. Everything below is a continuously scrolling agenda for the days ahead,
-        grouped under day headers.</p>
-        <ul class="points">
-          <li><span class="pt-num">1</span><span><b>"What's coming?" needs zero taps.</b> Today, tomorrow, and the
-          weekend are all on screen at once — seven-plus entries visible instead of two. This matches how
-          the tab is actually used day to day.</span></li>
-          <li><span class="pt-num">2</span><span><b>One accent-colored tick per day replaces the rainbow.</b> Its
-          strength scales with how much is scheduled, so the strip previews density without color
-          noise.</span></li>
-          <li><span class="pt-num">3</span><span><b>Swiping the strip moves a week at a time</b>; the expanded month
-          (rendered as Direction 3's quiet grid) handles long jumps, then collapses again.</span></li>
-        </ul>
-        <p class="code-note">Bigger lift: <code>CalendarView.tsx</code> needs a collapsed/expanded state and a
-        multi-day query window (the <code>api.calendar(from, to)</code> range already supports it), plus the
-        grouped agenda renderer.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= DIRECTION 3 ================= -->
-  <section>
-    <div class="kicker">Direction 3 · Calm overview</div>
-    <h2>Quiet month</h2>
-    <div class="row" style="margin-top: 22px;">
-      <div class="shot">
-        <div class="phone">
-          <div class="p-head">
-            <span class="p-orb"></span>
-            <div class="p-title"><b>Memory</b><span>Thursday 23 July</span></div>
-            <span class="p-gear">⚙</span>
-          </div>
-          <div class="p-body">
-            <div class="cur-head">
-              <span class="cur-nav">‹</span><b>July 2026</b><span class="cur-nav">›</span>
-            </div>
-            <div class="g3">
-              <span class="dw">S</span><span class="dw">M</span><span class="dw">T</span><span class="dw">W</span><span class="dw">T</span><span class="dw">F</span><span class="dw">S</span>
-              <div class="c"></div><div class="c"></div><div class="c"></div>
-              <div class="c"><span class="n">1</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">2</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">3</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">4</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">5</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">6</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">7</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">8</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">9</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">10</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">11</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">12</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">13</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">14</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">15</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">16</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">17</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">18</span><span class="bar b0"></span></div>
-              <div class="c"><span class="n">19</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">20</span><span class="bar b1"></span></div>
-              <div class="c"><span class="n">21</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">22</span><span class="bar b3"></span></div>
-              <div class="c today sel"><span class="n">23</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">24</span><span class="bar b2"></span></div>
-              <div class="c"><span class="n">25</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">26</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">27</span><span class="bar b2"></span></div>
-              <div class="c"><span class="n">28</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">29</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">30</span><span class="bar b3"></span></div>
-              <div class="c"><span class="n">31</span><span class="bar b3"></span></div>
-              <div class="c"></div>
-            </div>
-            <div class="g3-legend"><i style="opacity:0.3"></i><i style="opacity:0.6"></i><i style="opacity:1"></i> quieter → busier</div>
-            <div class="ag-h">Thursday 23 July</div>
-            <div class="ag-row">
-              <span class="ag-time">0:00</span>
-              <span class="ag-glyph" style="background: rgba(232,194,106,0.14); color: var(--t-gold);">◎</span>
-              <div class="ag-body"><b>Start the dishwasher</b><span>Goal · daily at 12am · Home</span></div>
-              <span class="ag-check"></span>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">10:00</span>
-              <span class="ag-glyph" style="background: rgba(239,127,174,0.14); color: var(--t-pink);">📅</span>
-              <div class="ag-body"><b>Sarah and Deidra visiting</b><span>Event · until Fri · Sarah and Deidra Visit</span></div>
-            </div>
-            <div class="ag-row">
-              <span class="ag-time">18:30</span>
-              <span class="ag-glyph" style="background: rgba(111,208,140,0.14); color: var(--t-green);">✓</span>
-              <div class="ag-body"><b>Water the garden</b><span>Task · Garden</span></div>
-              <span class="ag-check"></span>
-            </div>
-          </div>
-          <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
-          <div class="p-tabs">
-            <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
-          </div>
-        </div>
-      </div>
-      <div class="prose">
-        <p><strong>Keep the full month, retire the rainbow.</strong> Each day gets at most one mark: a short
-        accent-colored underline whose opacity steps with how much is scheduled. Density now reads
-        pre-attentively — the busy back half of July is visible from arm's length — while the grid stays
-        a single hue.</p>
-        <ul class="points">
-          <li><span class="pt-num">1</span><span><b>One encoding, one color.</b> The underline answers the only
-          question a month view can answer at this size: "how full is that day?" Theme colors move to
-          the agenda, where there's room for the tinted glyph chips to actually be labeled.</span></li>
-          <li><span class="pt-num">2</span><span><b>A three-step legend makes the encoding honest</b> — something the
-          current dots never had.</span></li>
-          <li><span class="pt-num">3</span><span><b>Pairs naturally with Direction 2:</b> this grid is what the
-          expanded month should look like when the week strip unfolds.</span></li>
-        </ul>
-        <p class="code-note">Small change: <code>CalendarView.tsx</code> already has per-day counts in
-        <code>byDay</code>; the dots span becomes one bar with an opacity class, plus the Direction 1 CSS
-        cleanup.</p>
+        <p class="code-note">The calendar API already returns <code>kind</code> per entry and full items with
+        <code>cadence</code>/<code>eventAt</code>/<code>eventEnd</code>; the accordion is a conditional row
+        inserted after the selected week in <code>CalendarView.tsx</code>.</p>
       </div>
     </div>
   </section>
@@ -813,14 +688,18 @@
   <!-- ================= RECOMMENDATION ================= -->
   <div class="verdict">
     <div class="kicker">Recommendation</div>
-    <h2>Ship 1 now, grow into 2 + 3</h2>
+    <h2>C is the language, A is the camera</h2>
     <div class="prose" style="margin-top: 10px;">
-      <p><strong>Direction 1 is an afternoon of work</strong> — mostly CSS — and removes the bulk of the
-      overwhelm: tile noise gone, grid 40% shorter, agenda readable. Do it regardless of what comes next.</p>
-      <p><strong>The structural fix is Direction 2.</strong> A calendar tab on a phone is opened to answer
-      "what's coming?", and the week-strip-plus-agenda answers it with zero taps. When the month needs to
-      expand for long jumps, render it as Direction 3's quiet grid — one accent hue, density underlines,
-      legend — so the two directions compose into a single coherent page.</p>
+      <p><strong>Concept C's grammar should exist in any version</strong> — ticks for rhythms, keywords for
+      moments, bands for spans, and the tap-to-expand day panel. It's what makes a words-on-the-grid
+      calendar readable instead of noisy, and the data model already supports it.</p>
+      <p><strong>Layer Concept A on top:</strong> the fisheye simply decides how much of that grammar each
+      week gets to speak — bars far away, whispers nearby, full chips under the lens. Together they're one
+      coherent page: a full month you never leave, that always spends its pixels where your attention
+      is.</p>
+      <p><strong>B is the wildcard.</strong> It's the most striking and the most opinionated — it gives up
+      aligned weekday columns. I'd build A + C first, then prototype B's width-weighting inside the
+      fisheye's focus week only, where the alignment loss costs least.</p>
     </div>
   </div>
 </div>
