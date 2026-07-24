@@ -7,11 +7,11 @@ import ItemRow from '../components/ItemRow';
 // Calendar (§6): a presentation lens over the same backend — HAPPENs on their
 // dates, DO deadlines, calendar-worthy recurrences. No separate store.
 //
-// The view is one continuous strip of weeks (no month pages). A two-week lens
-// sits about a third of the way down the screen: both lens weeks render full
-// wrappable keyword chips and span bands; everything else compresses to
-// numbers + pips (solid dot = one-off, ring = recurrence). Scrolling drags
-// the lens like a flat wheel picker; day detail opens on tap, under the lens.
+// One continuous strip of weeks at a single, always-legible zoom (the "map"
+// philosophy: whatever is on screen is readable — no magnifier lens, no tiny
+// pips). Quiet weeks stay compact; busy weeks grow to fit their events. A
+// sticky header names the month you're looking at, derived passively from the
+// scroll position. Tapping a day unfolds its detail inline, under that week.
 
 interface Entry {
   itemId: string;
@@ -24,17 +24,13 @@ const WEEKS_TOTAL = 60; // ~14 months of continuous weeks
 // The server walks occurrences with a per-item cap (100), so a year in one
 // request would silently truncate frequent recurrences — fetch in 8-week windows.
 const CHUNK_WEEKS = 8;
-const LENS_FRACTION = 0.32; // lens line sits this far down the scroller
-const SNAP_INSET = 18; // settle with the line this far inside the lens
+const CHIPS_PER_DAY = 3; // then a "+N" overflow marker
+const BAND_H = 20; // per multi-day band row reserved at the top of a week
 
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
   return x;
-}
-
-function lineOf(el: HTMLElement): number {
-  return Math.round(el.clientHeight * LENS_FRACTION);
 }
 
 // Date-only values anchor to local noon (dates.ts), so noon-exact means "no
@@ -44,18 +40,19 @@ function clock(d: Date): string | null {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-const STOP_WORDS = new Set(['the', 'a', 'an', 'to', 'for', 'with', 'my', 'our', 'and', 'of', 'on', 'at', 'in']);
-
-// The few words a day speaks in: leading significant title words. The lens
-// cells wrap to two lines, so this is a cap, not a squeeze.
-function kw(title: string, max: number): string {
-  const words = title.split(/\s+/);
-  const strong = words.filter((w) => !STOP_WORDS.has(w.toLowerCase()));
-  return (strong.length ? strong : words).slice(0, max).join(' ');
+// A grid cell is ~7 characters wide, so the full "7:30 PM" would eat the title.
+// Compact it to "7:30p" / "2p" — enough to place the event, room left to read it.
+function chipTime(d: Date): string | null {
+  if (d.getHours() === 12 && d.getMinutes() === 0) return null;
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const suffix = h < 12 ? 'a' : 'p';
+  const h12 = h % 12 || 12;
+  return `${h12}${m ? `:${String(m).padStart(2, '0')}` : ''}${suffix}`;
 }
 
 function tint(c: string): string {
-  return `color-mix(in srgb, ${c} 15%, transparent)`;
+  return `color-mix(in srgb, ${c} 16%, transparent)`;
 }
 
 export default function CalendarView({
@@ -80,19 +77,17 @@ export default function CalendarView({
 
   const [entries, setEntries] = useState<Entry[]>([]);
   const [items, setItems] = useState<Record<string, ItemView>>({});
-  const [focusIdx, setFocusIdx] = useState(WEEKS_BACK);
-  // No day is selected by default — the calendar itself is the view; detail
-  // is strictly opt-in by tapping a day.
+  // No day is selected by default — the calendar itself is the view; detail is
+  // strictly opt-in by tapping a day.
   const [selected, setSelected] = useState<string | null>(null);
+  // The week sitting at the top of the viewport names the header month; today's
+  // visibility gates the "Today" button. Both are read passively from scroll.
+  const [topIdx, setTopIdx] = useState(WEEKS_BACK);
+  const [todayVisible, setTodayVisible] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const focusRef = useRef(focusIdx);
-  focusRef.current = focusIdx;
-  // While a tap-driven smooth scroll is in flight, scroll events must not
-  // re-derive focus (the destination is already chosen).
-  const programmatic = useRef(false);
-  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const ticking = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +116,16 @@ export default function CalendarView({
       list.push(e);
       m.set(k, list);
     }
+    // All-day first, then by clock time — the reading order of a real day.
+    for (const list of m.values()) {
+      list.sort((a, b) => {
+        const ca = clock(new Date(a.date));
+        const cb = clock(new Date(b.date));
+        if (!ca && cb) return -1;
+        if (ca && !cb) return 1;
+        return a.date.localeCompare(b.date);
+      });
+    }
     return m;
   }, [entries]);
 
@@ -138,101 +143,55 @@ export default function CalendarView({
   }, [items]);
   const spanItemIds = useMemo(() => new Set(spans.map((s) => s.itemId)), [spans]);
 
-  // Wheel-picker settle: once scrolling goes quiet, glide so the lens line
-  // rests just inside the top lens week. Also corrects any offset drift from
-  // tier-height transitions that ran during the scroll.
-  const settle = useCallback(() => {
-    programmatic.current = false;
-    const el = scrollRef.current;
-    const row = rowRefs.current[focusRef.current];
-    if (!el || !row) return;
-    const target = row.offsetTop - lineOf(el) + SNAP_INSET;
-    if (Math.abs(el.scrollTop - target) > 3) el.scrollTo({ top: target, behavior: 'smooth' });
-  }, []);
-
+  // Passive scroll read: which week is topmost (names the month) and whether
+  // today's week is still on screen (gates the Today button). No snapping, no
+  // programmatic-scroll guards — the strip is one flat zoom that scrolls freely.
   const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (el && !programmatic.current) {
-      const line = el.scrollTop + lineOf(el);
-      // An open day panel inflates the strip under the lens; measure it out
-      // so the lens keeps its week-height cadence instead of needing an
-      // extra panel-height of scroll to advance.
-      const panel = el.querySelector<HTMLElement>('.wk-panel');
-      const panelH = panel ? panel.offsetHeight + 10 : 0;
-      // Top lens week = the row the lens line is inside (last top above it).
+    if (ticking.current) return;
+    ticking.current = true;
+    requestAnimationFrame(() => {
+      ticking.current = false;
+      const el = scrollRef.current;
+      if (!el) return;
+      const top = el.scrollTop;
+      const bottom = top + el.clientHeight;
       let idx = 0;
       for (let i = 0; i < rowRefs.current.length; i++) {
         const r = rowRefs.current[i];
-        if (!r) continue;
-        const top = r.offsetTop - (panelH && i > focusRef.current + 1 ? panelH : 0);
-        if (top <= line) idx = i;
-        else break;
+        if (r && r.offsetTop <= top + 4) idx = i;
+        else if (r) break;
       }
-      if (idx !== focusRef.current) {
-        setFocusIdx(idx);
-        setSelected(null); // scrolling the lens away closes the day panel
-      }
-    }
-    if (settleTimer.current) clearTimeout(settleTimer.current);
-    settleTimer.current = setTimeout(settle, 200);
-  }, [settle]);
-
-  useEffect(() => () => clearTimeout(settleTimer.current), []);
-
-  // Open with today's week at the top of the lens; nothing selected.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTop = row.offsetTop - lineOf(el) + SNAP_INSET;
-  }, []);
-
-  const scrollToWeek = useCallback((wi: number) => {
-    programmatic.current = true;
-    setFocusIdx(wi);
-    // Scroll after the tier reflow has a frame to apply; the settle pass
-    // corrects the small drift the height transitions leave behind.
-    requestAnimationFrame(() => {
-      const el = scrollRef.current;
-      const row = rowRefs.current[wi];
-      if (el && row) el.scrollTo({ top: row.offsetTop - lineOf(el) + SNAP_INSET, behavior: 'smooth' });
-      setTimeout(() => {
-        programmatic.current = false;
-      }, 600);
+      setTopIdx(idx);
+      const trow = rowRefs.current[WEEKS_BACK];
+      if (trow) setTodayVisible(trow.offsetTop < bottom - 24 && trow.offsetTop + trow.offsetHeight > top);
     });
   }, []);
 
-  const openDay = useCallback(
-    (wi: number, k: string) => {
-      if (wi === focusRef.current || wi === focusRef.current + 1) {
-        setSelected((s) => (s === k ? null : k));
-        return;
-      }
-      setSelected(k);
-      scrollToWeek(wi);
-    },
-    [scrollToWeek],
-  );
+  // Open with today's week just below the top edge, so the recent past peeks in.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const row = rowRefs.current[WEEKS_BACK];
+    if (el && row) el.scrollTop = row.offsetTop - Math.round(el.clientHeight * 0.12);
+  }, []);
 
   const goToday = useCallback(() => {
-    setSelected(null);
-    scrollToWeek(WEEKS_BACK);
-  }, [scrollToWeek]);
+    const el = scrollRef.current;
+    const row = rowRefs.current[WEEKS_BACK];
+    if (el && row) el.scrollTo({ top: row.offsetTop - Math.round(el.clientHeight * 0.12), behavior: 'smooth' });
+  }, []);
 
-  const lensHasToday = focusIdx === WEEKS_BACK || focusIdx + 1 === WEEKS_BACK;
-  // Thursday names the week's month (majority rule for straddling weeks).
-  const focusMonth = addDays(weeks[focusIdx], 4);
-  // The panel unfolds under the whole lens when the selected day is in it.
-  const lensStart = dayKey(weeks[focusIdx]);
-  const lensEnd = dayKey(addDays(weeks[Math.min(focusIdx + 1, WEEKS_TOTAL - 1)], 6));
-  const selInLens = selected !== null && selected >= lensStart && selected <= lensEnd;
+  const openDay = useCallback((k: string) => {
+    setSelected((s) => (s === k ? null : k));
+  }, []);
+
+  // Thursday names a straddling week's month (majority rule).
+  const headMonth = addDays(weeks[topIdx], 4);
 
   return (
     <div className="calv">
       <div className="calv-head">
-        <h3>{focusMonth.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
-        {lensHasToday ? (
-          <span className="calv-sub">This week</span>
-        ) : (
+        <h3>{headMonth.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
+        {!todayVisible && (
           <button className="cal-today-btn" onClick={goToday}>
             Today
           </button>
@@ -247,67 +206,58 @@ export default function CalendarView({
         {weeks.map((ws, wi) => {
           const days = Array.from({ length: 7 }, (_, d) => addDays(ws, d));
           const keys = days.map(dayKey);
-          const tier = wi === focusIdx ? 'a' : wi === focusIdx + 1 ? 'b' : 'c';
-          const inLens = tier !== 'c';
           const weekSpans = spans.filter((s) => s.start <= keys[6] && s.end >= keys[0]);
-          const bandGap = inLens && weekSpans.length ? weekSpans.length * 20 + 2 : 0;
+          const bandGap = weekSpans.length ? weekSpans.length * BAND_H + 4 : 0;
           const monthStart = days.find((d) => d.getDate() === 1);
+          const selCol = selected && selected >= keys[0] && selected <= keys[6] ? keys.indexOf(selected) : -1;
           return (
             <Fragment key={keys[0]}>
-              {/* month marker — suppressed between the two lens weeks so the
-                  lens reads as one box; the header title covers the seam */}
-              {wi > 0 && monthStart && tier !== 'b' && (
-                <div className="cal-month-mark">{monthStart.toLocaleDateString([], { month: 'long' })}</div>
+              {wi > 0 && monthStart && (
+                <div className="cal-month-mark">
+                  {monthStart.toLocaleDateString([], { month: 'long' })}
+                  {monthStart.getMonth() === 0 ? ` ${monthStart.getFullYear()}` : ''}
+                </div>
               )}
               <div
                 ref={(el) => {
                   rowRefs.current[wi] = el;
                 }}
-                className={`cal-week ${inLens ? `wk-lens wk-lens-${tier}` : 'wk-far'}`}
+                className="cal-week"
               >
                 {days.map((d, di) => {
                   const k = keys[di];
                   const list = byDay.get(k) ?? [];
                   const marks = list.filter((e) => !spanItemIds.has(e.itemId));
+                  const isToday = k === today;
+                  const isSel = selected === k;
                   return (
                     <button
                       key={k}
-                      className={`cal-day${k === today ? ' today' : ''}${inLens && selected === k ? ' sel' : ''}`}
-                      onClick={() => openDay(wi, k)}
+                      className={`cal-day${isToday ? ' today' : ''}${isSel ? ' sel' : ''}`}
+                      onClick={() => openDay(k)}
                     >
                       <span className="n">{d.getDate()}</span>
                       {bandGap > 0 && <span className="band-gap" style={{ height: bandGap }} />}
-                      {inLens &&
-                        marks.slice(0, 2).map((e, ei) => {
-                          const item = items[e.itemId];
-                          if (!item) return null;
-                          const c = itemColor(item);
-                          return (
-                            <span
-                              key={`${e.itemId}-${ei}`}
-                              className={`day-kw${e.kind === 'deadline' ? ' kw-due' : ''}${e.kind === 'occurrence' ? ' kw-rec' : ''}`}
-                              style={{ color: c, background: tint(c) }}
-                            >
-                              {kw(item.title, 3)}
-                            </span>
-                          );
-                        })}
-                      {inLens && marks.length > 2 && <span className="day-more">+{marks.length - 2}</span>}
-                      {!inLens && (
-                        <span className="pips">
-                          {marks.slice(0, 4).map((e, ei) => (
-                            <i
-                              key={ei}
-                              className={e.kind === 'occurrence' ? 'pip-r' : 'pip-m'}
-                              style={
-                                e.kind === 'occurrence'
-                                  ? { borderColor: items[e.itemId] ? itemColor(items[e.itemId]) : 'var(--text-faint)' }
-                                  : { background: items[e.itemId] ? itemColor(items[e.itemId]) : 'var(--text-faint)' }
-                              }
-                            />
-                          ))}
-                        </span>
-                      )}
+                      {marks.slice(0, CHIPS_PER_DAY).map((e, ei) => {
+                        const item = items[e.itemId];
+                        if (!item) return null;
+                        const c = itemColor(item);
+                        const due = e.kind === 'deadline';
+                        const rec = e.kind === 'occurrence';
+                        const t = due ? null : chipTime(new Date(e.date));
+                        return (
+                          <span
+                            key={`${e.itemId}-${ei}`}
+                            className={`cal-chip${due ? ' is-due' : ''}${rec ? ' is-rec' : ''}`}
+                            style={{ color: c, background: tint(c) }}
+                          >
+                            {due && <b className="chip-t">due</b>}
+                            {t && <b className="chip-t">{t}</b>}
+                            <span className="chip-x">{item.title}</span>
+                          </span>
+                        );
+                      })}
+                      {marks.length > CHIPS_PER_DAY && <span className="day-more">+{marks.length - CHIPS_PER_DAY} more</span>}
                     </button>
                   );
                 })}
@@ -317,17 +267,14 @@ export default function CalendarView({
                   const c = itemColor(item);
                   const startCol = s.start <= keys[0] ? 0 : keys.indexOf(s.start);
                   const endCol = s.end >= keys[6] ? 6 : keys.indexOf(s.end);
-                  let label = '';
-                  if (inLens) {
-                    if (s.end <= keys[6]) {
-                      const end = new Date(item.eventEnd!);
-                      const t = clock(end);
-                      label = `${item.title} · until ${end.toLocaleDateString([], { weekday: 'short' })}${t ? ` ${t}` : ''}`;
-                    } else {
-                      label = `${item.title} ›`;
-                    }
+                  let label: string;
+                  if (s.end <= keys[6]) {
+                    const end = new Date(item.eventEnd!);
+                    const t = clock(end);
+                    label = `${item.title} · until ${end.toLocaleDateString([], { weekday: 'short' })}${t ? ` ${t}` : ''}`;
+                  } else {
+                    label = `${item.title} ›`;
                   }
-                  const top = (inLens ? 40 : 32) + si * (inLens ? 20 : 6);
                   return (
                     <span
                       key={s.itemId}
@@ -335,7 +282,7 @@ export default function CalendarView({
                       style={{
                         left: `calc(${startCol} * 100% / 7 + 3px)`,
                         width: `calc(${endCol - startCol + 1} * 100% / 7 - 6px)`,
-                        top,
+                        top: 30 + si * BAND_H,
                         background: tint(c),
                         borderColor: c,
                         color: c,
@@ -345,8 +292,11 @@ export default function CalendarView({
                     </span>
                   );
                 })}
+                {selCol >= 0 && (
+                  <span className="cal-sel-caret" style={{ left: `calc(${selCol} * 100% / 7 + 50% / 7)` }} />
+                )}
               </div>
-              {tier === 'b' && selInLens && selected && (
+              {selCol >= 0 && selected && (
                 <div className="wk-panel">
                   <div className="wk-panel-head">
                     <h4>
@@ -380,12 +330,6 @@ export default function CalendarView({
             </Fragment>
           );
         })}
-        <div className="cal-legend">
-          <i className="pip-m" />
-          <span>one-off</span>
-          <i className="pip-r" />
-          <span>repeats</span>
-        </div>
       </div>
     </div>
   );
