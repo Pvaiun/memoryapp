@@ -47,6 +47,7 @@ function item(over: Partial<ItemView>): ItemView {
     completionCount: 0,
     streak: 0,
     lastSurfacedAt: null,
+    surfacedCount: 0,
     parseConfidence: 1,
     themes: [],
     flavour: 'Task',
