@@ -1068,15 +1068,20 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
   if (!llmAvailable(env)) return getState(db, 'profile_text');
 
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  // When the window holds more than the cap, keep the NEWEST events — a busy
+  // month would otherwise profile the user as they were 30 days ago and never
+  // see last week. Fetched newest-first, then flipped back to chronological:
+  // compactEventLines' burst and draft-churn collapsing assumes ascending ts.
   const events = await db
     .prepare(
       `SELECT ts, actor, type, item_id, payload FROM events
        WHERE ts >= ? AND type IN (${PROFILE_EVENT_TYPES.map(() => '?').join(',')})
-       ORDER BY ts LIMIT 1500`,
+       ORDER BY ts DESC LIMIT 1500`,
     )
     .bind(since, ...PROFILE_EVENT_TYPES)
     .all<{ ts: string; actor: string; type: string; item_id: string | null; payload: string }>();
   if (!events.results.length) return getState(db, 'profile_text');
+  const ordered = events.results.slice().reverse();
 
   // Titles for all items incl. deleted — draft churn references them.
   const itemTitles = await db
@@ -1095,7 +1100,7 @@ DO NOT profile app-administration mechanics: how they file, phrase, edit, or reo
 Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 
   // Deterministically compressed: one line per event, churn collapsed.
-  const lines = compactEventLines(events.results, titleById);
+  const lines = compactEventLines(ordered, titleById);
 
   const user = JSON.stringify({ today: day, events: lines });
 
