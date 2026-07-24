@@ -26,6 +26,7 @@ const WEEKS_TOTAL = 60; // ~14 months of continuous weeks
 const CHUNK_WEEKS = 8;
 const CHIPS_PER_DAY = 3; // then a "+N" overflow marker
 const BAND_H = 20; // per multi-day band row reserved at the top of a week
+const TOP_INSET = 2; // today's week rests this far below the top edge
 
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
@@ -167,17 +168,18 @@ export default function CalendarView({
     });
   }, []);
 
-  // Open with today's week just below the top edge, so the recent past peeks in.
+  // Open with today's week as the very top line — it's a scrolling calendar,
+  // so the past is one scroll up; the present shouldn't cost a row of screen.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTop = row.offsetTop - Math.round(el.clientHeight * 0.12);
+    if (el && row) el.scrollTop = row.offsetTop - TOP_INSET;
   }, []);
 
   const goToday = useCallback(() => {
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTo({ top: row.offsetTop - Math.round(el.clientHeight * 0.12), behavior: 'smooth' });
+    if (el && row) el.scrollTo({ top: row.offsetTop - TOP_INSET, behavior: 'smooth' });
   }, []);
 
   const openDay = useCallback((k: string) => {
@@ -251,9 +253,13 @@ export default function CalendarView({
                             className={`cal-chip${due ? ' is-due' : ''}${rec ? ' is-rec' : ''}`}
                             style={{ color: c, background: tint(c) }}
                           >
-                            {due && <b className="chip-t">due</b>}
-                            {t && <b className="chip-t">{t}</b>}
-                            <span className="chip-x">{item.title}</span>
+                            {/* time on its own line so the title gets the full
+                                column width and wraps whole-word, not mid-word */}
+                            {t && <b className="chip-t-line">{t}</b>}
+                            <span className="chip-x">
+                              {due && <b className="chip-t">due </b>}
+                              {item.title}
+                            </span>
                           </span>
                         );
                       })}
