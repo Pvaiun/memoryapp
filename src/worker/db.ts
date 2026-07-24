@@ -39,6 +39,7 @@ interface ItemRow {
   completion_count: number;
   streak: number;
   last_surfaced_at: string | null;
+  surfaced_count: number;
   parse_confidence: number;
   capture_id: string | null;
   affect_tags: string | null;
@@ -73,6 +74,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
     completionCount: row.completion_count,
     streak: row.streak,
     lastSurfacedAt: row.last_surfaced_at,
+    surfacedCount: row.surfaced_count,
     parseConfidence: row.parse_confidence,
     affects: row.affect_tags ? (JSON.parse(row.affect_tags) as AffectEntry[]) : [],
     themes,
@@ -189,9 +191,9 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
         event_at, event_end, alert_lead_minutes, show_on_calendar,
         priority_base, priority_boost, boost_updated_at, user_priority,
         flavour_override, created_at, updated_at, last_touched_at,
-        last_completed_at, completion_count, streak, last_surfaced_at,
+        last_completed_at, completion_count, streak, last_surfaced_at, surfaced_count,
         parse_confidence, capture_id, affect_tags, embedding
-      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,?,?,?,?)`,
+      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,0,?,?,?,?)`,
     )
     .bind(
       id,

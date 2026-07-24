@@ -257,6 +257,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     completionCount: 0,
     streak: 0,
     lastSurfacedAt: null,
+    surfacedCount: 0,
     parseConfidence: 1,
     themes: [],
     flavour: 'Task',
@@ -350,6 +351,20 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('happens=today..+5d');
     expect(line).toContain('recaptured=1');
     expect(line).toContain('seen=today');
+  });
+
+  it('shown= carries the surfacing count beside seen=, silent below two', () => {
+    const line = (surfacedCount: number, lastSurfacedAt: string | null = '2026-07-20T05:00:00Z') =>
+      brainItemLine({ ...baseView, lastSurfacedAt, surfacedCount } as ItemView, now);
+    // Twelve mornings on the map and still active: the case seen= alone can't
+    // express, and the whole reason the count exists.
+    expect(line(12)).toContain('shown=12x');
+    expect(line(2)).toContain('shown=2x');
+    // Once-shown is the unremarkable default and stays out of the line.
+    expect(line(1)).not.toContain('shown=');
+    // Never surfaced says 'new'; a count would be noise on top of it.
+    expect(line(0, null)).toContain('new');
+    expect(line(0, null)).not.toContain('shown=');
   });
 
   it('affect history renders as felt= with counts spanning recaptures', () => {

@@ -114,6 +114,7 @@ export interface Item {
   completionCount: number;
   streak: number;
   lastSurfacedAt: string | null; // rehearsal rotation input (§9.2)
+  surfacedCount: number; // times put on the map — the denominator for completionCount (§9.2)
 
   parseConfidence: number; // coarse 0..1 from Smart Capture (§10.1)
   affects: AffectEntry[]; // affect history, appended per capture/recapture

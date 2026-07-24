@@ -295,7 +295,10 @@ export async function rebuildMap(
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
   const ts = nowIso();
   for (const id of surfacedIds) {
-    await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(ts, id).run();
+    await db
+      .prepare('UPDATE items SET last_surfaced_at = ?, surfaced_count = surfaced_count + 1 WHERE id = ?')
+      .bind(ts, id)
+      .run();
   }
 
   await setState(db, 'map_day', day);
@@ -404,7 +407,10 @@ export async function addFirstStep(
     embedding: await embed(env, stepTitle),
   });
   await setItemThemes(db, itemId, themeNames.slice(0, 3), 'user');
-  await db.prepare('UPDATE items SET last_surfaced_at = ? WHERE id = ?').bind(ts, itemId).run();
+  await db
+    .prepare('UPDATE items SET last_surfaced_at = ?, surfaced_count = surfaced_count + 1 WHERE id = ?')
+    .bind(ts, itemId)
+    .run();
   await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, itemId).run();
 
   const sentence = `${(bubble.sentence ?? '').trim()} First: [${stepTitle}](${itemId}).`.trim().slice(0, 700);
@@ -524,6 +530,11 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
   if (i.lastSurfacedAt) {
     const d = sleepDayDiff(now.getTime(), new Date(i.lastSurfacedAt).getTime(), tzOffsetMinutes);
     parts.push(`seen=${d === 0 ? 'today' : `${d}d-ago`}`);
+    // Recency without a count can't tell "asked once" from "asked every
+    // morning for a fortnight" — the second is the one that's been declined.
+    // Once-shown is the unremarkable case and stays silent, like every other
+    // signal here.
+    if (i.surfacedCount >= 2) parts.push(`shown=${i.surfacedCount}x`);
   } else {
     parts.push('new');
   }
@@ -700,7 +711,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
