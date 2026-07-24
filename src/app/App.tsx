@@ -7,6 +7,7 @@ import { api, AuthError } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
 import SettingsSheet from './components/SettingsSheet';
+import RetroSheet from './components/RetroSheet';
 import MapView, { capturedForToday } from './views/MapView';
 import type { NowView } from './views/MapView';
 import BrowseView from './views/BrowseView';
@@ -84,6 +85,7 @@ export default function App() {
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [retroOpen, setRetroOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [captureText, setCaptureText] = useState('');
@@ -593,7 +595,18 @@ export default function App() {
           onRebuildNoHistory={() => organizeNow(true)}
           onExport={exportAll}
           onCopyBrainSnapshot={copyBrainSnapshot}
+          onOpenRetro={() => setRetroOpen(true)}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {retroOpen && (
+        <RetroSheet
+          onOpenItem={(it) => {
+            setRetroOpen(false);
+            setOpenItem(it);
+          }}
+          onClose={() => setRetroOpen(false)}
         />
       )}
 

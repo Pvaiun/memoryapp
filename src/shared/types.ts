@@ -179,6 +179,52 @@ export interface LogEvent {
   payload: unknown; // before→after structured payload (§7.1)
 }
 
+// ---------- Map retrospective (the Brain's conscience) ----------
+// A read-only, fully deterministic look back at how a past day's map actually
+// fared — derived only from the state-change events already in the Tier-0 log
+// (§7.1), never new behavioural telemetry (which stays parked, §7.1/§11.6).
+// It is the missing other half of the Brain workshop: the workshop lets you
+// tune the Brain by hand; this tells you whether the maps it built were any
+// good — the failure signals the no-override bet (§8.3) is meant to keep visible.
+
+export interface RetroBubble {
+  id: string;
+  name: string;
+  kind: 'situation' | 'rotation';
+  prominence: number;
+  reason: string;
+  itemIds: string[]; // members the map showed that day
+  completedItemIds: string[]; // members with a 'completed' event that day
+  touchedItemIds: string[]; // members otherwise acted on that day (edited / re-themed / first-step / dismissed / missed)
+  engaged: boolean; // any member acted on at all — did this grouping earn its slot?
+}
+
+// A completion that day for an item the map showed in NO bubble. `fresh` marks
+// a Captured-Today item (created that day, not yet folded in — a fair miss)
+// versus an older item the Brain had and buried (the signal worth reading).
+export interface RetroMiss {
+  itemId: string;
+  fresh: boolean;
+}
+
+export interface RetroPayload {
+  day: string; // the sleep-cycle day looked back on (YYYY-MM-DD)
+  hasMap: boolean; // whether a map was actually built for this day
+  builtAt: string | null;
+  prevDay: string | null; // nearest earlier day with a map (for the stepper)
+  nextDay: string | null; // nearest later day with a map
+  bubbles: RetroBubble[]; // prominence-ordered, as shown
+  misses: RetroMiss[]; // completions the map didn't surface
+  totals: {
+    bubbles: number;
+    engagedBubbles: number;
+    completedFromMap: number; // distinct items completed that a bubble held
+    completedOffMap: number; // distinct items completed that no bubble held (older only)
+    capturedThatDay: number; // items created that day
+  };
+  items: Record<string, ItemView>; // titles / flavour for everything referenced
+}
+
 // Smart Capture parse result for one segmented item (§10.2)
 export interface ParsedItem {
   type: BackendType;

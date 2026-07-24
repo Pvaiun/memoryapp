@@ -4,6 +4,7 @@ import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
 import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, rebuildMap } from './brain';
 import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
+import { mapRetro } from './retro';
 import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -142,6 +143,14 @@ app.get('/api/debug/brain', async (c) => {
   const day = c.req.query('day') ?? (await getState(c.env.DB, 'map_day'));
   if (!day) return c.json({ error: 'no map built yet' }, 400);
   return c.json(await brainSnapshot(c.env, day));
+});
+
+// The Brain's conscience (§8.3): how a past day's map actually fared, derived
+// only from the Tier-0 log. Read-only; defaults to the current map day.
+app.get('/api/brain/retro', async (c) => {
+  const day = c.req.query('day') ?? (await getState(c.env.DB, 'map_day'));
+  if (!day) return c.json({ error: 'no map built yet' }, 400);
+  return c.json(await mapRetro(c.env, day));
 });
 
 // Full backup: everything, as one JSON document. Behind the access gate.

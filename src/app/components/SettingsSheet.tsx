@@ -58,6 +58,7 @@ export default function SettingsSheet({
   onRebuildNoHistory,
   onExport,
   onCopyBrainSnapshot,
+  onOpenRetro,
   onClose,
 }: {
   pushOn: boolean | null;
@@ -70,6 +71,7 @@ export default function SettingsSheet({
   onRebuildNoHistory: () => void;
   onExport: () => void;
   onCopyBrainSnapshot: () => void;
+  onOpenRetro: () => void;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
@@ -330,6 +332,16 @@ export default function SettingsSheet({
                 <small>Punctual pushes for events and hard deadlines</small>
               </button>
             )}
+            <button
+              className="settings-btn"
+              onClick={() => {
+                onClose();
+                onOpenRetro();
+              }}
+            >
+              How the map did
+              <small>Which bubbles you engaged, and what the map buried — from the history log</small>
+            </button>
             <button className="settings-btn" onClick={onCopyBrainSnapshot}>
               Copy Brain snapshot
               <small>What the Brain sees + the map it built — for workshopping</small>

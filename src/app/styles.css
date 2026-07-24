@@ -2132,3 +2132,220 @@ textarea:focus {
   margin-top: 6px;
   line-height: 1.4;
 }
+
+/* ---------- Map retrospective (the Brain's conscience) ---------- */
+.retro-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.retro-head h2 {
+  margin: 0;
+}
+.retro-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retro-nav button {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.retro-nav button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.retro-day {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 13px;
+  min-width: 88px;
+  text-align: center;
+}
+.retro-empty {
+  color: var(--text-dim);
+  padding: 24px 4px;
+  text-align: center;
+}
+.retro-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.retro-tallies {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.retro-tally {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.retro-tally b {
+  display: block;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.retro-tally span {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+  line-height: 1.25;
+}
+.retro-tally.warn b {
+  color: var(--warn);
+}
+
+.retro-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.retro-bubble {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.retro-bubble.idle {
+  opacity: 0.62;
+}
+.retro-bubble.engaged {
+  border-color: var(--line-strong);
+  background: rgba(111, 208, 140, 0.05);
+}
+.retro-bubble-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retro-prom {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  /* size tracks prominence, echoing size=prominence on the map (§6) */
+  transform: scale(calc(0.55 + var(--p) * 0.85));
+}
+.retro-bubble-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+.retro-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+.retro-bubble-verdict {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.retro-bubble.engaged .retro-bubble-verdict {
+  color: var(--good);
+}
+.retro-reason {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 6px 0 2px;
+  line-height: 1.4;
+}
+.retro-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.retro-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 13px;
+}
+.retro-item.done {
+  color: var(--text);
+}
+.retro-item.done .retro-item-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+.retro-item-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.retro-item-glyph {
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+  color: var(--text-faint);
+  flex: none;
+}
+.retro-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.retro-item-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--good);
+  flex: none;
+}
+.retro-item-tag.soft {
+  color: var(--text-faint);
+}
+
+.retro-misses {
+  margin-top: 18px;
+}
+.retro-misses h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn);
+  margin: 0 0 6px;
+}
+.retro-item.miss .retro-item-tag,
+.retro-item.miss {
+  color: var(--text);
+}
+.retro-foot {
+  margin-top: 18px;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}

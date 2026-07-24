@@ -1,4 +1,4 @@
-import type { CaptureResponse, Flavour, ItemView, MapPayload } from '../shared/types';
+import type { CaptureResponse, Flavour, ItemView, MapPayload, RetroPayload } from '../shared/types';
 import { dayKey, EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 
 // The app's "day" rolls over at the 5am sleep-cycle cutoff, not midnight —
@@ -104,6 +104,9 @@ export const api = {
   exportAll: () => req<Record<string, unknown>>('/api/export'),
 
   brainSnapshot: () => req<Record<string, unknown>>('/api/debug/brain'),
+
+  // How a past day's map fared (the Brain's conscience). Omit day → current map.
+  mapRetro: (day?: string) => req<RetroPayload>(`/api/brain/retro${day ? `?day=${day}` : ''}`),
 
   items: () => req<{ items: ItemView[] }>('/api/items'),
 
