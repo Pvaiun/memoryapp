@@ -1310,10 +1310,10 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
-  min-height: 62px;
-  padding: 4px 1px 2px;
+  min-height: 78px;
+  padding: 4px 1px 3px;
   border-radius: 10px;
   text-align: left;
 }
@@ -1342,28 +1342,39 @@ textarea:focus {
   flex: none;
   width: 100%;
 }
-/* readable event chip: a real label (with its time), not a code to decipher */
+/* readable event chip: a real label (with its time), not a code to decipher.
+   The grid cell is narrow, so legibility comes from a small type size that
+   fits whole words per line, word-boundary wrapping (never mid-word), and
+   room for up to four lines before the title gives up and clips. */
 .cal-chip {
-  font-size: 10.5px;
+  display: block;
+  font-size: 8.5px;
   font-weight: 600;
   line-height: 1.25;
-  padding: 2px 5px;
-  border-radius: 6px;
+  padding: 2px 3px;
+  border-radius: 5px;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   animation: cal-fade 0.18s ease;
 }
-.cal-chip .chip-t {
+/* the time gets its own line; the title then owns the full column width and
+   wraps at word boundaries (never mid-word), clipping only after three lines */
+.cal-chip .chip-t-line {
+  display: block;
   font-weight: 700;
-  opacity: 0.85;
-  margin-right: 3px;
+  opacity: 0.9;
   font-variant-numeric: tabular-nums;
 }
 .cal-chip .chip-x {
-  font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: none;
+}
+.cal-chip .chip-t {
+  font-weight: 700;
 }
 /* a deadline is a soft claim on the day, not an event: hollow it out */
 .cal-chip.is-due {
@@ -1375,12 +1386,12 @@ textarea:focus {
 .cal-chip.is-due .chip-t {
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 9px;
+  font-size: 8px;
 }
 /* a recurrence repeats — a dashed edge says "again", quietly */
 .cal-chip.is-rec {
   border: 1px dashed color-mix(in srgb, currentColor 55%, transparent);
-  padding: 1px 4px;
+  padding: 1px 3px;
 }
 .day-more {
   font-size: 9.5px;
