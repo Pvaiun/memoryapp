@@ -211,7 +211,6 @@ export default function CalendarView({
           const weekSpans = spans.filter((s) => s.start <= keys[6] && s.end >= keys[0]);
           const bandGap = weekSpans.length ? weekSpans.length * BAND_H + 4 : 0;
           const monthStart = days.find((d) => d.getDate() === 1);
-          const selCol = selected && selected >= keys[0] && selected <= keys[6] ? keys.indexOf(selected) : -1;
           return (
             <Fragment key={keys[0]}>
               {wi > 0 && monthStart && (
@@ -298,45 +297,48 @@ export default function CalendarView({
                     </span>
                   );
                 })}
-                {selCol >= 0 && (
-                  <span className="cal-sel-caret" style={{ left: `calc(${selCol} * 100% / 7 + 50% / 7)` }} />
-                )}
               </div>
-              {selCol >= 0 && selected && (
-                <div className="wk-panel">
-                  <div className="wk-panel-head">
-                    <h4>
-                      {new Date(`${selected}T12:00:00`).toLocaleDateString([], {
-                        weekday: 'long',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
-                    </h4>
-                    <button className="wk-panel-close" onClick={() => setSelected(null)} aria-label="Close day">
-                      ✕
-                    </button>
-                  </div>
-                  {(byDay.get(selected) ?? []).length === 0 && <div className="hint">Nothing scheduled.</div>}
-                  {(byDay.get(selected) ?? []).map((e, i) => {
-                    const item = items[e.itemId];
-                    if (!item) return null;
-                    return (
-                      <div key={`${e.itemId}-${i}`} style={{ display: 'flex', alignItems: 'center' }}>
-                        <span className="time-chip">
-                          {e.kind === 'deadline' ? 'due' : (clock(new Date(e.date)) ?? 'all day')}
-                        </span>
-                        <div style={{ flex: 1 }}>
-                          <ItemRow item={item} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </Fragment>
           );
         })}
       </div>
+      {/* Day detail as a bottom sheet, not an inline unfold: a day tapped near
+          the bottom of the strip would push its own detail off-screen. The
+          sheet floats over the grid without a tap-blocking backdrop, so the
+          calendar stays live — tapping another day just swaps its contents. */}
+      {selected && (
+        <div className="cal-sheet" role="dialog" aria-label="Day detail">
+          <div className="cal-sheet-head">
+            <h4>
+              {new Date(`${selected}T12:00:00`).toLocaleDateString([], {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </h4>
+            <button className="cal-sheet-close" onClick={() => setSelected(null)} aria-label="Close day">
+              ✕
+            </button>
+          </div>
+          <div className="cal-sheet-body">
+            {(byDay.get(selected) ?? []).length === 0 && <div className="hint">Nothing scheduled.</div>}
+            {(byDay.get(selected) ?? []).map((e, i) => {
+              const item = items[e.itemId];
+              if (!item) return null;
+              return (
+                <div key={`${e.itemId}-${i}`} className="cal-sheet-row">
+                  <span className="time-chip">
+                    {e.kind === 'deadline' ? 'due' : (clock(new Date(e.date)) ?? 'all day')}
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <ItemRow item={item} onOpen={onOpenItem} onToggleComplete={onToggleComplete} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
