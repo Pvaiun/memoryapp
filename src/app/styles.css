@@ -1233,6 +1233,7 @@ textarea:focus {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* anchors the day-detail bottom sheet */
 }
 .calv-head {
   display: flex;
@@ -1429,43 +1430,60 @@ textarea:focus {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-/* a little caret ties the tapped day to the detail that unfolds below it */
-.cal-sel-caret {
+/* tap-to-view day detail as a bottom sheet floating over the grid. Anchored to
+   the calendar's own bottom (above the app's capture bar), it's always fully
+   visible no matter which week you tapped, and — with no tap-blocking backdrop
+   — the grid stays live underneath, so tapping another day swaps its contents. */
+.cal-sheet {
   position: absolute;
-  bottom: -3px;
-  width: 12px;
-  height: 12px;
-  margin-left: -6px;
-  transform: rotate(45deg);
-  background: rgba(139, 147, 248, 0.08);
-  border-right: 1px solid rgba(139, 147, 248, 0.3);
-  border-bottom: 1px solid rgba(139, 147, 248, 0.3);
-  pointer-events: none;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  max-height: 52%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(170deg, #1c2233, #131726);
+  border: 1px solid var(--line);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -14px 34px rgba(4, 6, 12, 0.55);
+  animation: cal-sheet-rise 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
-/* tap-to-expand day detail, unfolds under its week */
-.wk-panel {
-  border: 1px solid rgba(139, 147, 248, 0.3);
-  background: rgba(139, 147, 248, 0.06);
-  border-radius: 14px;
-  padding: 8px 12px 6px;
-  margin: 4px 0 10px;
-  animation: cal-fade 0.22s ease;
+@keyframes cal-sheet-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
 }
-.wk-panel-head {
+.cal-sheet-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 2px;
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--line);
 }
-.wk-panel-head h4 {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--text-dim);
+.cal-sheet-head h4 {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--text);
 }
-.wk-panel-close {
+.cal-sheet-close {
   color: var(--text-faint);
-  font-size: 13px;
-  padding: 4px 6px;
+  font-size: 15px;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.cal-sheet-close:active {
+  background: var(--accent-soft);
+}
+.cal-sheet-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.cal-sheet-row {
+  display: flex;
+  align-items: center;
 }
 
 .time-chip {
