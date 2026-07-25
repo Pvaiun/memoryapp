@@ -364,6 +364,45 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).not.toContain('overdue');
   });
 
+  it('a turn ticked earlier in its own day is met, not left unmet by the clock', () => {
+    // last_completed_at is the moment of the TAP, so a 9:30pm chore done at
+    // 8pm on its own Tuesday lands before its nominal turn. Comparing instants
+    // called that unmet and kept saying so for days — the recycling card that
+    // claimed four days overdue on a rhythm the user had kept.
+    const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
+    const line = brainItemLine(
+      {
+        ...baseView,
+        cadence: weeklyTue,
+        createdAt: '2026-07-20T04:00:00Z',
+        lastCompletedAt: '2026-07-22T00:00:00Z', // Tue 8pm local, 90 min before the turn
+      } as ItemView,
+      new Date('2026-07-25T16:00:00Z'),
+      -240,
+    );
+    expect(line).toContain('next=+3d');
+  });
+
+  it('a nightly rhythm run before midnight still asks tonight, never reads as missed', () => {
+    // "daily at 12am" fires at 00:00 on the next calendar date but inside
+    // tonight's sleep day. A daily rhythm always has a turn in the current
+    // sleep day, so last night's run leaves today's turn asked and nothing
+    // behind it unmet.
+    const dailyMidnight = { freq: 'daily', interval: 1, atTime: '00:00' } as Cadence;
+    const line = brainItemLine(
+      {
+        ...baseView,
+        cadence: dailyMidnight,
+        createdAt: '2026-07-18T12:00:00Z',
+        lastCompletedAt: '2026-07-25T02:00:00Z', // 10pm local Friday
+      } as ItemView,
+      new Date('2026-07-25T16:00:00Z'), // noon local Saturday
+      -240,
+    );
+    expect(line).toContain('happens=today(12am)');
+    expect(line).not.toContain('overdue');
+  });
+
   it('a turn that went by unmet carries next=Nd-overdue', () => {
     // Same rhythm, same Saturday, never completed: Tuesday's turn passed. The
     // 1.5×-period neglect threshold has not fired yet, so slipping= is silent
