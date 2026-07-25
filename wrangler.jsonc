@@ -20,7 +20,13 @@
     "binding": "AI"
   },
   "triggers": {
-    // Layer-1 punctual push scan (§11.4): deterministic, every 5 minutes.
+    // One 5-minute tick, two jobs:
+    //   • Layer-1 punctual push scan (§11.4): deterministic, every tick.
+    //   • Morning map rebuild (§9.1): the first tick past the 5am user-local
+    //     day rollover builds the new day's map, so the user opens to a
+    //     finished map instead of waiting on the Brain. Not a "0 5 * * *"
+    //     entry because crons fire in UTC — the handler derives 5am from the
+    //     client's reported tz offset, which follows timezones and DST.
     "crons": ["*/5 * * * *"]
   },
   "vars": {
