@@ -1,5 +1,6 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
 import {
+  cadenceGridGapMs,
   completedWithinSleepDay,
   describeAtTime,
   describeCadence,
@@ -467,31 +468,75 @@ export function isTodayRelevant(
   return false;
 }
 
-// The occurrence of a recurring rhythm that falls within the user-local today,
-// or null. Shared by the same-day floor and the item line's happens=today
-// token so the guarantee and the Brain's input can never disagree. An
-// occurrence already completed within the local today doesn't count — the
-// rhythm releases until tomorrow.
-export function cadenceOccurrenceToday(
-  i: { cadence?: Cadence | null; eventAt: string | null; createdAt?: string; lastCompletedAt?: string | null },
-  now: Date,
-  tzOffsetMinutes: number,
-): Date | null {
+// Where a recurring rhythm stands relative to the user-local today: its turn
+// falls today, its last turn passed unmet, or it next comes round in N days.
+// One axis, one derivation — the same-day floor, the happens=today token and
+// the next= token all read it, so the guarantee and the Brain's input can
+// never disagree.
+export type CadenceStanding =
+  | { kind: 'today'; at: Date }
+  | { kind: 'overdue'; at: Date; days: number }
+  | { kind: 'upcoming'; at: Date; days: number };
+
+type CadenceItem = {
+  cadence?: Cadence | null;
+  eventAt: string | null;
+  createdAt?: string;
+  lastCompletedAt?: string | null;
+};
+
+export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: number): CadenceStanding | null {
   if (!i.cadence) return null;
   const DAY = 86_400_000;
   const dayStartUtc =
     sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
+  const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
+  const occurrenceFrom = (from: Date): Date =>
+    i.cadence!.atTime
+      ? nextAtTimeOccurrence(i.cadence!, anchor, from, tzOffsetMinutes)
+      : nextOccurrence(i.cadence!, anchor, from);
+
   // Same predicate that derives ItemView.doneToday — the checkbox and the
   // Brain's release must agree on what "done for today" means (sleep-cycle
   // day: a 9:30pm completion stays done through the small hours).
-  if (completedWithinSleepDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes)) return null;
-  const from = new Date(dayStartUtc);
-  const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
-  const occ = i.cadence.atTime
-    ? nextAtTimeOccurrence(i.cadence, anchor, from, tzOffsetMinutes)
-    : nextOccurrence(i.cadence, anchor, from);
-  return occ.getTime() < dayEndUtc ? occ : null;
+  const releasedToday = completedWithinSleepDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes);
+  if (!releasedToday) {
+    const occ = occurrenceFrom(new Date(dayStartUtc));
+    if (occ.getTime() < dayEndUtc) return { kind: 'today', at: occ };
+  }
+
+  // Nothing is being asked today, which reads two ways the item line used to
+  // render identically: the rhythm is kept and merely upcoming, or its last
+  // turn went by unmet. Walk the grid backwards one worst-case gap to tell
+  // them apart; a turn that predates the item was never asked, so the anchor
+  // floors the window.
+  const anchorMs = new Date(anchor).getTime();
+  const windowStart = Math.max(dayStartUtc - cadenceGridGapMs(i.cadence), anchorMs);
+  let previous: Date | null = null;
+  let cursor = new Date(windowStart);
+  for (let n = 0; n < 40 && cursor.getTime() < dayStartUtc; n++) {
+    const occ = occurrenceFrom(cursor);
+    if (occ.getTime() >= dayStartUtc) break;
+    previous = occ;
+    cursor = new Date(occ.getTime() + 60_000);
+  }
+  const completedMs = i.lastCompletedAt ? new Date(i.lastCompletedAt).getTime() : null;
+  if (previous && (completedMs === null || completedMs < previous.getTime())) {
+    return { kind: 'overdue', at: previous, days: -sleepDayDiff(previous.getTime(), now.getTime(), tzOffsetMinutes) };
+  }
+  // Today's turn already done releases the rhythm until tomorrow, so the
+  // search for the next one starts past the end of today.
+  const next = occurrenceFrom(new Date(releasedToday ? dayEndUtc : dayStartUtc));
+  return { kind: 'upcoming', at: next, days: sleepDayDiff(next.getTime(), now.getTime(), tzOffsetMinutes) };
+}
+
+// The occurrence of a recurring rhythm that falls within the user-local today,
+// or null. An occurrence already completed within the local today doesn't
+// count — the rhythm releases until tomorrow.
+export function cadenceOccurrenceToday(i: CadenceItem, now: Date, tzOffsetMinutes: number): Date | null {
+  const standing = cadenceStanding(i, now, tzOffsetMinutes);
+  return standing?.kind === 'today' ? standing.at : null;
 }
 
 // The item exactly as the Brain's prompt receives it — one compact line,
@@ -511,11 +556,22 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
   if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
   if (i.eventAt) {
     parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
-  } else if (i.cadence && cadenceOccurrenceToday(i, now, tzOffsetMinutes)) {
-    // Recurring items otherwise never carry a today marker, forcing the Brain
-    // to re-derive "daily + it's Tuesday = today" mid-composition — the
-    // inference it kept failing. Same token the dated NON-NEGOTIABLE keys on.
-    parts.push(`happens=today${i.cadence.atTime ? `(${describeAtTime(i.cadence.atTime)})` : ''}`);
+  } else if (i.cadence) {
+    // Recurring items otherwise never carry a date token at all, forcing the
+    // Brain to re-derive "daily + it's Tuesday = today" mid-composition — the
+    // inference it kept failing. Where the rhythm stands is stated outright:
+    // happens=today (the token the dated NON-NEGOTIABLE keys on) when its turn
+    // is today, next= otherwise. Without the second, a weekly-Tuesday chore
+    // read on a Saturday looked the same whether Tuesday had been met or
+    // missed, and the Brain guessed "overdue" from the weekday name alone.
+    const standing = cadenceStanding(i, now, tzOffsetMinutes);
+    if (standing?.kind === 'today') {
+      parts.push(`happens=today${i.cadence.atTime ? `(${describeAtTime(i.cadence.atTime)})` : ''}`);
+    } else if (standing?.kind === 'overdue') {
+      parts.push(`next=${standing.days}d-overdue`);
+    } else if (standing) {
+      parts.push(`next=+${standing.days}d`);
+    }
   }
   if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
   if (i.neglected && i.cadence)
@@ -711,7 +767,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 

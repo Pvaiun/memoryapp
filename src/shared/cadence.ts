@@ -26,6 +26,24 @@ export function cadencePeriodMs(cadence: Cadence): number {
   }
 }
 
+// The longest gap the grid can leave between two consecutive occurrences —
+// unlike cadencePeriodMs, which averages a multi-day week down ("3x a week"
+// → 2.3 days). A backward scan for the previous occurrence needs the worst
+// case: any window this wide contains one, or the grid has none to find.
+export function cadenceGridGapMs(cadence: Cadence): number {
+  const interval = Math.max(1, cadence.interval || 1);
+  switch (cadence.freq) {
+    case 'daily':
+      return interval * DAY_MS;
+    case 'weekly':
+      return interval * 7 * DAY_MS;
+    case 'monthly':
+      return interval * 31 * DAY_MS;
+    case 'yearly':
+      return interval * 366 * DAY_MS;
+  }
+}
+
 // Neglect (§7.2): computed, never logged. A missed occurrence resurfaces the
 // item; it does not fail it. Grace of half a period avoids nagging at the edge.
 export function isNeglected(

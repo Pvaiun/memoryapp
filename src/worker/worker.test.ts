@@ -315,6 +315,62 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     ).not.toContain('happens=');
   });
 
+  it('a kept rhythm off its day carries next=+Nd, not a weekday name to date-math', () => {
+    // The recycling case: "weekly on Tue at 9:30pm" read on Saturday. Done
+    // Tuesday, so nothing is asked until Tuesday — the line used to say only
+    // "Tue", and the Brain bundled it into tonight's chores as overdue.
+    const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
+    const saturday = new Date('2026-07-25T16:00:00Z'); // noon local, UTC-4
+    const line = brainItemLine(
+      {
+        ...baseView,
+        cadence: weeklyTue,
+        createdAt: '2026-07-20T04:00:00Z',
+        lastCompletedAt: '2026-07-22T01:30:00Z', // Tue 9:30pm local
+      } as ItemView,
+      saturday,
+      -240,
+    );
+    expect(line).toContain('next=+3d');
+    expect(line).not.toContain('overdue');
+  });
+
+  it('a turn that went by unmet carries next=Nd-overdue', () => {
+    // Same rhythm, same Saturday, never completed: Tuesday's turn passed. The
+    // 1.5×-period neglect threshold has not fired yet, so slipping= is silent
+    // and this token is the only thing separating the two cases.
+    const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
+    const line = brainItemLine(
+      { ...baseView, cadence: weeklyTue, createdAt: '2026-07-20T04:00:00Z' } as ItemView,
+      new Date('2026-07-25T16:00:00Z'),
+      -240,
+    );
+    expect(line).toContain('next=4d-overdue');
+    expect(line).not.toContain('slipping=');
+  });
+
+  it('a turn predating the item was never asked, so it reads as upcoming', () => {
+    // Created Wednesday, "weekly on Tue": the Tuesday before capture is not a
+    // missed turn.
+    const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
+    const line = brainItemLine(
+      { ...baseView, cadence: weeklyTue, createdAt: '2026-07-23T04:00:00Z' } as ItemView,
+      new Date('2026-07-23T16:00:00Z'),
+      -240,
+    );
+    expect(line).toContain('next=+5d');
+  });
+
+  it('today’s turn done releases the rhythm to tomorrow', () => {
+    const daily = { freq: 'daily', interval: 1, atTime: '19:00' } as Cadence;
+    const line = brainItemLine(
+      { ...baseView, cadence: daily, lastCompletedAt: '2026-07-20T11:00:00Z' } as ItemView,
+      now,
+      -240,
+    );
+    expect(line).toContain('next=+1d');
+  });
+
   it('due=+Nd counts sleep-cycle days, matching the UI countdown badges', () => {
     // 9am local July 23 (UTC-4); hard deadline 10pm local July 27. That is
     // 4.5×24h away — the old rolling round said +5d while the Descent notch
