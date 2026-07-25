@@ -361,6 +361,26 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('next=+5d');
   });
 
+  it('next= counts sleep-cycle days, so a midnight rhythm belongs to the evening before', () => {
+    // The dishwasher: "daily at 12am". At 2am local Saturday the sleep day is
+    // still Friday, and the 12:30am completion is Friday's turn — so the turn
+    // being counted forward to is Saturday night's, one sleep day out, not
+    // "later today" on the calendar.
+    const dailyMidnight = { freq: 'daily', interval: 1, atTime: '00:00' } as Cadence;
+    const smallHours = new Date('2026-07-25T06:00:00Z'); // 2am local Sat, UTC-4
+    const line = brainItemLine(
+      {
+        ...baseView,
+        cadence: dailyMidnight,
+        createdAt: '2026-07-18T12:00:00Z',
+        lastCompletedAt: '2026-07-25T04:30:00Z', // 12:30am local Sat = Friday's sleep day
+      } as ItemView,
+      smallHours,
+      -240,
+    );
+    expect(line).toContain('next=+1d');
+  });
+
   it('today’s turn done releases the rhythm to tomorrow', () => {
     const daily = { freq: 'daily', interval: 1, atTime: '19:00' } as Cadence;
     const line = brainItemLine(
