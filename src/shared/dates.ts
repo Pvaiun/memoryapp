@@ -154,3 +154,16 @@ export function dayKey(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
+
+// The sleep-day the user is *in* right now, as the YYYY-MM-DD key the map is
+// stored under. The client gets this from its own clock (api.ts localDay());
+// the worker runs in UTC, so it shifts by the reported offset instead. Both
+// must agree to the character or the scheduled rebuild builds a day the app
+// then treats as stale.
+export function sleepDayKey(msUtc: number, tzOffsetMinutes: number): string {
+  const shifted = new Date(msUtc + (tzOffsetMinutes - EARLY_MORNING_CUTOFF_MINUTES) * 60_000);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}

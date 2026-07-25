@@ -41,6 +41,35 @@ interface Toast {
 
 let toastSeq = 1;
 
+// The morning map should announce itself. The 5am cron (§9.1) has normally
+// built it hours ago, so the first open of the day has nothing to wait for —
+// hold the calculating screen for a beat anyway, so the rebuild reads as
+// something that happened rather than a map that silently changed overnight.
+const REVEAL_MS = 2000;
+const SEEN_DAY_KEY = 'memory.mapDaySeen';
+
+// Which day's map this device has already been shown — per device, so the
+// reveal plays once on the phone and once on the laptop.
+function seenMapDay(): string | null {
+  try {
+    return localStorage.getItem(SEEN_DAY_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function markMapDaySeen(day: string): void {
+  try {
+    localStorage.setItem(SEEN_DAY_KEY, day);
+  } catch {
+    /* private mode — the reveal just plays again on the next open */
+  }
+}
+
+// 'building' = the Brain is actually running; 'ready' = it already ran and
+// we're holding the same screen so the user sees that it did.
+type BuildPhase = 'idle' | 'building' | 'ready';
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('map');
   const [map, setMap] = useState<MapPayload | null>(null);
@@ -80,7 +109,7 @@ export default function App() {
       /* private mode — the choice just won't persist */
     }
   }, []);
-  const [building, setBuilding] = useState(false);
+  const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -108,21 +137,38 @@ export default function App() {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ttl);
   }, []);
 
-  // First open of the day (§9.1): if the map is stale, rebuild behind a loading
-  // screen — never shown stale-then-swapped.
+  const revealTimerRef = useRef<number | null>(null);
+
+  // First open of the day (§9.1). Two ways in:
+  //   • The 5am cron already built today's map — the usual case. Show the
+  //     calculating screen for REVEAL_MS anyway, then the finished map.
+  //   • The map is still stale (cron missed, long silence, fresh install) —
+  //     rebuild on demand behind the same screen, as the app always did.
+  // Either way the map is never shown stale-then-swapped.
   const loadMap = useCallback(async () => {
     try {
       const m = await api.getMap();
+      const firstOpenOfDay = seenMapDay() !== m.day;
       if (m.stale) {
-        setBuilding(true);
+        setBuildPhase('building');
         const rebuilt = await api.rebuildMap();
         setMap(rebuilt);
-        setBuilding(false);
+        markMapDaySeen(rebuilt.day);
+        setBuildPhase('idle');
+      } else if (firstOpenOfDay) {
+        setMap(m);
+        markMapDaySeen(m.day);
+        setBuildPhase('ready');
+        if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
+        revealTimerRef.current = window.setTimeout(() => {
+          revealTimerRef.current = null;
+          setBuildPhase('idle');
+        }, REVEAL_MS);
       } else {
         setMap(m);
       }
     } catch (err) {
-      setBuilding(false);
+      setBuildPhase('idle');
       if (err instanceof AuthError) {
         setLocked(true);
         return;
@@ -136,12 +182,16 @@ export default function App() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
-    // Re-check staleness when returning to the app across a day boundary.
+    // Re-check on return to the app: across the 5am boundary this is where the
+    // new day's map (and its reveal) arrives without a reload.
     const onVisible = () => {
       if (document.visibilityState === 'visible') loadMap();
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
+    };
   }, [loadMap]);
 
   useEffect(() => {
@@ -383,13 +433,13 @@ export default function App() {
   // workshop variant — the Brain composes without yesterday's groupings. The
   // prompt used is the stored morning-prompt preference (Settings toggle).
   const organizeNow = useCallback(async (noHistory = false) => {
-    setBuilding(true);
+    setBuildPhase('building');
     try {
       setMap(await api.rebuildMap(true, noHistory));
     } catch (err) {
       toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
     } finally {
-      setBuilding(false);
+      setBuildPhase('idle');
     }
   }, [toast]);
 
@@ -468,7 +518,7 @@ export default function App() {
     );
   }
 
-  if (building || (!map && !toasts.length)) {
+  if (buildPhase !== 'idle' || (!map && !toasts.length)) {
     return (
       <div className="app">
         <div className="loading-screen">
@@ -477,7 +527,13 @@ export default function App() {
             <span />
             <span />
           </div>
-          <div>{building ? 'Building today’s map…' : 'Loading…'}</div>
+          <div>
+            {buildPhase === 'building'
+              ? 'Building today’s map…'
+              : buildPhase === 'ready'
+                ? 'Today’s map is ready…'
+                : 'Loading…'}
+          </div>
         </div>
       </div>
     );

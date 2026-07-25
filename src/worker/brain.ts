@@ -17,6 +17,7 @@ import {
   refineWithSourceTime,
   resolveDatePhrase,
   sleepDayDiff,
+  sleepDayKey,
   sleepDayOf,
 } from '../shared/dates';
 import { llmParse } from './capture';
@@ -326,6 +327,58 @@ export async function rebuildMap(
   await logEvent(db, 'system', 'map_rebuilt', { payload: { day, bubbles: builtBubbles } });
 
   return getMap(env, day);
+}
+
+// Scheduled morning rebuild (§9.1 precompute). The cron tick doubles as the
+// map's alarm clock: the app's day rolls over at 5am user-local, so the first
+// tick past that boundary finds a sleep-day with no map and builds it while
+// the user is still asleep. By the time they open the app the map is done —
+// the loading screen becomes a 2-second acknowledgement, not a wait.
+//
+// Why this rides the existing 5-minute cron instead of a `0 5 * * *` entry:
+// Cloudflare crons fire in UTC, but "5am" here means 5am *for the user*, and
+// the only thing that knows their offset is tz_offset_minutes — whatever the
+// client last reported. Deriving the day from that offset on every tick
+// follows them across timezones and DST with no config to keep in sync.
+// First-open-of-day on the client stays as the fallback (§9.1): if the cron
+// missed — the map is still stale — the app rebuilds on demand exactly as before.
+const MORNING_REBUILD_IDLE_DAYS = 14; // silence longer than this → wait for an open
+const MORNING_REBUILD_LOCK_MS = 10 * 60_000; // a tick already building; don't double up
+
+// Pure and testable: should this tick build? Three ways to say no, and the
+// tick says no ~287 times out of 288.
+export function shouldMorningRebuild(s: {
+  day: string; // the sleep-day it is now, user-local
+  mapDay: string | null; // the day the stored map was built for
+  lastSeenAt: string | null; // last /api/map open
+  startedAt: string | null; // last tick that began a scheduled rebuild
+  nowMs: number;
+}): boolean {
+  if (s.mapDay === s.day) return false; // today's map already exists
+  const seenMs = s.lastSeenAt ? Date.parse(s.lastSeenAt) : NaN;
+  // Don't spend a Brain call every morning on an app nobody is opening. After
+  // a long silence the map waits for the next open, which rebuilds it anyway.
+  if (Number.isFinite(seenMs) && s.nowMs - seenMs > MORNING_REBUILD_IDLE_DAYS * 86_400_000) return false;
+  // A rebuild outlives its 5-minute tick on a slow Brain call; without this
+  // the next tick starts a second one against the same still-empty day.
+  const startedMs = s.startedAt ? Date.parse(s.startedAt) : NaN;
+  if (Number.isFinite(startedMs) && s.nowMs - startedMs < MORNING_REBUILD_LOCK_MS) return false;
+  return true;
+}
+
+export async function morningRebuild(env: Env): Promise<void> {
+  const db = env.DB;
+  const nowMs = Date.now();
+  const day = sleepDayKey(nowMs, await getTzOffset(db));
+  const [mapDay, lastSeenAt, startedAt] = await Promise.all([
+    getState(db, 'map_day'),
+    getState(db, 'last_seen_at'),
+    getState(db, 'morning_rebuild_started_at'),
+  ]);
+  if (!shouldMorningRebuild({ day, mapDay, lastSeenAt, startedAt, nowMs })) return;
+
+  await setState(db, 'morning_rebuild_started_at', new Date(nowMs).toISOString());
+  await rebuildMap(env, day);
 }
 
 // A bubble's break-it-down invitation, answered (§9.2 nudge): the Brain only

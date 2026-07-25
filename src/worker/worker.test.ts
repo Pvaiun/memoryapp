@@ -7,6 +7,7 @@ import {
   isTodayRelevant,
   PROFILE_EVENT_TYPES,
   selectBrainSystem,
+  shouldMorningRebuild,
   tierProminences,
 } from './brain';
 import type { Cadence, ItemView } from '../shared/types';
@@ -184,6 +185,34 @@ describe('tierProminences — tier judgment from the Brain, numbers from code', 
   it('handles interleaved output order per tier', () => {
     const ps = tierProminences(['mid', 'loud', 'mid']);
     [0.68, 0.95, 0.5].forEach((want, i) => expect(ps[i]).toBeCloseTo(want));
+  });
+});
+
+describe('shouldMorningRebuild — the 5am cron gate (§9.1 precompute)', () => {
+  const nowMs = Date.parse('2026-07-22T09:02:00Z'); // 5:02am local, UTC-4
+  const base = { day: '2026-07-22', mapDay: '2026-07-21', lastSeenAt: '2026-07-21T22:00:00Z', startedAt: null, nowMs };
+
+  it('builds on the first tick past the rollover', () => {
+    expect(shouldMorningRebuild(base)).toBe(true);
+  });
+
+  it('no-ops once today’s map exists — the other 287 ticks', () => {
+    expect(shouldMorningRebuild({ ...base, mapDay: '2026-07-22' })).toBe(false);
+  });
+
+  it('stands down after a long silence (no Brain calls for an unused app)', () => {
+    expect(shouldMorningRebuild({ ...base, lastSeenAt: '2026-06-01T12:00:00Z' })).toBe(false);
+    // …and picks straight back up once the app is opened again.
+    expect(shouldMorningRebuild({ ...base, lastSeenAt: '2026-07-21T22:00:00Z' })).toBe(true);
+  });
+
+  it('never seen (fresh deploy) is not treated as idle', () => {
+    expect(shouldMorningRebuild({ ...base, lastSeenAt: null })).toBe(true);
+  });
+
+  it('a slow rebuild in flight blocks the next tick, but not forever', () => {
+    expect(shouldMorningRebuild({ ...base, startedAt: '2026-07-22T09:00:00Z' })).toBe(false); // 2 min ago
+    expect(shouldMorningRebuild({ ...base, startedAt: '2026-07-22T08:50:00Z' })).toBe(true); // 12 min — retry
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -404,5 +404,21 @@ describe('sleepDayDiff — the one day-counting system (5am boundary)', () => {
 
   it('negative for past sleep days', () => {
     expect(sleepDayDiff(Date.parse('2026-07-20T16:00:00Z'), Date.parse('2026-07-23T13:00:00Z'), tz)).toBe(-3);
+  });
+});
+
+describe('sleepDayKey — the map day the 5am cron builds', () => {
+  const tz = -240; // UTC-4
+
+  it('rolls at 5am local, not midnight', () => {
+    // 4:59am Wednesday local is still Tuesday's map…
+    expect(sleepDayKey(Date.parse('2026-07-22T08:59:00Z'), tz)).toBe('2026-07-21');
+    // …and 5:00am is the new day the cron builds.
+    expect(sleepDayKey(Date.parse('2026-07-22T09:00:00Z'), tz)).toBe('2026-07-22');
+  });
+
+  it('handles offsets that push the date across UTC midnight', () => {
+    // 9am Wednesday local in UTC+12 — Tuesday evening in UTC.
+    expect(sleepDayKey(Date.parse('2026-07-21T21:00:00Z'), 720)).toBe('2026-07-22');
   });
 });

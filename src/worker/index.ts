@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
-import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, rebuildMap } from './brain';
+import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, morningRebuild, rebuildMap } from './brain';
 import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, uncompleteItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
@@ -55,7 +55,12 @@ app.post('/api/items/:id/undo-recapture', async (c) => {
 app.get('/api/map', async (c) => {
   const day = c.req.query('day');
   if (!day) return c.json({ error: 'day required (YYYY-MM-DD, user-local)' }, 400);
-  return c.json(await getMap(c.env, day));
+  const payload = await getMap(c.env, day);
+  // Proof of life for the scheduled morning rebuild: every open hits this
+  // route, so it stands in for "the app is still in use". After a long
+  // silence the 5am cron stops precomputing and waits for an open again.
+  c.executionCtx.waitUntil(setState(c.env.DB, 'last_seen_at', new Date().toISOString()));
+  return c.json(payload);
 });
 
 // First-open-of-day rebuild; the client shows a loading screen while this runs.
@@ -297,8 +302,17 @@ app.get('/api/status', async (c) => {
 
 export default {
   fetch: app.fetch,
-  // Layer-1 punctual push scan (§11.4): every 5 minutes, deterministic.
+  // Two jobs on the same 5-minute tick:
+  //   • Layer-1 punctual push scan (§11.4) — deterministic, every tick.
+  //   • The morning rebuild (§9.1) — builds the new day's map at the 5am
+  //     user-local rollover so the user never waits for the Brain. No-ops on
+  //     every other tick; failures must not take the push scan down with them.
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runPushScan(env));
+    ctx.waitUntil(
+      morningRebuild(env).catch((err) => {
+        console.error('scheduled morning rebuild failed', err);
+      }),
+    );
   },
 };
