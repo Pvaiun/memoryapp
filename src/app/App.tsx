@@ -3,7 +3,7 @@ import type { ItemView, MapPayload } from '../shared/types';
 import type { CaptureResponse } from '../shared/types';
 import { isDoneForNow } from '../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
-import { api, AuthError } from './api';
+import { api, AuthError, localDay } from './api';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
 import SettingsSheet from './components/SettingsSheet';
@@ -66,13 +66,54 @@ function markMapDaySeen(day: string): void {
   }
 }
 
+// The Brain runs once a day and the payload is a few KB, so the map is worth
+// keeping on the device: the app paints the last one immediately and the
+// /api/map fetch becomes a background revalidation instead of a gate on first
+// paint. That's the "Loading…" flash gone on every open after the first.
+const MAP_CACHE_KEY = 'memory.mapCache';
+
+function readCachedMap(): MapPayload | null {
+  try {
+    const raw = localStorage.getItem(MAP_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as MapPayload;
+    // Two conditions, both about not showing a map that has been superseded:
+    // it must be today's, and the day's reveal must already have played.
+    // Yesterday's bubbles are precisely the stale-then-swapped thing §9.1
+    // forbids, and the first open of the day belongs to the reveal.
+    if (!cached?.day || !cached.bubbles || cached.day !== localDay()) return null;
+    if (seenMapDay() !== cached.day) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedMap(map: MapPayload): void {
+  try {
+    localStorage.setItem(MAP_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    /* private mode or quota — the app just fetches before painting, as before */
+  }
+}
+
+function clearCachedMap(): void {
+  try {
+    localStorage.removeItem(MAP_CACHE_KEY);
+  } catch {
+    /* nothing to do */
+  }
+}
+
 // 'building' = the Brain is actually running; 'ready' = it already ran and
 // we're holding the same screen so the user sees that it did.
 type BuildPhase = 'idle' | 'building' | 'ready';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('map');
-  const [map, setMap] = useState<MapPayload | null>(null);
+  // Hydrated synchronously so the first paint is the map itself, not a
+  // loading screen; loadMap revalidates against the server right behind it.
+  const [map, setMap] = useState<MapPayload | null>(readCachedMap);
   // Now-view renderer: the experimental Descent instrument is the default;
   // the classic tile mosaic stays reachable from Settings.
   const [nowView, setNowViewState] = useState<NowView>(() => {
@@ -170,12 +211,23 @@ export default function App() {
     } catch (err) {
       setBuildPhase('idle');
       if (err instanceof AuthError) {
+        // A locked device must not keep painting the map it cached while it
+        // was unlocked. One flash is possible (the cache is read before the
+        // 401 lands); dropping it here means there is never a second.
+        clearCachedMap();
+        setMap(null);
         setLocked(true);
         return;
       }
       toast(`Couldn't load the map: ${err instanceof Error ? err.message : err}`);
     }
   }, [toast]);
+
+  // Every map the app holds — fetched, rebuilt, or patched in place by a
+  // completion — is what the next open should paint.
+  useEffect(() => {
+    if (map) writeCachedMap(map);
+  }, [map]);
 
   useEffect(() => {
     loadMap();
