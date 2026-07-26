@@ -489,7 +489,11 @@ export default function CalendarView({
                                 keys[di + i],
                                 true,
                                 i === 0 && startsHere && item ? (
-                                  <div className="ag-span-label" onClick={() => onOpenItem(item)}>
+                                  <div
+                                    className="ag-span-label"
+                                    style={{ '--ag-c': itemColor(item) } as CSSProperties}
+                                    onClick={() => onOpenItem(item)}
+                                  >
                                     {item.title}
                                     <small>
                                       {dayLabel(new Date(item.eventAt!))} – {dayLabel(new Date(item.eventEnd!))}

@@ -1682,6 +1682,7 @@ textarea:focus {
 /* Aligned with the row titles, not the day labels — it names a thing, so it
    sits where things sit. */
 .ag-span-label {
+  position: relative;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
@@ -1689,12 +1690,25 @@ textarea:focus {
      row title, so the trip reads as a thing among things */
   padding: 3px 0 5px 62px;
 }
+/* The same rail every row carries, in the trip's own colour — so the label is
+   tied both to the rows around it and to the bracket out in the margin, which
+   is otherwise the only thing wearing that colour. */
+.ag-span-label::before {
+  content: '';
+  position: absolute;
+  left: 51px;
+  top: 5px;
+  bottom: 7px;
+  width: 2px;
+  background: color-mix(in srgb, var(--ag-c, var(--line-strong)) 70%, transparent);
+}
+/* The dates are what the bracket depicts, so they carry the colour outright */
 .ag-span-label small {
   display: block;
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-faint);
-  margin-top: 1px;
+  font-size: 9.5px;
+  font-weight: 650;
+  color: var(--ag-c, var(--text-faint));
+  margin-top: 2px;
 }
 
 /* ---------- search ---------- */
