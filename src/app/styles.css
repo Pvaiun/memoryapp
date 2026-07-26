@@ -1526,9 +1526,8 @@ textarea:focus {
 .cal-agenda-day {
   margin-bottom: 7px;
   padding: 0 10px;
-  background: rgba(148, 163, 216, 0.04);
-  border: 1px solid rgba(148, 163, 216, 0.07);
-  border-radius: 14px;
+  background: rgba(148, 163, 216, 0.055);
+  border-radius: 12px;
 }
 .cal-agenda-day.has {
   padding-bottom: 7px;
@@ -1542,12 +1541,7 @@ textarea:focus {
   padding: 6px 2px;
 }
 .cal-agenda-day.is-today {
-  background: rgba(139, 147, 248, 0.07);
-  border-color: rgba(139, 147, 248, 0.2);
-}
-/* the panel's own top edge is the seam, so the label's rule is redundant */
-.cal-agenda-day .ag-rule {
-  display: none;
+  background: rgba(139, 147, 248, 0.1);
 }
 
 /* A week of agenda. Deliberately unpositioned: day blocks must report
@@ -1587,11 +1581,6 @@ textarea:focus {
   background: var(--accent);
   padding: 1px 6px;
   border-radius: 999px;
-}
-.ag-rule {
-  flex: 1;
-  height: 1px;
-  background: rgba(148, 163, 216, 0.11);
 }
 /* The row the whole mode exists for: the title gets ~253px here against the
    month grid's 43px, so it is a sentence instead of a chip. */
@@ -1664,36 +1653,17 @@ textarea:focus {
 /* A multi-day event is a bracket down every day it covers, with those days
    nested inside it — so "Saturday is part of the trip" is structural, and no
    continuation marker or week-boundary special case is needed. */
-/* A trip is one thing, so it is one panel — its days don't each draw their own
-   or the stretch reads as scattered fragments with the trip's name floating
-   loose among them. No border here: the bracket in the margin is the edge. */
+/* A span links the days it covers from the margin — it does not merge them.
+   Each covered day keeps its own wash like any other day, so the bracket is
+   the only thing claiming they belong together. */
 .ag-group {
   position: relative;
-  margin-bottom: 7px;
-  padding: 0 10px 7px;
-  background: rgba(148, 163, 216, 0.04);
-  border-radius: 14px;
-}
-.ag-group .cal-agenda-day {
-  margin: 0;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: 0;
-}
-.ag-group .cal-agenda-day.has {
-  padding-bottom: 4px;
-}
-/* inside the trip's panel the days have no shapes of their own, so the rule
-   comes back to separate them */
-.ag-group .cal-agenda-day .ag-rule {
-  display: block;
 }
 .ag-bracket {
   position: absolute;
   left: -12px;
-  top: 8px;
-  bottom: 8px;
+  top: 5px;
+  bottom: 12px;
   width: 7px;
   border: 2px solid color-mix(in srgb, var(--ag-c, var(--line-strong)) 70%, transparent);
   border-right: none;

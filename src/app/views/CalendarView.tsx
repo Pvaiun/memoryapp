@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { isDoneForNow } from '../../shared/cadence';
@@ -356,12 +356,13 @@ export default function CalendarView({
     });
   };
 
-  const agendaDay = (d: Date, k: string, inSpan = false) => {
+  const agendaDay = (d: Date, k: string, inSpan = false, lead?: ReactNode) => {
     const rows = agendaRows(k);
+    const filled = rows.length > 0 || !!lead;
     return (
       <div
         key={k}
-        className={`cal-agenda-day${rows.length ? ' has' : ''}${k === today ? ' is-today' : ''}`}
+        className={`cal-agenda-day${filled ? ' has' : ''}${k === today ? ' is-today' : ''}`}
         ref={(el) => {
           if (el) dayRefs.current.set(k, el);
           else dayRefs.current.delete(k);
@@ -373,9 +374,9 @@ export default function CalendarView({
           {/* A quiet day costs one line, not a header plus a line of its own —
               over an empty stretch the agenda is mostly these. Inside a span
               bracket an empty day means "still the trip", so it says nothing. */}
-          {!rows.length && !inSpan && <span className="ag-empty">Nothing</span>}
-          <span className="ag-rule" />
+          {!filled && !inSpan && <span className="ag-empty">Nothing</span>}
         </div>
+        {lead}
         {rows}
       </div>
     );
@@ -482,19 +483,21 @@ export default function CalendarView({
                               className={`ag-bracket${startsHere ? '' : ' cont-t'}${endsHere ? '' : ' cont-b'}`}
                               style={item ? ({ '--ag-c': itemColor(item) } as CSSProperties) : undefined}
                             />
-                            {covered.map((d, i) => (
-                                <Fragment key={keys[di + i]}>
-                                  {agendaDay(d, keys[di + i], true)}
-                                  {i === 0 && startsHere && item && (
-                                    <div className="ag-span-label" onClick={() => onOpenItem(item)}>
-                                      {item.title}
-                                      <small>
-                                        {dayLabel(new Date(item.eventAt!))} – {dayLabel(new Date(item.eventEnd!))}
-                                      </small>
-                                    </div>
-                                  )}
-                              </Fragment>
-                            ))}
+                            {covered.map((d, i) =>
+                              agendaDay(
+                                d,
+                                keys[di + i],
+                                true,
+                                i === 0 && startsHere && item ? (
+                                  <div className="ag-span-label" onClick={() => onOpenItem(item)}>
+                                    {item.title}
+                                    <small>
+                                      {dayLabel(new Date(item.eventAt!))} – {dayLabel(new Date(item.eventEnd!))}
+                                    </small>
+                                  </div>
+                                ) : undefined,
+                              ),
+                            )}
                           </div>,
                         );
                         di = to + 1;
