@@ -1523,6 +1523,9 @@ textarea:focus {
 .cal-agenda-week {
   display: flex;
   flex-direction: column;
+  /* a permanent margin for span brackets, so a day never shifts sideways
+     depending on whether a multi-day event happens to cover it */
+  padding-left: 12px;
 }
 .ag-day {
   display: flex;
@@ -1555,7 +1558,7 @@ textarea:focus {
 .ag-rule {
   flex: 1;
   height: 1px;
-  background: var(--line);
+  background: rgba(148, 163, 216, 0.08);
 }
 /* The row the whole mode exists for: the title gets ~253px here against the
    month grid's 43px, so it is a sentence instead of a chip. */
@@ -1569,27 +1572,33 @@ textarea:focus {
 }
 .ag-row.done .ag-what {
   color: var(--text-faint);
+  border-left-color: var(--line);
   text-decoration: line-through;
 }
 .ag-when {
   font-size: 10px;
   font-weight: 650;
-  color: var(--text-dim);
+  color: var(--text-faint);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 .ag-when.due {
   font-size: 9px;
   font-weight: 750;
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+/* The rail is structure, not signal. It used to carry the item's theme colour,
+   which put the loudest ink on the screen's least important dimension and made
+   a full week read as a rainbow — and theme is exactly the kind of colour §6
+   says the calendar never earns. Neutral here; the title does the talking. */
 .ag-what {
   font-size: 12.5px;
   font-weight: 550;
   line-height: 1.28;
   color: var(--text);
-  border-left: 2px solid;
+  border-left: 2px solid var(--line-strong);
   padding-left: 9px;
   overflow-wrap: break-word;
 }
@@ -1606,14 +1615,13 @@ textarea:focus {
   display: grid;
   place-items: center;
   border-radius: 6px;
-  border: 1.5px solid var(--line-strong);
+  border: 1.5px solid var(--line);
   color: transparent;
   font-size: 11px;
 }
 .ag-box.done {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #0b0e17;
+  border-color: transparent;
+  color: var(--text-faint);
 }
 .ag-empty {
   flex: none;
@@ -1624,34 +1632,37 @@ textarea:focus {
    nested inside it — so "Saturday is part of the trip" is structural, and no
    continuation marker or week-boundary special case is needed. */
 .ag-group {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 7px;
+  position: relative;
 }
 .ag-bracket {
-  border: 2px solid;
+  position: absolute;
+  left: -12px;
+  top: 8px;
+  bottom: 8px;
+  width: 7px;
+  border: 2px solid var(--line-strong);
   border-right: none;
-  border-radius: 8px 0 0 8px;
-  margin: 9px 0 9px 26px;
+  border-radius: 7px 0 0 7px;
 }
 .ag-bracket.cont-t {
+  top: 0;
   border-top: none;
   border-top-left-radius: 0;
-  margin-top: 0;
 }
 .ag-bracket.cont-b {
+  bottom: 0;
   border-bottom: none;
   border-bottom-left-radius: 0;
-  margin-bottom: 0;
 }
-.ag-group-body {
-  min-width: 0;
-}
+/* Aligned with the row titles, not the day labels — it names a thing, so it
+   sits where things sit. */
 .ag-span-label {
   font-size: 12.5px;
   font-weight: 550;
   color: var(--text);
-  padding: 3px 0 5px;
+  /* 44px gutter + 7px gap + 2px rail + 9px inset — the exact left edge of a
+     row title, so the trip reads as a thing among things */
+  padding: 3px 0 5px 62px;
 }
 .ag-span-label small {
   display: block;
