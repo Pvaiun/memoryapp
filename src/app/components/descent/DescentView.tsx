@@ -1047,7 +1047,11 @@ export default function DescentView({
                   const b = info.bubble;
                   const rotation = b.kind === 'rotation';
                   const captured = b.id === CAPTURED_BUBBLE_ID;
-                  const showLedge = info.construction === 'nudge' && b.firstStep && !info.settled;
+                  // The ledge shows wherever the Brain offered an invitation. The nudge
+                  // construction shapes the card; it never gated the offer — and while it
+                  // did, a firstStep on any multi-item bubble was stored, snapshotted, and
+                  // silently never rendered.
+                  const showLedge = !!b.firstStep && !info.settled;
                   const showCount = !rotation && !info.settled && !info.notch && info.total >= 2;
                   return (
                     <button
