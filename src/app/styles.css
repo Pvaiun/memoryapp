@@ -1524,25 +1524,30 @@ textarea:focus {
    the label can sit back and the title is the only thing at full strength.
    Empty days stay bare lines: nothing to contain, nothing to draw. */
 .cal-agenda-day {
-  padding: 0 10px;
-}
-.cal-agenda-day.has {
   margin-bottom: 7px;
-  padding-bottom: 7px;
+  padding: 0 10px;
   background: rgba(148, 163, 216, 0.04);
   border: 1px solid rgba(148, 163, 216, 0.07);
   border-radius: 14px;
 }
-.cal-agenda-day.has.is-today {
-  background: rgba(139, 147, 248, 0.07);
-  border-color: rgba(139, 147, 248, 0.2);
-}
-/* inside a panel the top edge is the seam, so the label's rule is redundant */
-.cal-agenda-day.has .ag-rule {
-  display: none;
+.cal-agenda-day.has {
+  padding-bottom: 7px;
 }
 .cal-agenda-day.has .ag-day {
   padding-top: 7px;
+}
+/* a quiet day is the same shape, just thin: panelling only the busy days made
+   the week read as two different kinds of thing stacked together */
+.cal-agenda-day:not(.has) .ag-day {
+  padding: 6px 2px;
+}
+.cal-agenda-day.is-today {
+  background: rgba(139, 147, 248, 0.07);
+  border-color: rgba(139, 147, 248, 0.2);
+}
+/* the panel's own top edge is the seam, so the label's rule is redundant */
+.cal-agenda-day .ag-rule {
+  display: none;
 }
 
 /* A week of agenda. Deliberately unpositioned: day blocks must report
@@ -1670,16 +1675,18 @@ textarea:focus {
   border-radius: 14px;
 }
 .ag-group .cal-agenda-day {
-  padding-left: 0;
-  padding-right: 0;
-}
-.ag-group .cal-agenda-day.has {
-  margin-bottom: 0;
-  padding-bottom: 0;
+  margin: 0;
+  padding: 0;
   background: none;
   border: none;
+  border-radius: 0;
 }
-.ag-group .cal-agenda-day.has .ag-rule {
+.ag-group .cal-agenda-day.has {
+  padding-bottom: 4px;
+}
+/* inside the trip's panel the days have no shapes of their own, so the rule
+   comes back to separate them */
+.ag-group .cal-agenda-day .ag-rule {
   display: block;
 }
 .ag-bracket {
