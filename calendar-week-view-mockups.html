@@ -419,15 +419,97 @@
     border-left: 2px solid var(--c);
   }
   .band-gap { height: 21px; flex: none; }
+
+  /* ---------- Variant D: spine + agenda ---------- */
+  /* the spine keeps the seven-column shape, but only asks it to carry load —
+     the one thing 43px can express honestly */
+  .spine {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px;
+    padding: 2px 0 9px;
+    border-bottom: 1px solid var(--a-line);
+  }
+  .spine .d { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+  .spine u {
+    text-decoration: none;
+    font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--a-faint);
+  }
+  .spine s {
+    text-decoration: none;
+    font-size: 12px; font-weight: 650; color: var(--a-text);
+    width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%;
+  }
+  .spine .d.today u { color: var(--a-accent); }
+  .spine .d.today s { background: var(--a-accent); color: #0b0e17; font-weight: 750; }
+  .spine .load { width: 100%; height: 3px; border-radius: 2px; background: rgba(148, 163, 216, 0.13); }
+  .spine .load i { display: block; height: 100%; border-radius: 2px; background: var(--a-accent); opacity: 0.85; }
+
+  .ag {
+    flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;
+    /* the week runs past the fold — fade the cut so it reads as "scrolls",
+       not as a clipped layout */
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+  }
+  .phone.short .ag { -webkit-mask-image: none; mask-image: none; }
+  .ag-day { display: flex; align-items: center; gap: 8px; padding: 7px 2px 2px; }
+  .ag-day b {
+    font-size: 10px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--a-dim); flex: none; line-height: 1.3;
+  }
+  .ag-day.today b { color: var(--a-accent); }
+  .ag-day .rule { flex: 1; height: 1px; background: var(--a-line); }
+  .ag-day .tag {
+    flex: none;
+    font-size: 8.5px; font-weight: 750; letter-spacing: 0.08em;
+    color: #0b0e17; background: var(--a-accent);
+    padding: 1px 6px; border-radius: 999px;
+  }
+  /* the row that the whole design exists for: 328px of width instead of 43 */
+  .ag-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 2px 3px 0; }
+  .ag-row .when {
+    font-size: 10px; font-weight: 650; color: var(--a-dim);
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .ag-row .when.due {
+    color: var(--c);
+    font-size: 9px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .ag-row .what {
+    font-size: 12.5px; font-weight: 550; color: var(--a-text); line-height: 1.28;
+    border-left: 2px solid var(--c); padding-left: 9px;
+    overflow-wrap: break-word;
+  }
+  /* recurrence and optionality ride inline, not on a second line — a sub-label
+     per row costs ~12px each and the agenda cannot afford seven of them */
+  .ag-row .what i { font-style: normal; font-size: 10px; color: var(--a-faint); }
+  .ag-row .box { width: 15px; height: 15px; border-radius: 5px; border: 1.5px solid rgba(148, 163, 216, 0.42); }
+  .ag-none { font-size: 11px; color: var(--a-faint); padding: 1px 2px 3px 53px; }
+  /* a span is a bracket down every day it covers — the shape only vertical
+     affords. The covered days sit inside the bracket, indented, so "Sat is
+     part of the trip" is structural rather than something a label has to say */
+  .ag-group { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 7px; }
+  .ag-group .bracket {
+    border: 2px solid var(--c); border-right: none;
+    border-radius: 8px 0 0 8px;
+    margin: 9px 0 9px 26px;
+  }
+  .ag-group .gcontent { min-width: 0; }
+  .ag-span-label {
+    font-size: 12.5px; font-weight: 550; color: var(--a-text);
+    padding: 3px 0 5px;
+  }
+  .ag-span-label small { display: block; font-size: 9px; font-weight: 600; color: var(--a-faint); margin-top: 1px; }
 </style>
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Calendar · horizontal week view</div>
-    <h1>Three ways a week could go sideways</h1>
-    <p class="lede">Same seven days — the real week of Sunday 26 July, with the real items, the real
-    theme colours, and the chip styling lifted straight out of <code>styles.css</code>. Static mock-ups:
-    nothing here is wired up.</p>
+    <div class="eyebrow">Calendar · week view</div>
+    <h1>Four ways to look at a week</h1>
+    <p class="lede">Same seven days throughout — the real week of Sunday 26 July, with the real items,
+    the real theme colours, and the chip styling lifted straight out of <code>styles.css</code>. Three
+    horizontal attempts, then the one I'd actually want to test. Static mock-ups: nothing here is
+    wired up.</p>
 
     <div class="constraint">
       <div>
@@ -776,28 +858,160 @@
     </div>
   </section>
 
+  <!-- ================= VARIANT D ================= -->
+  <section>
+    <div class="kicker">Variant D · The one worth testing</div>
+    <h2>Spine and agenda</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Sunday 26 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Jul 26 – Aug 1</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="spine">
+            <span class="d today"><u>S</u><s>26</s><span class="load"><i style="width:100%"></i></span></span>
+            <span class="d"><u>M</u><s>27</s><span class="load"><i style="width:20%"></i></span></span>
+            <span class="d"><u>T</u><s>28</s><span class="load"><i style="width:40%"></i></span></span>
+            <span class="d"><u>W</u><s>29</s><span class="load"><i style="width:40%"></i></span></span>
+            <span class="d"><u>T</u><s>30</s><span class="load"><i style="width:20%"></i></span></span>
+            <span class="d"><u>F</u><s>31</s><span class="load"><i style="width:40%"></i></span></span>
+            <span class="d"><u>S</u><s>1</s><span class="load"></span></span>
+          </div>
+          <div class="ag">
+            <div class="ag-day today"><b>Sun 26</b><span class="tag">TODAY</span><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">11:00a</span><span class="what" style="--c: var(--th-rel)">Relationship check-in with Kayla <i>⟳</i></span><span class="box"></span></div>
+            <div class="ag-row"><span class="when">7:00p</span><span class="what" style="--c: var(--th-rel)">Speak French with Kayla <i>⟳</i></span><span class="box"></span></div>
+            <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Do the cat litters</span><span class="box"></span></div>
+            <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Declog the hair in the sink</span><span class="box"></span></div>
+            <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Put the paintings up instead of the walk <i>· optional</i></span><span class="box"></span></div>
+
+            <div class="ag-day"><b>Mon 27</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-friends)">Hanging out with Kyle</span></div>
+
+            <div class="ag-day"><b>Tue 28</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-health)">Phone call from triage nurse</span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-fin)">Meeting with Manulife guy</span></div>
+
+            <div class="ag-day"><b>Wed 29</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">10:00a</span><span class="what" style="--c: var(--th-health)">Therapy <i>⟳</i></span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-health)">Strength class at the park</span></div>
+
+            <div class="ag-day"><b>Thu 30</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when due" style="--c: var(--th-admin)">due</span><span class="what" style="--c: var(--th-admin)">Type out and print my will</span><span class="box"></span></div>
+
+            <div class="ag-day"><b>Fri 31</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-friends)">Hanging out with Gabe, he's coming over</span></div>
+            <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Conversation with Kayla about a new bed</span><span class="box"></span></div>
+
+            <div class="ag-day"><b>Sat 1</b><span class="rule"></span></div>
+            <div class="ag-none">Nothing.</div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>Let each shape do the job it's good at.</strong> Seven columns can't hold words, but
+        it can hold a <em>shape</em> — so the spine keeps the week's geometry in 40px and says only what
+        43px can say honestly: which days are loaded. Everything below it is full-width, where the words
+        actually fit.</p>
+        <p>That row is the whole argument. The row spans the full 328px and the title itself gets
+        <strong>253px against the month grid's 43px — 5.9×</strong>, the one thing no seven-column
+        layout can give you. "Conversation with Kayla about a new bed" clipped or broke mid-word in
+        every variant above; here it's just a sentence, at 12.5px, on one line.</p>
+        <p><strong>The whole week is 492px of content</strong> — thirteen items and seven day headers,
+        all legible, nothing tapped. This 724px mock frame shows 440px of it, so on this phone it's one
+        short flick; on any phone taller than about 780px it's a single screen. Either way the
+        comparison holds: the same week is 43px chips and a <code>+N&nbsp;more</code> in the month view,
+        and an all-day band over an empty ruler in Variant B.</p>
+        <p>And it's largely already built: this is the day-detail bottom sheet
+        (<code>CalendarView.tsx:309</code>) run over seven days instead of one. Which also means rows
+        come back to life — <strong>tap to open, check off a DO</strong> — something the month grid
+        can't do at all, because there a whole day is a single button and the chips are inert.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>Shape and substance, separately.</b> The spine
+          answers "how heavy is this week"; the agenda answers "what's actually on".</span></li>
+          <li><span class="pt-num">2</span><span><b>No lens, no zoom.</b> It honours round 4 — one
+          legible size, everything on screen readable. The taper is in the data, not the camera.</span></li>
+          <li><span class="pt-num">3</span><span><b>Quiet days cost one line.</b> Saturday says
+          "Nothing." and takes 16px instead of a whole empty column.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 40px;">
+      <div class="phone short">
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Aug 2 – 8</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="ag" style="padding-top: 4px;">
+            <div class="ag-day"><b>Wed 5</b><span class="rule"></span></div>
+            <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-friends)">Nyissa's defense party</span></div>
+            <div class="ag-day"><b>Thu 6</b><span class="rule"></span></div>
+            <div class="ag-none">Nothing.</div>
+            <div class="ag-group" style="--c: var(--th-friends)">
+              <span class="bracket"></span>
+              <div class="gcontent">
+                <div class="ag-day"><b>Fri 7</b><span class="rule"></span></div>
+                <div class="ag-span-label">Cottage trip with Kyle, Ari, and Molly<small>Fri 7 – Sun 9</small></div>
+                <div class="ag-day"><b>Sat 8</b><span class="rule"></span></div>
+                <div class="ag-day"><b>Sun 9</b><span class="rule"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>Spans are the detail vertical wins outright.</strong> In a horizontal week a
+        multi-day event is a band that needs width, breaks at the week boundary, and needs a
+        <code>›</code> to say it continues — and in Variant C it distorted the whole layout, because a
+        band can't live in a 15px column.</p>
+        <p>Stacked, it's just a bracket down the left of the days it covers. The trip is named once, the
+        dates it owns are obvious, and Saturday and Sunday stay ordinary days that happen to be inside
+        it. No continuation marker, no week-boundary special case, no width to fight for.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= RECOMMENDATION ================= -->
   <div class="verdict">
     <div class="kicker">Where this lands</div>
-    <h2>B is the trap, A is free, C is the only one with a reason</h2>
+    <h2>The seven-column week is the trap</h2>
     <div class="prose" style="margin-top: 10px;">
-      <p><strong>Your instinct was right, and B is the proof.</strong> The conventional horizontal week
-      is an hour grid, and this data doesn't have hours — 10 of 13 items this week are date-only.
-      Anything built on a time ruler will render mostly empty forever, no matter how the week is
-      arranged.</p>
-      <p><strong>A is nearly free and nearly pointless.</strong> It's a second row renderer in the
-      existing scroller, maybe 90 lines. But scroll the month view to the top of this week and you're
-      already looking at it. It removes a <code>+N more</code> on a busy day. That's the feature.</p>
-      <p><strong>C is the only variant that answers a question the month view can't</strong> — it makes
-      the week's shape visible and gives the loaded day enough width to actually read. But be clear
-      about the size of that win: it's <em>one</em> day. Sunday goes from 43px to 77px; Tuesday and
-      Wednesday still break words mid-title. And it gives up the weekday grid, wobbles as items land,
-      and needs real rules for spans, priority, and how far a quiet day may shrink. Call it a week of
-      work, not an afternoon, and it stops being a calendar in the strict sense.</p>
-      <p>If a week view happens, my read is: <strong>skip B entirely, and only build C</strong> — A
-      isn't worth a tab for what it adds. And there's a cheaper thing sitting right there: the Brain
-      already writes "Next week's appointments" as a card. If the goal is <em>what does my week look
-      like</em>, that sentence may be the better surface, and the calendar can stay a calendar.</p>
+      <p>All three horizontal attempts fail the same way, and it took building them to see it clearly:
+      <strong>they each accept that a week must be seven columns, and seven columns on a phone is 43px
+      of width.</strong> Everything after that is damage control. A shows everything and gains nothing.
+      B applies an hour grid to data that has no hours — 10 of this week's 13 items are date-only — and
+      renders three events across 84 cells. C fights back for width and wins exactly one readable day,
+      at the cost of the weekday grid and a pile of new rules for spans and priority.</p>
+      <p><strong>D drops the premise.</strong> The seven-column shape is kept where it's honest — a 40px
+      spine that says which days are heavy — and the content moves to full width, where a title is a
+      sentence instead of a chip. That's the 7.6× the other three can't reach, and it's why the entire
+      week fits on one screen with nothing tapped.</p>
+      <p>It's also the cheapest of the four to build, which is the part I didn't expect. A, B and C all
+      need new layout engines. D needs the day-detail sheet's row renderer pointed at seven days instead
+      of one — and it inherits working rows for free, so items become tappable and DOs become
+      checkable inside the calendar for the first time.</p>
+      <p><strong>What I'd actually want to test</strong>, if this gets built: (1) does the spine earn
+      its 40px, or is it decoration once the agenda is right below it — the honest test is to ship it
+      and try deleting it; (2) does a continuously-scrolling agenda want to be called "Week" at all, or
+      is the week just a divider rule in a list that runs forever; (3) whether it makes the month grid
+      feel redundant for anything except finding a specific date.</p>
+      <p>One thing that hasn't changed: the Brain already writes "Next week's appointments" as a card,
+      unprompted, and it was on today's map. If the only question is <em>what does my week look like</em>,
+      that sentence may still beat every mock-up on this page. D is worth building if you want the
+      calendar to be somewhere you can <em>act</em>, not just read — that's the part the prose card
+      can't do.</p>
     </div>
   </div>
 </div>
