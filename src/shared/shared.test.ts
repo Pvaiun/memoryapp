@@ -571,3 +571,97 @@ describe('nextLatenessBoundary — schedule to the flip, never poll for it', () 
     expect(nextLatenessBoundary(items, now, tz)).toBeGreaterThan(now);
   });
 });
+
+describe('a named part of the day is a coarse time, not an absent one', () => {
+  // Sunday 2pm local, UTC. The capture hour matters here: it is what a phrase
+  // chrono misreads would otherwise leak into the deadline.
+  const ref = new Date('2026-07-26T14:00:00Z');
+  const hourOf = (iso: string) => new Date(iso).getUTCHours();
+
+  it('keeps the hour the part of day implies, rather than squashing to the anchor', () => {
+    const evening = resolveDatePhrase('tomorrow evening', ref, 0)!;
+    expect(evening.hasTime).toBe(true);
+    expect(hourOf(evening.iso)).toBe(20);
+
+    const afternoon = resolveDatePhrase('this afternoon', ref, 0)!;
+    expect(afternoon.hasTime).toBe(true);
+    expect(hourOf(afternoon.iso)).toBe(15);
+  });
+
+  it('handles morning, whose meridiem is 0 and would fail a truthiness test', () => {
+    const morning = resolveDatePhrase('tomorrow morning', ref, 0)!;
+    expect(morning.hasTime).toBe(true);
+    expect(hourOf(morning.iso)).toBe(6);
+  });
+
+  it('works with a weekday and with tonight', () => {
+    const thu = resolveDatePhrase('Thursday evening', ref, 0)!;
+    expect(thu.hasTime).toBe(true);
+    expect(hourOf(thu.iso)).toBe(20);
+
+    const tonight = resolveDatePhrase('tonight', ref, 0)!;
+    expect(tonight.hasTime).toBe(true);
+    expect(hourOf(tonight.iso)).toBe(22);
+  });
+
+  it('a bare day still names no time and still anchors at noon', () => {
+    const tomorrow = resolveDatePhrase('tomorrow', ref, 0)!;
+    expect(tomorrow.hasTime).toBe(false);
+    expect(hourOf(tomorrow.iso)).toBe(12);
+  });
+
+  it('never mints a time out of the hour the user happened to be typing', () => {
+    // chrono matches "end of the day" only as "the day", resolves it to the
+    // capture hour, and marks meridiem implied because 2pm is a PM hour. That
+    // implied meridiem is not evidence of anything the user said.
+    const eod = resolveDatePhrase('end of the day', ref, 0)!;
+    expect(eod.hasTime).toBe(false);
+    expect(hourOf(eod.iso)).toBe(12);
+
+    // Likewise a part-of-day word chrono does not know: no invented hour.
+    const lunch = resolveDatePhrase('tomorrow lunchtime', ref, 0)!;
+    expect(lunch.hasTime).toBe(false);
+    expect(hourOf(lunch.iso)).toBe(12);
+  });
+
+  it('a stated clock time still wins over the part of day', () => {
+    const r = resolveDatePhrase('tomorrow evening at 6:30pm', ref, 0)!;
+    expect(r.hasTime).toBe(true);
+    expect(hourOf(r.iso)).toBe(18);
+    expect(new Date(r.iso).getUTCMinutes()).toBe(30);
+  });
+
+  it('carries the part of day across a range, both ends', () => {
+    const r = resolveDatePhrase('Friday afternoon to Sunday evening', ref, 0)!;
+    expect(r.hasTime).toBe(true);
+    expect(hourOf(r.iso)).toBe(15);
+    expect(hourOf(r.endIso!)).toBe(20);
+  });
+
+  it('the recovery net does not adopt a part of day loose in the sentence', () => {
+    // "morning" here is a greeting. chrono resolves it forward to 6am
+    // tomorrow, which lands on the very day the deadline is on, so the
+    // same-day guard cannot catch it — only refusing coarse times can.
+    const bare = resolveDatePhrase('tomorrow', ref, 0);
+    const refined = refineWithSourceTime(bare, 'good morning, remind me tomorrow', ref, 0)!;
+    expect(refined.hasTime).toBe(false);
+    expect(hourOf(refined.iso)).toBe(12);
+  });
+
+  it('the recovery net still adopts an exact time the extraction dropped', () => {
+    const bare = resolveDatePhrase('today', ref, 0);
+    const refined = refineWithSourceTime(bare, 'put the laundry away before 3:00 p.m.', ref, 0)!;
+    expect(refined.hasTime).toBe(true);
+    expect(hourOf(refined.iso)).toBe(15);
+  });
+
+  it('an exact time in the text upgrades a coarse one from the phrase', () => {
+    const coarse = resolveDatePhrase('this evening', ref, 0)!;
+    expect(coarse.coarse).toBe(true);
+    const refined = refineWithSourceTime(coarse, 'call mum this evening at 6:30pm', ref, 0)!;
+    expect(refined.hasTime).toBe(true);
+    expect(refined.coarse).toBeUndefined();
+    expect(hourOf(refined.iso)).toBe(18);
+    expect(new Date(refined.iso).getUTCMinutes()).toBe(30);
+  });
+});
