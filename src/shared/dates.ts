@@ -6,6 +6,11 @@ import * as chrono from 'chrono-node';
 export interface ResolvedDate {
   iso: string; // ISO datetime
   hasTime: boolean; // whether the phrase specified a time of day
+  // The time came from a named part of the day ("tomorrow evening") rather
+  // than a stated clock ("tomorrow at 8pm"). Still a time the user gave, just
+  // a coarse one — the distinction only governs how far the recovery net
+  // below is allowed to reach.
+  coarse?: boolean;
   endIso?: string; // for range phrases ("July 20 to July 25")
 }
 
@@ -43,6 +48,33 @@ export function expandBareOrdinals(phrase: string, ref: Date, tzOffsetMinutes = 
 // calendar day — not the day after it. 5am is the sleep-cycle boundary.
 export const EARLY_MORNING_CUTOFF_MINUTES = 5 * 60;
 
+// A named part of the day is a time the user gave — a coarse one. chrono
+// resolves "tomorrow evening" to a representative hour (its own canonical
+// morning 6am / afternoon 3pm / evening 8pm / night 10pm) but marks the hour
+// implied rather than certain, so it used to be discarded and the phrase
+// collapsed onto the day anchor: "tomorrow evening" and "tomorrow" stored
+// identically, and the word the user chose was lost.
+//
+// Two signals are required, and the second is what makes it safe. chrono marks
+// meridiem implied whenever the resolved hour merely lands in the afternoon,
+// so a phrase it did NOT understand carries one too: "end of the day" matches
+// only as "the day" and resolves to the hour the user happened to be typing.
+// Minting a deadline out of the capture time is the exact failure this whole
+// area exists to remove — so the text chrono matched must name a part of the
+// day as well.
+const PART_OF_DAY = /\b(morning|afternoon|evening|night|tonight)\b/i;
+
+interface TimeComponents {
+  isCertain(component: string): boolean;
+  get(component: string): number | null;
+}
+
+// Note `!== null`: morning's meridiem is 0, so a truthiness test would drop
+// every morning phrase and keep only the afternoon ones.
+function namesPartOfDay(c: TimeComponents, matchedText: string): boolean {
+  return !c.isCertain('hour') && c.get('meridiem') !== null && PART_OF_DAY.test(matchedText);
+}
+
 export function resolveDatePhrase(phrase: string, ref: Date, tzOffsetMinutes?: number): ResolvedDate | null {
   const tz = tzOffsetMinutes ?? 0;
 
@@ -67,15 +99,21 @@ export function resolveDatePhrase(phrase: string, ref: Date, tzOffsetMinutes?: n
     if (!results.length) return null;
   }
   const r = results[0];
-  const hasTime = r.start.isCertain('hour');
-  // Date-only phrases anchor to NOON local — "tomorrow" captured at 1:48am
-  // must not produce a 1:48am deadline.
+  // Test against what chrono actually matched, not the whole phrase: in
+  // "clean the kitchen tomorrow morning" that is "tomorrow morning", and in
+  // "end of the day" it is only "the day".
+  const exact = r.start.isCertain('hour');
+  const coarse = !exact && namesPartOfDay(r.start, r.text);
+  const hasTime = exact || coarse;
+  // Phrases naming no time at all anchor to NOON local — "tomorrow" captured
+  // at 1:48am must not produce a 1:48am deadline.
   const iso = hasTime ? r.start.date().toISOString() : localNoonIso(r.start.date(), tz);
   let endIso: string | undefined;
   if (r.end) {
-    endIso = r.end.isCertain('hour') ? r.end.date().toISOString() : localNoonIso(r.end.date(), tz);
+    const endHasTime = r.end.isCertain('hour') || namesPartOfDay(r.end, r.text);
+    endIso = endHasTime ? r.end.date().toISOString() : localNoonIso(r.end.date(), tz);
   }
-  return { iso, hasTime, ...(endIso ? { endIso } : {}) };
+  return { iso, hasTime, ...(coarse ? { coarse: true } : {}), ...(endIso ? { endIso } : {}) };
 }
 
 function localNoonIso(d: Date, tzOffsetMinutes: number): string {
@@ -89,19 +127,26 @@ function localNoonIso(d: Date, tzOffsetMinutes: number): string {
 // SAME local day ("put laundry away before 3:00 p.m." → phrase "today"),
 // take the time from the source. Same-day guard keeps unrelated dates in
 // multi-intent text from hijacking it.
+//
+// Only an EXACT clock time is adopted, never a part of day loose in the
+// sentence. "morning", "night" and "evening" turn up in ordinary prose as
+// often as in plans — "good morning, remind me tomorrow" would otherwise
+// resolve to 6am off a greeting — and a real "tomorrow morning" arrives
+// intact in the phrase itself, which is where parts of day are read.
+// A coarse time may still be upgraded: exactness only ever increases here.
 export function refineWithSourceTime(
   resolved: ResolvedDate | null,
   sourceText: string,
   ref: Date,
   tzOffsetMinutes?: number,
 ): ResolvedDate | null {
-  if (!resolved || resolved.hasTime) return resolved;
+  if (!resolved || (resolved.hasTime && !resolved.coarse)) return resolved;
   const fromSource = resolveDatePhrase(sourceText, ref, tzOffsetMinutes);
-  if (!fromSource?.hasTime) return resolved;
+  if (!fromSource?.hasTime || fromSource.coarse) return resolved;
   const tz = tzOffsetMinutes ?? 0;
   const localDay = (iso: string) => Math.floor((new Date(iso).getTime() + tz * 60_000) / 86_400_000);
   if (localDay(fromSource.iso) !== localDay(resolved.iso)) return resolved;
-  return { ...resolved, iso: fromSource.iso, hasTime: true };
+  return { iso: fromSource.iso, hasTime: true, ...(resolved.endIso ? { endIso: resolved.endIso } : {}) };
 }
 
 // Soft-deadline cue words (§3.1): a plainly-stated date defaults to *hard*;
