@@ -1,0 +1,803 @@
+<title>Week view — Memory calendar</title>
+<style>
+  /* ---------- page tokens (themed) ---------- */
+  :root {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+    --warn: #b0741c;
+    --warn-soft: rgba(200, 138, 40, 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d1019;
+      --panel: #151a28;
+      --ink: #eef0fa;
+      --ink-dim: #9aa3c0;
+      --ink-faint: #5d647e;
+      --line: rgba(148, 163, 216, 0.16);
+      --accent: #8b93f8;
+      --accent-soft: rgba(139, 147, 248, 0.14);
+      --chip-ink: #0b0e17;
+      --warn: #e8c26a;
+      --warn-soft: rgba(232, 194, 106, 0.12);
+    }
+  }
+  :root[data-theme='light'] {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+    --warn: #b0741c;
+    --warn-soft: rgba(200, 138, 40, 0.12);
+  }
+  :root[data-theme='dark'] {
+    --ground: #0d1019;
+    --panel: #151a28;
+    --ink: #eef0fa;
+    --ink-dim: #9aa3c0;
+    --ink-faint: #5d647e;
+    --line: rgba(148, 163, 216, 0.16);
+    --accent: #8b93f8;
+    --accent-soft: rgba(139, 147, 248, 0.14);
+    --chip-ink: #0b0e17;
+    --warn: #e8c26a;
+    --warn-soft: rgba(232, 194, 106, 0.12);
+  }
+
+  /* ---------- app tokens (fixed — the app is dark-only) ---------- */
+  :root {
+    --a-bg: #0b0e17;
+    --a-line: rgba(148, 163, 216, 0.14);
+    --a-text: #eef0fa;
+    --a-dim: #9aa3c0;
+    --a-faint: #5d647e;
+    --a-accent: #8b93f8;
+    --a-accent-soft: rgba(139, 147, 248, 0.16);
+    /* real theme colours, from themeColor() in src/app/api.ts — the curated
+       hue wheel, hashed by theme name. Home/Health collide on the same teal
+       and Friends/Finances on the same amber; that is the live behaviour. */
+    --th-rel: hsl(235 62% 63%);
+    --th-home: hsl(165 62% 58%);
+    --th-health: hsl(165 62% 58%);
+    --th-friends: hsl(38 62% 63%);
+    --th-fin: hsl(38 62% 63%);
+    --th-admin: hsl(38 62% 68%);
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--ground); }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 56px 24px 80px; }
+
+  /* ---------- page typography ---------- */
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin-bottom: 16px;
+  }
+  .lede { font-size: 16.5px; color: var(--ink-dim); max-width: 62ch; }
+  h2 { font-size: 22px; font-weight: 750; letter-spacing: -0.015em; margin-bottom: 6px; }
+  .kicker {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  section { margin-top: 72px; }
+  .row {
+    display: grid;
+    grid-template-columns: 400px minmax(0, 1fr);
+    gap: 44px;
+    align-items: start;
+  }
+  @media (max-width: 880px) {
+    .row { grid-template-columns: minmax(0, 1fr); }
+  }
+  .prose { font-size: 15px; color: var(--ink-dim); max-width: 58ch; }
+  .prose p { margin-bottom: 12px; }
+  .prose strong { color: var(--ink); font-weight: 650; }
+  .points { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  .points li { display: flex; gap: 14px; font-size: 15px; color: var(--ink-dim); }
+  .points b { color: var(--ink); font-weight: 650; }
+  .pt-num {
+    flex: none;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--chip-ink);
+    font-size: 12.5px; font-weight: 750;
+    display: grid; place-items: center;
+    margin-top: 1px;
+  }
+  .pt-num.bad { background: var(--warn); color: var(--chip-ink); }
+  .code-note {
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--ink-faint);
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    max-width: 58ch;
+  }
+  .code-note code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    background: var(--accent-soft);
+    border-radius: 6px;
+    padding: 1.5px 6px;
+    color: var(--ink);
+  }
+  .verdict {
+    margin-top: 80px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 30px;
+  }
+  .verdict .prose { max-width: 70ch; }
+  .cap { margin-top: 14px; font-size: 12.5px; color: var(--ink-faint); max-width: 360px; }
+
+  /* the arithmetic callout — the constraint the whole page turns on */
+  .constraint {
+    margin-top: 34px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .constraint div { background: var(--panel); padding: 18px 20px; }
+  .constraint dt {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 8px;
+  }
+  .constraint dd {
+    font-size: 26px; font-weight: 780; letter-spacing: -0.02em;
+    color: var(--ink); font-variant-numeric: tabular-nums;
+  }
+  .constraint dd small { display: block; font-size: 13px; font-weight: 450; color: var(--ink-dim); letter-spacing: 0; margin-top: 4px; }
+  .constraint .hit dd { color: var(--warn); }
+
+  /* ---------- phone frame ---------- */
+  .phone {
+    width: 360px;
+    max-width: 100%;
+    height: 724px;
+    background: radial-gradient(500px 260px at 50% -80px, rgba(122, 132, 247, 0.09), transparent 70%), var(--a-bg);
+    border: 1px solid rgba(148, 163, 216, 0.22);
+    border-radius: 34px;
+    padding: 16px 15px 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--a-text);
+    box-shadow: 0 24px 60px rgba(8, 10, 22, 0.28);
+    font-variant-numeric: tabular-nums;
+  }
+  .phone.short { height: 470px; }
+  .p-head { display: flex; align-items: center; gap: 10px; padding: 4px 4px 12px; }
+  .p-orb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #b9befc, var(--a-accent) 60%, #5b63d8);
+    box-shadow: 0 0 12px rgba(139, 147, 248, 0.7);
+  }
+  .p-title { flex: 1; line-height: 1.2; }
+  .p-title b { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; display: block; }
+  .p-title span { font-size: 11.5px; color: var(--a-dim); }
+  .p-gear {
+    width: 32px; height: 32px; border-radius: 11px;
+    background: rgba(148, 163, 216, 0.08);
+    border: 1px solid var(--a-line);
+    display: grid; place-items: center;
+    color: var(--a-dim); font-size: 14px;
+  }
+  .p-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .p-capture { display: flex; gap: 7px; align-items: center; padding-top: 10px; }
+  .p-cap-input {
+    flex: 1;
+    background: rgba(148, 163, 216, 0.07);
+    border: 1px solid var(--a-line);
+    border-radius: 14px;
+    padding: 10px 13px;
+    font-size: 13.5px;
+    color: var(--a-faint);
+  }
+  .p-mic, .p-send {
+    width: 40px; height: 40px; flex: none;
+    border-radius: 13px;
+    display: grid; place-items: center;
+    font-size: 15px;
+  }
+  .p-mic { background: rgba(148, 163, 216, 0.07); border: 1px solid var(--a-line); color: var(--a-dim); }
+  .p-send { background: #3f478f; color: #dfe2ff; }
+  .p-tabs {
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 4px 2px;
+    margin-top: 8px;
+    border-top: 1px solid var(--a-line);
+  }
+  .p-tabs span {
+    font-size: 10.5px; font-weight: 650;
+    color: var(--a-faint);
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .p-tabs i { font-style: normal; font-size: 15px; line-height: 1; }
+  .p-tabs .on { color: var(--a-accent); }
+
+  .cal-top { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 8px; }
+  .cal-top b { font-size: 16px; font-weight: 750; }
+  .cal-nav {
+    width: 32px; height: 32px; border-radius: 11px;
+    background: rgba(148, 163, 216, 0.08); border: 1px solid var(--a-line);
+    display: grid; place-items: center; color: var(--a-dim); font-size: 13px;
+  }
+  /* month|week segmented control, sitting where the Today button sits today */
+  .seg {
+    display: inline-flex; gap: 2px; padding: 2px;
+    border-radius: 999px; border: 1px solid var(--a-line);
+    background: rgba(148, 163, 216, 0.06);
+  }
+  .seg span {
+    font-size: 10.5px; font-weight: 650; letter-spacing: 0.01em;
+    padding: 3px 10px; border-radius: 999px; color: var(--a-faint);
+  }
+  .seg .on { background: var(--a-accent); color: #0b0e17; font-weight: 750; }
+
+  /* ---------- shared: the real chip, lifted from src/app/styles.css ---------- */
+  .ch {
+    display: block;
+    font-size: 8.5px;
+    font-weight: 600;
+    line-height: 1.25;
+    padding: 2px 3px;
+    border-radius: 5px;
+    overflow: hidden;
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 16%, transparent);
+    /* matches .chip-x: wrap at word boundaries, break only when a single word
+       is wider than the column — never leave a title silently clipped */
+    overflow-wrap: break-word;
+    word-break: normal;
+    hyphens: none;
+  }
+  .ch b { display: block; font-weight: 700; opacity: 0.9; }
+  /* a deadline is a soft claim on the day, not an event: hollow it out */
+  .ch.due {
+    background: transparent;
+    padding-left: 3px;
+    border-left: 2px solid var(--c);
+    border-radius: 0 6px 6px 0;
+  }
+  .ch.due i {
+    font-style: normal; font-weight: 700; font-size: 8px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  /* a recurrence repeats — a dashed edge says "again", quietly */
+  .ch.rec { border: 1px dashed color-mix(in srgb, var(--c) 55%, transparent); padding: 1px 3px; }
+
+  /* day-number treatment, shared by all three */
+  .dn { display: flex; flex-direction: column; align-items: center; gap: 1px; padding-bottom: 3px; }
+  .dn u {
+    text-decoration: none;
+    font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--a-faint);
+  }
+  .dn s {
+    text-decoration: none;
+    font-size: 12.5px; font-weight: 600; color: var(--a-text);
+    width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%;
+  }
+  .dn.today s { background: var(--a-accent); color: #0b0e17; font-weight: 750; }
+  .dn.today u { color: var(--a-accent); }
+
+  /* ---------- Variant A: seven equal columns ---------- */
+  .wk7 {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    padding-top: 4px;
+    align-content: start;
+    border-top: 1px solid var(--a-line);
+  }
+  .wk7 .c {
+    display: flex; flex-direction: column; gap: 3px; min-width: 0;
+    padding: 4px 1px;
+    border-left: 1px solid rgba(148, 163, 216, 0.07);
+  }
+  .wk7 .c:first-child { border-left: none; }
+
+  /* ---------- Variant B: hour ruler ---------- */
+  .ruler { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 4px; }
+  .rl-head {
+    display: grid; grid-template-columns: 26px repeat(7, 1fr); gap: 2px;
+    border-bottom: 1px solid var(--a-line); padding-bottom: 3px;
+  }
+  .rl-allday {
+    display: grid; grid-template-columns: 26px repeat(7, 1fr); gap: 2px;
+    padding: 4px 0 5px;
+    background: rgba(148, 163, 216, 0.045);
+    border-bottom: 1px solid var(--a-line);
+  }
+  .rl-allday .lbl {
+    font-size: 7.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--a-faint); writing-mode: vertical-rl; transform: rotate(180deg);
+    justify-self: center; align-self: center;
+  }
+  .rl-allday .c { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .rl-grid { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+  .rl-hour {
+    display: grid; grid-template-columns: 26px repeat(7, 1fr); gap: 2px;
+    height: 26px;
+    border-bottom: 1px solid rgba(148, 163, 216, 0.06);
+  }
+  /* label sits centred in its own hour block, so the 9a row isn't clipped by
+     the top edge the way a sit-on-the-line label would be */
+  .rl-hour .t {
+    font-size: 8px; font-weight: 650; color: var(--a-faint);
+    display: flex; align-items: center; justify-content: flex-end;
+    padding-right: 4px;
+  }
+  .rl-hour .s { border-left: 1px solid rgba(148, 163, 216, 0.06); }
+  .rl-ev {
+    position: absolute;
+    font-size: 8px; font-weight: 650;
+    border-radius: 4px;
+    padding: 2px 3px;
+    line-height: 1.2;
+    overflow: hidden;
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 18%, #0b0e17 82%);
+    border-left: 2px solid var(--c);
+  }
+
+  /* ---------- Variant C: weighted columns ---------- */
+  .wkw {
+    flex: 1; min-height: 0;
+    display: grid;
+    /* width tracks content: Sun has 5 items, Sat has none */
+    grid-template-columns: 2.1fr 1fr 1.35fr 1.35fr 1fr 1.35fr 0.42fr;
+    gap: 2px;
+    padding-top: 4px;
+    align-content: start;
+    border-top: 1px solid var(--a-line);
+    position: relative;
+  }
+  .wkw .c {
+    display: flex; flex-direction: column; gap: 3px; min-width: 0;
+    padding: 4px 2px;
+    border-left: 1px solid rgba(148, 163, 216, 0.07);
+  }
+  .wkw .c:first-child { border-left: none; }
+  .wkw .c.wide .ch { font-size: 10px; padding: 3px 5px; border-radius: 6px; }
+  .wkw .c.mid .ch { font-size: 9.5px; padding: 3px 4px; }
+  .wkw .c.quiet { background: rgba(148, 163, 216, 0.03); }
+  .wkw .c.quiet .dn s { font-size: 11px; color: var(--a-faint); }
+  .wkw .c.quiet .dn u { font-size: 7.5px; }
+  /* multi-day band, positioned over the weighted tracks */
+  .wkw-band {
+    position: absolute;
+    height: 17px; line-height: 17px;
+    border-radius: 5px 0 0 5px;
+    font-size: 9px; font-weight: 650;
+    padding: 0 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 16%, transparent);
+    border-left: 2px solid var(--c);
+  }
+  .band-gap { height: 21px; flex: none; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Calendar · horizontal week view</div>
+    <h1>Three ways a week could go sideways</h1>
+    <p class="lede">Same seven days — the real week of Sunday 26 July, with the real items, the real
+    theme colours, and the chip styling lifted straight out of <code>styles.css</code>. Static mock-ups:
+    nothing here is wired up.</p>
+
+    <div class="constraint">
+      <div>
+        <dt>Chip width, month view</dt>
+        <dd>43<small>px usable, at a 360px screen</small></dd>
+      </div>
+      <div class="hit">
+        <dt>Chip width, week view</dt>
+        <dd>43<small>px — identical. Seven columns is seven columns.</small></dd>
+      </div>
+      <div>
+        <dt>What a week actually buys</dt>
+        <dd>7×<small>the vertical room per day, and nothing else</small></dd>
+      </div>
+    </div>
+
+    <div class="prose" style="margin-top: 26px; max-width: 70ch;">
+      <p>That table is the whole problem, and it's worth sitting with before looking at the mock-ups.
+      A horizontal week and a month grid are <strong>both seven columns of the same phone</strong>. The
+      chips can't get wider going month → week, so they can't get bigger — 8.5px type and word-boundary
+      wrapping is already the floor. All a week wins is height: no <code>+N more</code> truncation, no
+      4-line clamp, and room to breathe vertically.</p>
+      <p>So the question each variant answers is: <strong>what do you spend that height on?</strong>
+      A spends it on showing everything. B spends it on a time ruler. C refuses the premise and takes
+      width back from the empty days.</p>
+    </div>
+  </header>
+
+  <!-- ================= VARIANT A ================= -->
+  <section>
+    <div class="kicker">Variant A · The straight answer</div>
+    <h2>Seven equal columns</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Sunday 26 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Jul 26 – Aug 1</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="wk7">
+            <span class="c">
+              <span class="dn today"><u>Sun</u><s>26</s></span>
+              <span class="ch rec" style="--c: var(--th-rel)"><b>11a</b>Relationship check-in with Kayla</span>
+              <span class="ch rec" style="--c: var(--th-rel)"><b>7p</b>Speak French with Kayla</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Do the cat litters</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Declog the hair in the sink</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Put paintings up instead of walk</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Mon</u><s>27</s></span>
+              <span class="ch" style="--c: var(--th-friends)">Hanging out with Kyle</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Tue</u><s>28</s></span>
+              <span class="ch" style="--c: var(--th-health)">Phone call from triage nurse</span>
+              <span class="ch" style="--c: var(--th-fin)">Meeting with Manulife guy</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Wed</u><s>29</s></span>
+              <span class="ch rec" style="--c: var(--th-health)"><b>10a</b>Therapy</span>
+              <span class="ch" style="--c: var(--th-health)">Strength class at the park</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Thu</u><s>30</s></span>
+              <span class="ch due" style="--c: var(--th-admin)"><i>due </i>Type out and print my will</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Fri</u><s>31</s></span>
+              <span class="ch" style="--c: var(--th-friends)">Hanging out with Gabe, he's coming over</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Conversation with Kayla about a new bed</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Sat</u><s>1</s></span>
+            </span>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>The month grid with one week in it.</strong> Same columns, same chips, same code —
+        every day just gets the full body height instead of a 78px cell. Nothing is truncated and
+        nothing is hidden behind a tap.</p>
+        <p>It reads fine, and that's the trouble: <strong>it reads almost exactly like the week you
+        already see in the month view.</strong> Scroll the current calendar so this week is at the top
+        and you get the same seven columns with the same titles — only Sunday's fifth item is missing.
+        The whole gain, on this week, is one chip and a bit of air.</p>
+        <p>Look at how much of the frame is empty. Thirteen items across seven days leaves two-thirds
+        of the screen unused, and Saturday is a column of pure whitespace holding a "1".</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>Costs almost nothing.</b> A second row renderer in
+          the same scroller — the chips, colours, and sort order are already written.</span></li>
+          <li><span class="pt-num bad">2</span><span><b>Gains almost nothing.</b> Same width, same type
+          size, same words. On a quiet week it's a month view with more air.</span></li>
+        </ul>
+        <div class="code-note">Ambient recurrences stay off, exactly as they do today: the dishwasher,
+        the recycling, and the garbage all carry <code>show_on_calendar = 0</code>, so a week view
+        doesn't suddenly bury the grid in chores.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= VARIANT B ================= -->
+  <section>
+    <div class="kicker">Variant B · The conventional answer</div>
+    <h2>Hour ruler</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Sunday 26 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Jul 26 – Aug 1</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="ruler">
+            <div class="rl-head">
+              <span class="sp"></span>
+              <span class="dn today"><u>S</u><s>26</s></span>
+              <span class="dn"><u>M</u><s>27</s></span>
+              <span class="dn"><u>T</u><s>28</s></span>
+              <span class="dn"><u>W</u><s>29</s></span>
+              <span class="dn"><u>T</u><s>30</s></span>
+              <span class="dn"><u>F</u><s>31</s></span>
+              <span class="dn"><u>S</u><s>1</s></span>
+            </div>
+            <div class="rl-allday">
+              <span class="lbl">All day</span>
+              <span class="c">
+                <span class="ch due" style="--c: var(--th-home)"><i>due </i>Cat litters</span>
+                <span class="ch due" style="--c: var(--th-home)"><i>due </i>Sink</span>
+                <span class="ch due" style="--c: var(--th-home)"><i>due </i>Paintings</span>
+              </span>
+              <span class="c"><span class="ch" style="--c: var(--th-friends)">Kyle</span></span>
+              <span class="c">
+                <span class="ch" style="--c: var(--th-health)">Triage nurse</span>
+                <span class="ch" style="--c: var(--th-fin)">Manulife</span>
+              </span>
+              <span class="c"><span class="ch" style="--c: var(--th-health)">Strength class</span></span>
+              <span class="c"><span class="ch due" style="--c: var(--th-admin)"><i>due </i>Will</span></span>
+              <span class="c">
+                <span class="ch" style="--c: var(--th-friends)">Gabe over</span>
+                <span class="ch due" style="--c: var(--th-home)"><i>due </i>Bed talk</span>
+              </span>
+              <span class="c"></span>
+            </div>
+            <div class="rl-grid">
+              <div class="rl-hour"><span class="t">9a</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">10a</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">11a</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">12p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">1p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">2p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">3p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">4p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">5p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">6p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">7p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">8p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <div class="rl-hour"><span class="t">9p</span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span><span class="s"></span></div>
+              <!-- the entire week's timed content: three events -->
+              <span class="rl-ev" style="--c: var(--th-rel); top: 52px; left: 28px; width: 41px;">11a Check-in</span>
+              <span class="rl-ev" style="--c: var(--th-health); top: 26px; left: 157px; width: 41px;">10a Therapy</span>
+              <span class="rl-ev" style="--c: var(--th-rel); top: 260px; left: 28px; width: 41px;">7p French</span>
+            </div>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>This is the mock-up that makes the argument for you.</strong> It's the shape everyone
+        pictures when they hear "week view" — and against this data it collapses.</p>
+        <p>Ten of the week's thirteen items have no clock time at all, so they pile into the all-day
+        band at the top and the ruler underneath holds <strong>three events across twelve hours and
+        seven days</strong>. The band — the part that isn't the week view — is doing all the work, and
+        it's the part squeezed into 60px.</p>
+        <p>That's not a rendering problem, it's the data model. <code>clock()</code> treats a noon-exact
+        timestamp as "no clock time", because dates captured without a time anchor to local noon. A
+        deadline is a claim on a <em>day</em>. A recurrence like therapy has a time; "hanging out with
+        Kyle" never will. An hour grid is a precision instrument for data that mostly doesn't carry
+        hours.</p>
+        <ul class="points">
+          <li><span class="pt-num bad">1</span><span><b>Empty by construction.</b> 84 cells on screen,
+          3 of them occupied.</span></li>
+          <li><span class="pt-num bad">2</span><span><b>Demotes the real content.</b> Deadlines and
+          all-day events — the bulk of what's here — get the thinnest strip on the page.</span></li>
+          <li><span class="pt-num bad">3</span><span><b>Fights the room.</b> Timed items would need
+          overlap resolution, drag targets, a now-line — a lot of machinery to display three
+          things.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= VARIANT C ================= -->
+  <section>
+    <div class="kicker">Variant C · The one that earns the width</div>
+    <h2>Weighted days</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone">
+        <div class="p-head">
+          <span class="p-orb"></span>
+          <div class="p-title"><b>Memory</b><span>Sunday 26 July</span></div>
+          <span class="p-gear">⚙</span>
+        </div>
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Jul 26 – Aug 1</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="wkw">
+            <span class="c wide">
+              <span class="dn today"><u>Sun</u><s>26</s></span>
+              <span class="ch rec" style="--c: var(--th-rel)"><b>11a</b>Relationship check-in with Kayla</span>
+              <span class="ch rec" style="--c: var(--th-rel)"><b>7p</b>Speak French with Kayla</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Do the cat litters</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Declog the hair in the sink</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Put the paintings up</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Mon</u><s>27</s></span>
+              <span class="ch" style="--c: var(--th-friends)">Kyle</span>
+            </span>
+            <span class="c mid">
+              <span class="dn"><u>Tue</u><s>28</s></span>
+              <span class="ch" style="--c: var(--th-health)">Triage nurse call</span>
+              <span class="ch" style="--c: var(--th-fin)">Manulife guy</span>
+            </span>
+            <span class="c mid">
+              <span class="dn"><u>Wed</u><s>29</s></span>
+              <span class="ch rec" style="--c: var(--th-health)"><b>10a</b>Therapy</span>
+              <span class="ch" style="--c: var(--th-health)">Strength class</span>
+            </span>
+            <span class="c">
+              <span class="dn"><u>Thu</u><s>30</s></span>
+              <span class="ch due" style="--c: var(--th-admin)"><i>due </i>Print the will</span>
+            </span>
+            <span class="c mid">
+              <span class="dn"><u>Fri</u><s>31</s></span>
+              <span class="ch" style="--c: var(--th-friends)">Gabe coming over</span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Bed conversation</span>
+            </span>
+            <span class="c quiet">
+              <span class="dn"><u>S</u><s>1</s></span>
+            </span>
+          </div>
+        </div>
+        <div class="p-capture"><span class="p-cap-input">Capture anything…</span><span class="p-mic">🎙</span><span class="p-send">↑</span></div>
+        <div class="p-tabs">
+          <span><i>◍</i>Now</span><span><i>▤</i>Browse</span><span class="on"><i>▦</i>Calendar</span><span><i>⌕</i>Find</span>
+        </div>
+      </div>
+      <div class="prose">
+        <p><strong>Columns sized by what's in them.</strong> Sunday holds five things, so it takes 77px
+        — nearly double a month cell — and its chips jump to 10px type, readable at a glance with no
+        squinting. Saturday is empty, so it shrinks to a 15px spine that still says "Saturday, nothing".
+        Tuesday, Wednesday and Friday sit in between at 50px and 9.5px type.</p>
+        <p>This is the only variant where a week view <em>looks different from the month view</em>,
+        because it's the only one that stops accepting 1/7th as the answer. It's also the idea the
+        previous mock-up round parked: Concept B, "weighted days" — flagged then as worth prototyping
+        <strong>inside a focus week, where losing aligned weekday columns costs least</strong>. A week
+        view is exactly that place. There is no month shape left to break.</p>
+        <p>The cost is honest: <strong>the columns no longer line up with anything.</strong> You can't
+        compare Tuesday to Tuesday, and the week's shape shifts every time you add an item — a day can
+        widen under your thumb. For a calendar that's a real loss. For answering "what does my week look
+        like", the emphasis <em>is</em> the answer.</p>
+        <ul class="points">
+          <li><span class="pt-num">1</span><span><b>Legibility where it's needed.</b> The busy day gets
+          the pixels; the empty day stops charging rent for them.</span></li>
+          <li><span class="pt-num">2</span><span><b>Shape at a glance.</b> The week's load is visible in
+          the geometry before you read a word.</span></li>
+          <li><span class="pt-num bad">3</span><span><b>Unstable and unalignable.</b> No weekday grid,
+          and widths that move as items land.</span></li>
+        </ul>
+        <div class="code-note">Worth noticing in the frame above: the win is confined to Sunday.
+        At 50px, Tuesday and Wednesday still break words mid-title — "Manulif/e", "Therap/y" — exactly
+        as they do in the month grid today. Weighting buys one genuinely readable day per week and
+        leaves the rest where they were.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SPANS ================= -->
+  <section>
+    <div class="kicker">Variant C · The following week</div>
+    <h2>Where a multi-day event lands</h2>
+    <div class="row" style="margin-top: 22px;">
+      <div class="phone short">
+        <div class="p-body">
+          <div class="cal-top">
+            <b>Aug 2 – 8</b>
+            <span class="seg"><span>Month</span><span class="on">Week</span></span>
+          </div>
+          <div class="wkw" style="grid-template-columns: 0.42fr 1fr 0.42fr 1.35fr 0.42fr 1.6fr 1.6fr;">
+            <span class="wkw-band" style="--c: var(--th-friends); left: calc(100% - 152px); width: 152px; top: 47px;">Cottage trip · Kyle, Ari, Molly ›</span>
+            <span class="c quiet"><span class="dn"><u>S</u><s>2</s></span></span>
+            <span class="c">
+              <span class="dn"><u>Mon</u><s>3</s></span>
+              <span class="ch due" style="--c: var(--th-home)"><i>due </i>Gaming room sign</span>
+            </span>
+            <span class="c quiet"><span class="dn"><u>T</u><s>4</s></span></span>
+            <span class="c mid">
+              <span class="dn"><u>Wed</u><s>5</s></span>
+              <span class="ch" style="--c: var(--th-friends)">Nyissa's defense party</span>
+            </span>
+            <span class="c quiet"><span class="dn"><u>T</u><s>6</s></span></span>
+            <span class="c mid">
+              <span class="dn"><u>Fri</u><s>7</s></span>
+              <span class="band-gap"></span>
+            </span>
+            <span class="c mid">
+              <span class="dn"><u>Sat</u><s>8</s></span>
+              <span class="band-gap"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="prose">
+        <p>The cottage trip runs Friday to Sunday, so it crosses the week boundary. Bands already work
+        this way in the month grid — <code>.wk-band</code> with a <code>cont-r</code> edge and a
+        <code>›</code> to say "keeps going" — and they port over unchanged.</p>
+        <p>But note what the weighting did here. Friday and Saturday hold <em>one</em> event between
+        them, and it's the widest thing on screen, because a band needs width to be a band. So the
+        weighting rule can't just count items — <strong>a span has to claim the days it covers</strong>,
+        or the trip gets squeezed into two narrow spines and turns back into a chip.</p>
+        <p>That's the sort of special case that makes the weighted layout more than a one-afternoon
+        change. The equal-column version in Variant A has none of it: the band spans columns 6–7 and
+        that's the end of the logic.</p>
+        <div class="code-note">The server already emits one <code>event</code> entry per spanned day
+        (<code>items.ts:399</code>); the month grid filters them out with <code>spanItemIds</code> and
+        draws the band instead. Either week variant reuses that untouched.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECOMMENDATION ================= -->
+  <div class="verdict">
+    <div class="kicker">Where this lands</div>
+    <h2>B is the trap, A is free, C is the only one with a reason</h2>
+    <div class="prose" style="margin-top: 10px;">
+      <p><strong>Your instinct was right, and B is the proof.</strong> The conventional horizontal week
+      is an hour grid, and this data doesn't have hours — 10 of 13 items this week are date-only.
+      Anything built on a time ruler will render mostly empty forever, no matter how the week is
+      arranged.</p>
+      <p><strong>A is nearly free and nearly pointless.</strong> It's a second row renderer in the
+      existing scroller, maybe 90 lines. But scroll the month view to the top of this week and you're
+      already looking at it. It removes a <code>+N more</code> on a busy day. That's the feature.</p>
+      <p><strong>C is the only variant that answers a question the month view can't</strong> — it makes
+      the week's shape visible and gives the loaded day enough width to actually read. But be clear
+      about the size of that win: it's <em>one</em> day. Sunday goes from 43px to 77px; Tuesday and
+      Wednesday still break words mid-title. And it gives up the weekday grid, wobbles as items land,
+      and needs real rules for spans, priority, and how far a quiet day may shrink. Call it a week of
+      work, not an afternoon, and it stops being a calendar in the strict sense.</p>
+      <p>If a week view happens, my read is: <strong>skip B entirely, and only build C</strong> — A
+      isn't worth a tab for what it adds. And there's a cheaper thing sitting right there: the Brain
+      already writes "Next week's appointments" as a card. If the goal is <em>what does my week look
+      like</em>, that sentence may be the better surface, and the calendar can stay a calendar.</p>
+    </div>
+  </div>
+</div>
