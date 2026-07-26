@@ -411,6 +411,44 @@ describe('parts of the day are times (§12)', () => {
     expect(withDayPart(timed, 'evening', ref, TZ)!.iso).toBe(timed.iso);
   });
 
+  it('reads the common day-of-day wordings, not just the four bare parts', () => {
+    for (const [phrase, hour] of [
+      ['tomorrow at dawn', 6],
+      ['tomorrow mid-morning', 10],
+      ['tomorrow before lunch', 11],
+      ['tomorrow after lunch', 13],
+      ['tomorrow after school', 16],
+      ['tomorrow late afternoon', 17],
+      ['tomorrow after work', 18],
+      ['tomorrow at sunset', 19],
+      ['tomorrow after dinner', 20],
+      ['tomorrow before bed', 22],
+    ] as const) {
+      const r = resolveDatePhrase(phrase, ref, TZ)!;
+      expect([phrase, r.precision]).toEqual([phrase, 'daypart']);
+      expect([phrase, localHour(r.iso)]).toEqual([phrase, hour]);
+    }
+  });
+
+  it('a wording the table misses falls through to the model, not to midday', () => {
+    // The table cannot enumerate English. Anything it misses resolves day-only,
+    // which is exactly the state withDayPart is allowed to fill — so the model's
+    // coarse classification rescues it instead of the item landing at noon.
+    const missed = resolveDatePhrase('tomorrow once the kids are down', ref, TZ)!;
+    expect(missed.precision).toBe('day');
+    const rescued = withDayPart(missed, 'night', ref, TZ)!;
+    expect(rescued.precision).toBe('daypart');
+    expect(localHour(rescued.iso)).toBe(22);
+  });
+
+  it('a table hit is never overridden by the model, however it classified', () => {
+    // Both paths can fire on the same capture; the deterministic one wins, so a
+    // liberal classifier cannot destabilise the phrasings we resolve ourselves.
+    const hit = resolveDatePhrase('tomorrow after work', ref, TZ)!;
+    expect(withDayPart(hit, 'morning', ref, TZ)!.iso).toBe(hit.iso);
+    expect(localHour(hit.iso)).toBe(18);
+  });
+
   it('dayPartWord reads the part back off the hour it landed on', () => {
     expect(dayPartWord(9)).toBe('morning');
     expect(dayPartWord(12)).toBe('midday');

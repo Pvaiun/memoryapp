@@ -40,18 +40,35 @@ const DAY_PART_ANCHORS: Record<DayPart, DayPartAnchor> = {
   night: { part: 'night', hour: 22, minute: 0, until: 23 },
 };
 
-// Ordered most-specific-first: "tonight" must be read before "night", "early
-// morning" before "morning". Entries that aren't one of the four day parts
-// (lunchtime, end of day) still resolve to an anchor — they're stated times of
-// day, just not ones chrono marks certain.
+// English has far more ways to name a time of day than any table can hold
+// ("after my shift", "once the kids are down", "before standup"). This is the
+// FAST PATH, not the boundary of what works: the common expressions, resolved
+// deterministically so the same text always gives the same hour. Anything it
+// misses falls through to the model's dayPart classification (withDayPart),
+// which is open-vocabulary. A miss here costs a fallback, never a wrong hour.
+//
+// Ordered so compounds beat the bare word they contain — "late afternoon"
+// before "afternoon", "mid-morning" before "morning" — and otherwise walking
+// the day in order.
 const DAY_PART_PHRASES: [RegExp, DayPartAnchor][] = [
-  [/\b(first thing|at dawn|early (in the )?morning)\b/i, { part: 'morning', hour: 8, minute: 30, until: 11 }],
-  // Later than a plain "night", which now anchors at 10pm — there is nowhere
-  // left to slide to, so this one stands as written.
-  [/\b(late (at )?night|middle of the night|overnight)\b/i, { part: 'night', hour: 23, minute: 0, until: 23 }],
-  [/\b(tonight|this evening)\b/i, DAY_PART_ANCHORS.evening],
-  [/\b(end of (the )?(day|workday)|eod)\b/i, { part: 'evening', hour: 18, minute: 0, until: 20 }],
+  [/\b(dawn|sunrise|first light|crack of dawn)\b/i, { part: 'morning', hour: 6, minute: 30, until: 8 }],
+  [/\b(first thing|early (in the )?morning|before work)\b/i, { part: 'morning', hour: 8, minute: 30, until: 11 }],
+  [/\bmid-? ?morning\b/i, { part: 'morning', hour: 10, minute: 30, until: 12 }],
+  [/\b(late morning|brunch)\b/i, { part: 'morning', hour: 11, minute: 0, until: 12 }],
+  [/\bbefore lunch\b/i, { part: 'morning', hour: 11, minute: 30, until: 12 }],
   [/\b(lunch ?time|over lunch|at lunch)\b/i, { part: 'afternoon', hour: 12, minute: 0, until: 14 }],
+  [/\bafter lunch\b/i, { part: 'afternoon', hour: 13, minute: 30, until: 15 }],
+  [/\bafter school\b/i, { part: 'afternoon', hour: 16, minute: 0, until: 18 }],
+  [/\b(late afternoon|tea ?time)\b/i, { part: 'afternoon', hour: 17, minute: 0, until: 18 }],
+  [/\b(after work|end of (the )?(day|workday)|eod|cob|close of business)\b/i,
+    { part: 'evening', hour: 18, minute: 0, until: 20 }],
+  [/\b(sunset|sundown|dusk)\b/i, DAY_PART_ANCHORS.evening],
+  [/\b(tonight|this evening)\b/i, DAY_PART_ANCHORS.evening],
+  [/\bafter (dinner|supper)\b/i, { part: 'evening', hour: 20, minute: 0, until: 22 }],
+  [/\b(before bed|bed ?time|before sleep)\b/i, DAY_PART_ANCHORS.night],
+  // Later than a plain "night", which anchors at 10pm — there is nowhere left
+  // to slide to, so this one stands as written.
+  [/\b(late (at )?night|middle of the night|overnight)\b/i, { part: 'night', hour: 23, minute: 0, until: 23 }],
   [/\bmorning\b/i, DAY_PART_ANCHORS.morning],
   [/\bafternoon\b/i, DAY_PART_ANCHORS.afternoon],
   [/\bevening\b/i, DAY_PART_ANCHORS.evening],
@@ -66,7 +83,7 @@ function matchDayPart(phrase: string): DayPartAnchor | null {
 // The word a 'daypart' anchor stands for, read back off the hour it landed on
 // so a nudged time still describes itself correctly.
 export function dayPartWord(localHour: number): DayPart | 'midday' {
-  if (localHour < 11) return 'morning';
+  if (localHour < 12) return 'morning';
   if (localHour < 14) return 'midday';
   if (localHour < 18) return 'afternoon';
   if (localHour < 21) return 'evening';
