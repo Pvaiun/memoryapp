@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { isDoneForNow } from '../../shared/cadence';
@@ -319,6 +320,7 @@ export default function CalendarView({
     return list.map((e, i) => {
       const item = items[e.itemId];
       if (!item) return null;
+      const c = itemColor(item);
       const due = e.kind === 'deadline';
       const rec = e.kind === 'occurrence';
       const t = due ? null : agendaTime(new Date(e.date), item);
@@ -333,7 +335,7 @@ export default function CalendarView({
           onClick={() => onOpenItem(item)}
         >
           <span className={`ag-when${due ? ' due' : ''}`}>{due ? 'due' : (t ?? '·')}</span>
-          <span className="ag-what">
+          <span className="ag-what" style={{ '--ag-c': c } as CSSProperties}>
             {item.title}
             {rec && <i className="ag-rep">⟳</i>}
           </span>
@@ -476,7 +478,10 @@ export default function CalendarView({
                         const covered = days.slice(di, to + 1);
                         out.push(
                           <div className="ag-group" key={`${s.itemId}-${keys[di]}`}>
-                            <span className={`ag-bracket${startsHere ? '' : ' cont-t'}${endsHere ? '' : ' cont-b'}`} />
+                            <span
+                              className={`ag-bracket${startsHere ? '' : ' cont-t'}${endsHere ? '' : ' cont-b'}`}
+                              style={item ? ({ '--ag-c': itemColor(item) } as CSSProperties) : undefined}
+                            />
                             {covered.map((d, i) => (
                                 <Fragment key={keys[di + i]}>
                                   {agendaDay(d, keys[di + i], true)}
