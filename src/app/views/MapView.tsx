@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Bubble, ItemView, MapPayload } from '../../shared/types';
 import { CAPTURED_BUBBLE_ID } from '../../shared/types';
 import { describeAtTime, happeningToday } from '../../shared/cadence';
+import { dayPartWord, inferPrecision } from '../../shared/dates';
 import BubbleMap from '../components/BubbleMap';
 import DescentView from '../components/descent/DescentView';
 import ItemRow from '../components/ItemRow';
@@ -24,17 +25,24 @@ function brainTime(iso: string): string {
   return m ? `${hr}:${String(m).padStart(2, '0')}${ampm}` : `${hr}${ampm}`;
 }
 
+// How a moment is allowed to be spoken, preposition included: a stated clock
+// time reads "at **7pm**", a part of the day reads "in the **evening**" — never
+// a precision the user didn't give. A date-only anchor says nothing at all.
+function spokenTime(iso: string, precision: ItemView['timePrecision']): string | null {
+  const p = inferPrecision(iso, precision, -new Date(iso).getTimezoneOffset());
+  if (p === 'day') return null;
+  if (p === 'time') return `at **${brainTime(iso)}**`;
+  const word = dayPartWord(new Date(iso).getHours());
+  return word === 'night' || word === 'midday' ? `at **${word}**` : `in the **${word}**`;
+}
+
 // The one moment a captured item is anchored to, if any: an event's start, a
-// set rhythm's time, or a timed deadline. Date-only deadlines (stored at
-// noon) carry no time; undated captures never reach this bucket.
+// set rhythm's time, or a timed deadline; undated captures never reach here.
 function capturedDue(item: ItemView): string | null {
-  // Date-only dates anchor at noon (dates.localNoonIso); the T12:00:00 marker
-  // is how the app tells "all day" from a real clock time (same test ItemRow
-  // uses), so an all-day event or dateless deadline shows no time.
-  if (item.type === 'HAPPEN' && item.eventAt && !item.eventAt.includes('T12:00:00')) return brainTime(item.eventAt);
-  if (item.cadence?.atTime) return describeAtTime(item.cadence.atTime);
-  if (item.deadline && !item.deadline.includes('T12:00:00')) return brainTime(item.deadline);
-  return null;
+  const event = item.type === 'HAPPEN' && item.eventAt ? spokenTime(item.eventAt, item.timePrecision) : null;
+  if (event) return event;
+  if (item.cadence?.atTime) return `at **${describeAtTime(item.cadence.atTime)}**`;
+  return item.deadline ? spokenTime(item.deadline, item.timePrecision) : null;
 }
 
 // Build the captured bubble's card sentence deterministically, in the same
@@ -46,7 +54,7 @@ function capturedSentence(items: ItemView[]): string {
   const parts = items.map((it) => {
     const token = it.type === 'DO' ? `[${safeToken(it.title)}](${it.id})` : `**${safeToken(it.title)}**`;
     const due = capturedDue(it);
-    return due ? `${token} at **${due}**` : token;
+    return due ? `${token} ${due}` : token;
   });
   if (parts.length <= 1) return `${parts[0] ?? ''}.`;
   if (parts.length === 2) return `${parts[0]}, and ${parts[1]}.`;

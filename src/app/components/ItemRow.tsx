@@ -1,7 +1,8 @@
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
-import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
+import type { TimePrecision } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, dayPartWord, inferPrecision, sleepDayDiffLocal } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
 export function priorityColor(p: number): string {
@@ -10,15 +11,25 @@ export function priorityColor(p: number): string {
   return 'var(--text-faint)';
 }
 
+// How the moment is allowed to be spoken. A clock time is read back only when
+// the user gave one; "tomorrow evening" says "evening", and a bare day says
+// nothing at all — the stored instant is an anchor, not a claim.
+function whenLabel(iso: string, precision: TimePrecision | null): string {
+  const p = inferPrecision(iso, precision, -new Date(iso).getTimezoneOffset());
+  if (p === 'day') return '';
+  const d = new Date(iso);
+  return p === 'daypart' ? dayPartWord(d.getHours()) : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 // Day distances are sleep-cycle days (5am boundary, same as localDay): a 1am
 // deadline reads "today" through the evening before it, not as tomorrow.
-function fmtDate(iso: string): string {
+function fmtDate(iso: string, precision: TimePrecision | null = 'time'): string {
   const d = new Date(iso);
   const days = sleepDayDiffLocal(d.getTime(), Date.now());
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (days === 0) return `today ${time}`;
+  const when = whenLabel(iso, precision);
+  if (days === 0) return when ? `today ${when}` : 'today';
   if (days > 0 && days < 7)
-    return d.toLocaleDateString([], { weekday: 'short' }) + (iso.includes('T12:00:00') ? '' : ` ${time}`);
+    return d.toLocaleDateString([], { weekday: 'short' }) + (when ? ` ${when}` : '');
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -108,14 +119,14 @@ export default function ItemRow({
           {item.deadline && (
             <span className={overdue ? 'overdue' : ''}>
               {overdue ? 'overdue · ' : 'due '}
-              {fmtDate(item.deadline)}
+              {fmtDate(item.deadline, item.timePrecision)}
               {item.deadlineHardness === 'soft' ? ' (soft)' : ''}
             </span>
           )}
           {item.eventAt && (
             <span>
-              {fmtDate(item.eventAt)}
-              {item.eventEnd && ` – ${fmtDate(item.eventEnd)}`}
+              {fmtDate(item.eventAt, item.timePrecision)}
+              {item.eventEnd && ` – ${fmtDate(item.eventEnd, null)}`}
             </span>
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}

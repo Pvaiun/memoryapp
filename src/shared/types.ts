@@ -2,6 +2,10 @@
 // Backend types (§3) are functional and never shown to the user;
 // flavour (§4) is the user-facing vocabulary, derived in flavour.ts.
 
+import type { DayPart, TimePrecision } from './dates';
+
+export type { DayPart, TimePrecision };
+
 export type BackendType = 'DO' | 'KNOW' | 'HAPPEN';
 
 export type Flavour = 'Task' | 'Goal' | 'Reminder' | 'Event' | 'Note';
@@ -89,6 +93,12 @@ export interface Item {
   eventAt: string | null; // ISO datetime
   eventEnd: string | null;
   alertLeadMinutes: number | null; // per-event push lead override (§11.4)
+
+  // How precisely the user pinned deadline/eventAt (§12). The instant is
+  // always exact — sorting and alerts need one — but "tomorrow evening" must
+  // not be read back as "7pm". null = captured before the field existed; read
+  // it through dates.inferPrecision, never raw.
+  timePrecision: TimePrecision | null;
 
   // Whether a RECURRING item earns calendar presence (§6). One-offs always
   // paint their dates; this gates cadence occurrences only — a bi-weekly
@@ -191,6 +201,11 @@ export interface ParsedItem {
   effort: Effort;
   pingNatured: boolean;
   eventAtPhrase: string | null;
+  // A part of the day the capture *implies* without saying — bins go out the
+  // night before collection, a call to a clinic happens in business hours.
+  // Only ever applied when the phrase itself named no time and no day part,
+  // and it never becomes a clock time in the UI (§12).
+  dayPart: DayPart | null;
   alertLeadMinutes: number | null;
   priority: PriorityLevel;
   themes: string[]; // theme names — existing reused or new coined (§5)

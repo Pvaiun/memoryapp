@@ -259,9 +259,15 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   if (edits.type !== undefined) set('type', 'type', edits.type);
   if (edits.deadlinePhrase) {
     const r = resolveDatePhrase(edits.deadlinePhrase, new Date(), edits.tzOffsetMinutes);
-    if (r) set('deadline', 'deadline', r.iso);
+    if (r) {
+      set('deadline', 'deadline', r.iso);
+      set('time_precision', 'timePrecision', r.precision);
+    }
   } else if (edits.deadline !== undefined) {
     set('deadline', 'deadline', edits.deadline);
+    // A picked datetime is exact by construction; clearing the date clears the
+    // precision with it rather than leaving a claim about a moment that's gone.
+    set('time_precision', 'timePrecision', edits.deadline ? 'time' : null);
   }
   if (edits.deadlineHardness !== undefined) set('deadline_hardness', 'deadlineHardness', edits.deadlineHardness);
   if (edits.cadence !== undefined) set('cadence', 'cadence', edits.cadence ? JSON.stringify(edits.cadence) : null);
@@ -270,9 +276,13 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   if (edits.pingNatured !== undefined) set('ping_natured', 'pingNatured', edits.pingNatured ? 1 : 0);
   if (edits.eventAtPhrase) {
     const r = resolveDatePhrase(edits.eventAtPhrase, new Date(), edits.tzOffsetMinutes);
-    if (r) set('event_at', 'eventAt', r.iso);
+    if (r) {
+      set('event_at', 'eventAt', r.iso);
+      set('time_precision', 'timePrecision', r.precision);
+    }
   } else if (edits.eventAt !== undefined) {
     set('event_at', 'eventAt', edits.eventAt);
+    set('time_precision', 'timePrecision', edits.eventAt ? 'time' : null);
   }
   if (edits.eventEnd !== undefined) set('event_end', 'eventEnd', edits.eventEnd);
   if (edits.alertLeadMinutes !== undefined) set('alert_lead_minutes', 'alertLeadMinutes', edits.alertLeadMinutes);

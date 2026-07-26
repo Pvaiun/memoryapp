@@ -31,6 +31,7 @@ function mkItem(over: Partial<ItemView>): ItemView {
     eventAt: null,
     eventEnd: null,
     alertLeadMinutes: null,
+    timePrecision: null,
     showOnCalendar: true,
     priorityBase: 0.5,
     priorityBoost: 0,

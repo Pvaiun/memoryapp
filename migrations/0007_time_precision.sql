@@ -1,0 +1,12 @@
+-- How precisely the user pinned an item's moment (§12). deadline/event_at are
+-- always a single instant — the app needs one to sort, compare and alert on —
+-- but "tomorrow evening" and "tomorrow at 7pm" are different claims, and only
+-- the second one may be read back to the user as a clock time.
+--
+--   'time'    — a clock time was stated ("3pm", "at noon")
+--   'daypart' — a part of the day was stated or plainly implied ("evening")
+--   'day'     — the phrase named a day and nothing more (anchored at noon)
+--
+-- NULL means the item predates this column: those rows still carry the old
+-- local-noon convention, and dates.inferPrecision reads it back off the anchor.
+ALTER TABLE items ADD COLUMN time_precision TEXT CHECK (time_precision IN ('time','daypart','day'));

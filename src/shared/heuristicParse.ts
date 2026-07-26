@@ -110,6 +110,9 @@ export function heuristicParse(raw: string, ref: Date, tzOffsetMinutes?: number)
       effort: inferEffort(text),
       pingNatured: ping,
       eventAtPhrase: type === 'HAPPEN' ? datePhrase : null,
+      // No semantics without an LLM — the heuristic parser never guesses a
+      // part of the day the text didn't state (a stated one rides the phrase).
+      dayPart: null,
       alertLeadMinutes: null,
       priority: inferPriority(text),
       themes: [],
@@ -136,6 +139,7 @@ function emptyFallback(raw: string): ParsedItem {
     effort: 'medium',
     pingNatured: false,
     eventAtPhrase: null,
+    dayPart: null,
     alertLeadMinutes: null,
     priority: 'medium',
     themes: [],

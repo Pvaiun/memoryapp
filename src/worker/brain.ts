@@ -451,6 +451,7 @@ export async function addFirstStep(
     title: stepTitle,
     rawText: { ts, text: title },
     deadline: deadline?.iso ?? null,
+    timePrecision: deadline?.precision ?? null,
     deadlineHardness: deadline ? p?.deadlineHardness ?? 'hard' : null,
     cadence: p?.cadence ?? null,
     pingNatured: p?.pingNatured ?? false,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, dayPartWord, inferPrecision, sleepDayDiff, sleepDayKey, withDayPart } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -259,7 +259,7 @@ describe('deterministic dates (§12)', () => {
   });
   it('captures explicit times', () => {
     const r = resolveDatePhrase('tomorrow at 3pm', ref, 0)!;
-    expect(r.hasTime).toBe(true);
+    expect(r.precision).toBe('time');
     expect(new Date(r.iso).getUTCHours()).toBe(15);
   });
   it('hardness defaults hard, softened by low-pressure phrasing', () => {
@@ -305,7 +305,7 @@ describe('deterministic dates (§12)', () => {
   it('night-owl rule keeps explicit times: "tomorrow at 9am" at 12:31am = 9am today', () => {
     const r = resolveDatePhrase('tomorrow at 9am', new Date('2026-07-20T00:31:00Z'), 0)!;
     expect(r.iso).toBe('2026-07-20T09:00:00.000Z');
-    expect(r.hasTime).toBe(true);
+    expect(r.precision).toBe('time');
   });
   it('date-only phrases anchor to noon local, not capture time', () => {
     const r = resolveDatePhrase('next Tuesday', new Date('2026-07-20T15:47:00Z'), 0)!;
@@ -318,9 +318,9 @@ describe('deterministic dates (§12)', () => {
     // but the raw text says "before 3:00 p.m." — recover 15:00 local.
     const ref = new Date('2026-07-20T16:34:00Z');
     const dateOnly = resolveDatePhrase('today', ref, -240)!;
-    expect(dateOnly.hasTime).toBe(false);
+    expect(dateOnly.precision).toBe('day');
     const refined = refineWithSourceTime(dateOnly, 'put laundry away before 3:00 p.m.', ref, -240)!;
-    expect(refined.hasTime).toBe(true);
+    expect(refined.precision).toBe('time');
     expect(refined.iso).toBe('2026-07-20T19:00:00.000Z'); // 3pm at UTC-4
   });
   it('refineWithSourceTime leaves timed results and cross-day source times alone', () => {
@@ -338,6 +338,92 @@ describe('deterministic dates (§12)', () => {
     expect(expandBareOrdinals('July 20th', ref)).toBe('July 20th');
     expect(expandBareOrdinals('tomorrow', ref)).toBe('tomorrow');
     expect(expandBareOrdinals('next Tuesday', ref)).toBe('next Tuesday');
+  });
+});
+
+describe('parts of the day are times (§12)', () => {
+  // 9:00am local on Monday July 20, at UTC-4.
+  const ref = new Date('2026-07-20T13:00:00Z');
+  const TZ = -240;
+  const localHour = (iso: string) => new Date(new Date(iso).getTime() + TZ * 60_000).getUTCHours();
+
+  it('a stated day part anchors to that part, never to midday', () => {
+    for (const [phrase, hour] of [
+      ['tomorrow morning', 9],
+      ['tomorrow afternoon', 15],
+      ['tomorrow evening', 19],
+      ['tomorrow night', 21],
+      ['Wednesday morning', 9],
+      ['first thing tomorrow', 8],
+      ['tomorrow by end of day', 17],
+    ] as const) {
+      const r = resolveDatePhrase(phrase, ref, TZ)!;
+      expect([phrase, r.precision]).toEqual([phrase, 'daypart']);
+      expect([phrase, localHour(r.iso)]).toEqual([phrase, hour]);
+    }
+  });
+
+  it('a day part lands on the day the phrase names, not the one the hour spills into', () => {
+    const r = resolveDatePhrase('tomorrow evening', ref, TZ)!;
+    expect(r.iso).toBe('2026-07-21T23:00:00.000Z'); // 7pm on the 21st at UTC-4
+  });
+
+  it('a stated clock time still wins over the day-part word', () => {
+    const r = resolveDatePhrase('tomorrow evening at 6:30pm', ref, TZ)!;
+    expect(r.precision).toBe('time');
+    expect(r.iso).toBe('2026-07-21T22:30:00.000Z');
+  });
+
+  it('a bare day still anchors to noon', () => {
+    const r = resolveDatePhrase('tomorrow', ref, TZ)!;
+    expect(r.precision).toBe('day');
+    expect(localHour(r.iso)).toBe(12);
+  });
+
+  it('a day part already underway slides to its closing hour, not into the past', () => {
+    // 8pm local — "tonight" must not resolve to 7pm and read as overdue.
+    const evening = new Date('2026-07-21T00:00:00Z');
+    const r = resolveDatePhrase('tonight', evening, TZ)!;
+    expect(new Date(r.iso).getTime()).toBeGreaterThan(evening.getTime());
+    expect(localHour(r.iso)).toBe(23);
+  });
+
+  it('refineWithSourceTime recovers a day part the phrase extraction dropped', () => {
+    const dropped = resolveDatePhrase('tomorrow', ref, TZ)!;
+    const refined = refineWithSourceTime(dropped, 'grab milk tomorrow evening', ref, TZ)!;
+    expect(refined.precision).toBe('daypart');
+    expect(localHour(refined.iso)).toBe(19);
+  });
+
+  it('withDayPart colours in a bare day, and never overrides what was stated', () => {
+    const bare = resolveDatePhrase('tomorrow', ref, TZ)!;
+    const coloured = withDayPart(bare, 'evening', ref, TZ)!;
+    expect(coloured.precision).toBe('daypart');
+    expect(localHour(coloured.iso)).toBe(19);
+    // A stated morning is not overwritten by an inferred evening.
+    const stated = resolveDatePhrase('tomorrow morning', ref, TZ)!;
+    expect(withDayPart(stated, 'evening', ref, TZ)!.iso).toBe(stated.iso);
+    // Nor is a stated clock time.
+    const timed = resolveDatePhrase('tomorrow at 3pm', ref, TZ)!;
+    expect(withDayPart(timed, 'evening', ref, TZ)!.iso).toBe(timed.iso);
+  });
+
+  it('dayPartWord reads the part back off the hour it landed on', () => {
+    expect(dayPartWord(9)).toBe('morning');
+    expect(dayPartWord(12)).toBe('midday');
+    expect(dayPartWord(15)).toBe('afternoon');
+    expect(dayPartWord(19)).toBe('evening');
+    expect(dayPartWord(22)).toBe('night');
+  });
+
+  it('inferPrecision reads legacy rows off their anchor, in the user\'s own timezone', () => {
+    // Pre-migration rows carry no precision: local noon meant "no time stated".
+    // The old test compared the UTC string, so it only ever fired at UTC.
+    const noonAtMinus4 = '2026-07-21T16:00:00.000Z';
+    expect(inferPrecision(noonAtMinus4, null, TZ)).toBe('day');
+    expect(inferPrecision('2026-07-21T19:00:00.000Z', null, TZ)).toBe('time');
+    // A stored value always wins over the guess.
+    expect(inferPrecision(noonAtMinus4, 'daypart', TZ)).toBe('daypart');
   });
 });
 

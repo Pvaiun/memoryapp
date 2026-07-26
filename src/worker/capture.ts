@@ -1,7 +1,7 @@
-import type { AffectTag, CaptureResponse, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
+import type { AffectTag, CaptureResponse, DayPart, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
 import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
-import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
+import { DAY_PARTS, refineWithSourceTime, resolveDatePhrase, withDayPart } from '../shared/dates';
 import { defaultCalendarWorthy, heuristicParse } from '../shared/heuristicParse';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -105,20 +105,19 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
     }
 
     // Deterministic date resolution (§12): the model only extracted phrases.
-    // refineWithSourceTime recovers clock times the extraction dropped.
+    // refineWithSourceTime recovers times (clock or part-of-day) the extraction
+    // dropped; withDayPart then fills the model's implied part of the day, but
+    // only where nothing was stated — a stated phrase always wins.
     const sourceText = parsed.items.length > 1 ? p.title : req.text;
-    const deadline = refineWithSourceTime(
-      p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, ref, tz) : null,
-      sourceText,
-      ref,
-      tz,
-    );
-    const eventAt = refineWithSourceTime(
-      p.eventAtPhrase ? resolveDatePhrase(p.eventAtPhrase, ref, tz) : null,
-      sourceText,
-      ref,
-      tz,
-    );
+    const resolve = (phrase: string | null) =>
+      withDayPart(
+        refineWithSourceTime(phrase ? resolveDatePhrase(phrase, ref, tz) : null, sourceText, ref, tz),
+        p.dayPart,
+        ref,
+        tz,
+      );
+    const deadline = resolve(p.deadlinePhrase);
+    const eventAt = resolve(p.eventAtPhrase);
 
     const itemEmbedding = await embed(env, p.title);
     const id = await insertItem(db, {
@@ -133,6 +132,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       pingNatured: p.type === 'DO' ? p.pingNatured : false,
       eventAt: p.type === 'HAPPEN' ? eventAt?.iso ?? null : null,
       eventEnd: p.type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
+      timePrecision: (p.type === 'HAPPEN' ? eventAt : deadline)?.precision ?? null,
       alertLeadMinutes: p.alertLeadMinutes,
       showOnCalendar: p.calendarWorthy,
       priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
@@ -183,11 +183,13 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
   const parsed = heuristicParse(appendedText, now);
   const p = parsed.items[0];
   const embedding = await embed(env, p.title);
+  const deadline = p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, now) : null;
   const newItemId = await insertItem(db, {
     type: p.type,
     title: p.title,
     rawText: { ts: nowIso(), text: appendedText },
-    deadline: p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, now)?.iso ?? null : null,
+    deadline: deadline?.iso ?? null,
+    timePrecision: deadline?.precision ?? null,
     deadlineHardness: p.deadlineHardness,
     cadence: p.cadence,
     optionality: p.optionality,
@@ -210,7 +212,8 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
 
 // ---------- The cheap-tier parse call ----------
 
-interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId' | 'affect' | 'calendarWorthy'> {
+interface LlmParsedItem extends Omit<ParsedItem, 'matchItemId' | 'affect' | 'calendarWorthy' | 'dayPart'> {
+  dayPart?: string | null;
   affect?: string[];
   calendarWorthy?: boolean;
   matchItemId: string | null;
@@ -252,6 +255,7 @@ FOR EACH ITEM emit:
 - "type": "DO" | "KNOW" | "HAPPEN"
 - "title": a clean short imperative/declarative restatement (keep the user's vocabulary; do not embellish). Emphasis/urgency phrasing ("no excuses", "really important", "asap") feeds "priority" — NEVER leave it in the title. Date/time phrases belong in deadlinePhrase/eventAtPhrase, not the title.
 - "deadlinePhrase": for a DO with a due date, the date/time phrase from the text, else null. Date phrases (here and in eventAtPhrase) are handed to a deterministic parser, so make them parser-readable while staying faithful: keep relative phrases VERBATIM ("tomorrow", "next Tuesday", "in 3 weeks" — do NOT compute dates yourself), but expand elliptical day ordinals with their month using today's date ("the 20th" → "July 20"; "the 20th to the 25th" → "July 20 to July 25"). Ranges are allowed. NEVER drop a time of day: "before 3:00 p.m." → "3:00 p.m."; "tomorrow by noon" → "tomorrow at noon". A bare clock time is a valid phrase (the parser anchors it to the coming occurrence) — never replace it with just "today".
+  A PART OF THE DAY IS A TIME OF DAY and must survive into the phrase exactly as stated: "tomorrow evening" → "tomorrow evening" (never "tomorrow"), "Wednesday morning" → "Wednesday morning", "tonight", "Friday afternoon", "first thing Monday", "by end of day Thursday". Dropping the day-part word makes the item land at midday, which is simply wrong.
 - "deadlineHardness": "hard" | "soft" | null. A plainly-stated date defaults to "hard"; explicit low-pressure phrasing ("ideally", "sometime", "no rush") makes it "soft".
 - "cadence": recurrence as {"freq":"daily"|"weekly"|"monthly"|"yearly","interval":N,"byWeekday":[0-6 Sun=0]?,"byMonthDay":N?,"atTime":"HH:MM"?} or null. "atTime" is the stated time of day in the USER'S local 24h clock — whenever a recurring item names a time, it MUST land here ("every Thursday at 8pm" → {"freq":"weekly","interval":1,"byWeekday":[4],"atTime":"20:00"}; "take meds daily at 9" → {"freq":"daily","interval":1,"atTime":"09:00"}). A recurring DO's time belongs in cadence.atTime, never in deadlinePhrase.
 - "calendarWorthy": for RECURRING items (cadence set) — does this recurrence belong on the user's calendar? true for commitments and appointments a calendar exists to show (therapy every other week, weekly team check-in, a class, a standing dinner); false for ambient routine that would bury the calendar in repetition (start the dishwasher nightly, garbage day Tuesday, water the plants, take meds). The test: would a person write it on a wall calendar? Frequency is a hint, not the rule — a daily standup can be worthy, a weekly chore not. Always true for one-off items.
@@ -259,6 +263,7 @@ FOR EACH ITEM emit:
 - "effort": "quick" | "medium" | "large" — coarse magnitude ("do taxes" is large, "call grandma" is quick).
 - "pingNatured": true ONLY when the user is asking to be nudged at a moment ("remind me to…", "don't let me forget to…") — the wish for a ping must be in their phrasing. A task is not ping-natured just because it is small or scheduled: "take out garbage every Thursday at 9:30" is a task with a schedule, "finish the report by Friday" is a deliverable — both false. Only for DO.
 - "eventAtPhrase": for HAPPEN, the date/time phrase (same rules as deadlinePhrase; a range like "July 20 to July 25" captures a multi-day event), else null.
+- "dayPart": "morning" | "afternoon" | "evening" | "night" | null — ONLY for an item whose phrase names a day but NO time and NO part of the day, and whose real-world nature happens at an unmistakable time of day. It is a better default than midday, not a guess: bins out the night before collection → "evening"; ring the clinic / the bank / anywhere with office hours → "morning"; a gym session before work, school pickup, a bedtime routine → the part everyone would assume. If the day part is genuinely open — "finish the slide deck Thursday", "buy a birthday card tomorrow", anything the user could do any time — emit null and let it sit at midday. NEVER use this to echo a stated time (that belongs in the phrase), and never stretch for it; null is the common answer.
 - "alertLeadMinutes": only if the user explicitly asked when to be alerted ("remind me the night before" → 720), else null.
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
 - "themes": 1-3 theme names. You are the librarian of an EMERGENT taxonomy: strongly prefer reusing an existing theme; coin a new short name (1-2 words, e.g. "Home", "Health", "Sarah") only when nothing fits. Multi-theme is encouraged when genuinely apt.
@@ -301,6 +306,7 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
     effort: p.effort === 'quick' || p.effort === 'large' ? p.effort : 'medium',
     pingNatured: !!p.pingNatured,
     eventAtPhrase: p.eventAtPhrase ?? null,
+    dayPart: (DAY_PARTS as readonly string[]).includes(String(p.dayPart)) ? (p.dayPart as DayPart) : null,
     alertLeadMinutes:
       typeof p.alertLeadMinutes === 'number' && p.alertLeadMinutes > 0
         ? Math.min(Math.round(p.alertLeadMinutes), 14 * 24 * 60)
