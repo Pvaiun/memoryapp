@@ -55,6 +55,19 @@ function readMode(): CalMode {
   }
 }
 
+// Distance from an element to the scroller, summed up the offsetParent chain.
+// Reading el.offsetTop directly only works while nothing between the two is
+// positioned — a constraint the span bracket now breaks by design.
+function offsetTopIn(el: HTMLElement, container: HTMLElement): number {
+  let top = 0;
+  let node: HTMLElement | null = el;
+  while (node && node !== container) {
+    top += node.offsetTop;
+    node = node.offsetParent as HTMLElement | null;
+  }
+  return top;
+}
+
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
@@ -222,12 +235,15 @@ export default function CalendarView({
       let idx = 0;
       for (let i = 0; i < rowRefs.current.length; i++) {
         const r = rowRefs.current[i];
-        if (r && r.offsetTop <= top + 4) idx = i;
+        if (r && offsetTopIn(r, el) <= top + 4) idx = i;
         else if (r) break;
       }
       setTopIdx(idx);
       const trow = rowRefs.current[WEEKS_BACK];
-      if (trow) setTodayVisible(trow.offsetTop < bottom - 24 && trow.offsetTop + trow.offsetHeight > top);
+      if (trow) {
+        const rt = offsetTopIn(trow, el);
+        setTodayVisible(rt < bottom - 24 && rt + trow.offsetHeight > top);
+      }
       // The spine also marks the day you're standing on. Only the top week's
       // seven days can hold that mark, so the extra scan stays seven elements.
       if (mode === 'week') {
@@ -235,7 +251,7 @@ export default function CalendarView({
         for (let d = 0; d < 7; d++) {
           const k = dayKey(addDays(weeks[idx], d));
           const de = dayRefs.current.get(k);
-          if (de && de.offsetTop <= top + 4) mark = k;
+          if (de && offsetTopIn(de, el) <= top + 4) mark = k;
         }
         setTopDay(mark);
       }
@@ -247,7 +263,7 @@ export default function CalendarView({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTop = row.offsetTop - TOP_INSET;
+    if (el && row) el.scrollTop = offsetTopIn(row, el) - TOP_INSET;
   }, []);
 
   // Switching mode is a zoom, not a jump: hold the date that was at the top of
@@ -261,19 +277,19 @@ export default function CalendarView({
     const day = pendingDay.current;
     pendingDay.current = null;
     const target = (day && dayRefs.current.get(day)) || rowRefs.current[topIdx];
-    if (target) el.scrollTop = target.offsetTop - TOP_INSET;
+    if (target) el.scrollTop = offsetTopIn(target, el) - TOP_INSET;
   }, [mode, topIdx]);
 
   const goToday = useCallback(() => {
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTo({ top: row.offsetTop - TOP_INSET, behavior: 'smooth' });
+    if (el && row) el.scrollTo({ top: offsetTopIn(row, el) - TOP_INSET, behavior: 'smooth' });
   }, []);
 
   const goDay = useCallback((k: string) => {
     const el = scrollRef.current;
     const d = dayRefs.current.get(k);
-    if (el && d) el.scrollTo({ top: d.offsetTop - TOP_INSET, behavior: 'smooth' });
+    if (el && d) el.scrollTo({ top: offsetTopIn(d, el) - TOP_INSET, behavior: 'smooth' });
   }, []);
 
   // Tapping a day in the month view is the "zoom in" gesture: it drops you into
@@ -303,7 +319,6 @@ export default function CalendarView({
     return list.map((e, i) => {
       const item = items[e.itemId];
       if (!item) return null;
-      const c = itemColor(item);
       const due = e.kind === 'deadline';
       const rec = e.kind === 'occurrence';
       const t = due ? null : agendaTime(new Date(e.date), item);
@@ -317,10 +332,8 @@ export default function CalendarView({
           className={`ag-row${done ? ' done' : ''}`}
           onClick={() => onOpenItem(item)}
         >
-          <span className={`ag-when${due ? ' due' : ''}`} style={due ? { color: c } : undefined}>
-            {due ? 'due' : (t ?? '·')}
-          </span>
-          <span className="ag-what" style={{ borderColor: c }}>
+          <span className={`ag-when${due ? ' due' : ''}`}>{due ? 'due' : (t ?? '·')}</span>
+          <span className="ag-what">
             {item.title}
             {rec && <i className="ag-rep">⟳</i>}
           </span>
@@ -463,12 +476,8 @@ export default function CalendarView({
                         const covered = days.slice(di, to + 1);
                         out.push(
                           <div className="ag-group" key={`${s.itemId}-${keys[di]}`}>
-                            <span
-                              className={`ag-bracket${startsHere ? '' : ' cont-t'}${endsHere ? '' : ' cont-b'}`}
-                              style={item ? { borderColor: itemColor(item) } : undefined}
-                            />
-                            <div className="ag-group-body">
-                              {covered.map((d, i) => (
+                            <span className={`ag-bracket${startsHere ? '' : ' cont-t'}${endsHere ? '' : ' cont-b'}`} />
+                            {covered.map((d, i) => (
                                 <Fragment key={keys[di + i]}>
                                   {agendaDay(d, keys[di + i], true)}
                                   {i === 0 && startsHere && item && (
@@ -479,9 +488,8 @@ export default function CalendarView({
                                       </small>
                                     </div>
                                   )}
-                                </Fragment>
-                              ))}
-                            </div>
+                              </Fragment>
+                            ))}
                           </div>,
                         );
                         di = to + 1;
