@@ -9,15 +9,27 @@ import { api } from '../api';
 // editable, the item independently rejectable. Flavour override is
 // presentation-only (§4) — relabelling never changes behaviour.
 
-function toLocalInput(iso: string | null): string {
+const pad = (n: number) => String(n).padStart(2, '0');
+
+// The two input shapes, one per precision: an all-day date edits as a bare
+// date and a moment edits as a date + clock. Switching the toggle re-reads the
+// same instant through the other shape, so no typing is lost either way.
+function toLocalInput(iso: string | null, allDay: boolean): string {
   if (!iso) return '';
   const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return allDay ? date : `${date}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function fromLocalInput(v: string): string | null {
-  return v ? new Date(v).toISOString() : null;
+// An all-day value is written back at local noon — the anchor the parser uses,
+// chosen so the date lands on the right calendar day in every timezone. The
+// precision flag travels with it, so nothing downstream has to infer that noon
+// was an anchor rather than a time the user picked.
+function fromLocalInput(v: string, allDay: boolean): string | null {
+  if (!v) return null;
+  if (!allDay) return new Date(v).toISOString();
+  const [y, m, d] = v.slice(0, 10).split('-').map(Number);
+  return new Date(y, m - 1, d, 12, 0, 0, 0).toISOString();
 }
 
 const CADENCE_PRESETS: { label: string; value: Cadence | null }[] = [
@@ -42,13 +54,14 @@ export default function ItemSheet({
 }) {
   const [title, setTitle] = useState(item.title);
   const [type, setType] = useState(item.type);
-  const [deadline, setDeadline] = useState(toLocalInput(item.deadline));
+  const [allDay, setAllDay] = useState(item.datePrecision === 'day');
+  const [deadline, setDeadline] = useState(toLocalInput(item.deadline, item.datePrecision === 'day'));
   const [hardness, setHardness] = useState(item.deadlineHardness ?? 'hard');
   const [cadence, setCadence] = useState<Cadence | null>(item.cadence);
   const [optionality, setOptionality] = useState(item.optionality);
   const [effort, setEffort] = useState(item.effort);
-  const [eventAt, setEventAt] = useState(toLocalInput(item.eventAt));
-  const [eventEnd, setEventEnd] = useState(toLocalInput(item.eventEnd));
+  const [eventAt, setEventAt] = useState(toLocalInput(item.eventAt, item.datePrecision === 'day'));
+  const [eventEnd, setEventEnd] = useState(toLocalInput(item.eventEnd, item.datePrecision === 'day'));
   const [showOnCal, setShowOnCal] = useState(item.showOnCalendar);
   const [priority, setPriority] = useState(Math.round(item.effectivePriority * 100));
   const [priorityTouched, setPriorityTouched] = useState(false);
@@ -57,19 +70,47 @@ export default function ItemSheet({
   const [affects, setAffects] = useState<AffectTag[]>([...new Set((item.affects ?? []).map((a) => a.tag))]);
   const [saving, setSaving] = useState(false);
 
+  // Flipping the toggle re-reads whatever is already typed through the other
+  // input shape rather than clearing it: dropping to a date keeps the date,
+  // and adding a time starts from noon — the anchor the value already carried,
+  // which the user then edits rather than being handed a surprise midnight.
+  const switchAllDay = (next: boolean) => {
+    if (next === allDay) return;
+    const carry = (v: string) => (v ? (next ? v.slice(0, 10) : `${v.slice(0, 10)}T12:00`) : '');
+    setDeadline(carry(deadline));
+    setEventAt(carry(eventAt));
+    setEventEnd(carry(eventEnd));
+    setAllDay(next);
+  };
+
+  const allDayToggle = (
+    <div className="field" style={{ maxWidth: 170 }}>
+      <label>Time</label>
+      <div className="seg">
+        <button className={allDay ? 'on' : ''} onClick={() => switchAllDay(true)}>
+          All day
+        </button>
+        <button className={!allDay ? 'on' : ''} onClick={() => switchAllDay(false)}>
+          At a time
+        </button>
+      </div>
+    </div>
+  );
+
   const save = async () => {
     setSaving(true);
     try {
       const { item: fresh } = await api.editItem(item.id, {
         title,
         type,
-        deadline: type === 'DO' ? fromLocalInput(deadline) : null,
+        deadline: type === 'DO' ? fromLocalInput(deadline, allDay) : null,
         deadlineHardness: type === 'DO' && deadline ? hardness : null,
+        datePrecision: allDay ? 'day' : 'time',
         cadence: type === 'KNOW' ? null : cadence,
         optionality,
         effort,
-        eventAt: type === 'HAPPEN' ? fromLocalInput(eventAt) : null,
-        eventEnd: type === 'HAPPEN' ? fromLocalInput(eventEnd) : null,
+        eventAt: type === 'HAPPEN' ? fromLocalInput(eventAt, allDay) : null,
+        eventEnd: type === 'HAPPEN' ? fromLocalInput(eventEnd, allDay) : null,
         showOnCalendar: showOnCal,
         priority: priorityTouched ? priority / 100 : undefined,
         flavourOverride: flavourOverride || null,
@@ -130,9 +171,16 @@ export default function ItemSheet({
             <div className="field-row">
               <div className="field">
                 <label>Deadline</label>
-                <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+                <input
+                  type={allDay ? 'date' : 'datetime-local'}
+                  value={deadline}
+                  onChange={(e) => setDeadline(e.target.value)}
+                />
               </div>
-              {deadline && (
+              {allDayToggle}
+            </div>
+            {deadline && (
+              <div className="field-row">
                 <div className="field" style={{ maxWidth: 150 }}>
                   <label>Hardness</label>
                   <div className="seg">
@@ -144,8 +192,8 @@ export default function ItemSheet({
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
             <div className="field-row">
               <div className="field">
                 <label>Rhythm</label>
@@ -232,16 +280,29 @@ export default function ItemSheet({
         )}
 
         {type === 'HAPPEN' && (
-          <div className="field-row">
-            <div className="field">
-              <label>When</label>
-              <input type="datetime-local" value={eventAt} onChange={(e) => setEventAt(e.target.value)} />
+          <>
+            <div className="field-row">
+              <div className="field">
+                <label>When</label>
+                <input
+                  type={allDay ? 'date' : 'datetime-local'}
+                  value={eventAt}
+                  onChange={(e) => setEventAt(e.target.value)}
+                />
+              </div>
+              {allDayToggle}
             </div>
-            <div className="field">
-              <label>Until (optional)</label>
-              <input type="datetime-local" value={eventEnd} onChange={(e) => setEventEnd(e.target.value)} />
+            <div className="field-row">
+              <div className="field">
+                <label>Until (optional)</label>
+                <input
+                  type={allDay ? 'date' : 'datetime-local'}
+                  value={eventEnd}
+                  onChange={(e) => setEventEnd(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* Recurrence-only: one-offs always paint their dates. Whether a

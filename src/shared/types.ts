@@ -12,6 +12,19 @@ export type Optionality = 'must' | 'nice';
 
 export type Effort = 'quick' | 'medium' | 'large';
 
+// Do this item's dates name a DAY or a MOMENT? "Thursday" is a day; "Thursday
+// at 7pm" is a moment. Date-only values are still stored anchored at local
+// noon (dates.ts localNoonIso) so they land on the right calendar day in any
+// timezone — this says the anchor is an anchor, not a time the user gave.
+// One flag covers whichever dates the item carries: a DO has a deadline, a
+// HAPPEN has eventAt/eventEnd, and no item has both (capture.ts). For a range
+// whose start was timed and end wasn't, the start governs.
+//
+// The distinction is load-bearing for lateness: a moment can go by while the
+// day is still on, a day cannot — a day-precision item is late only once its
+// sleep day has ended (5am), which is when the map rebuilds anyway.
+export type DatePrecision = 'day' | 'time';
+
 export type PriorityLevel = 'low' | 'medium' | 'high';
 
 // Lifecycle (§7): 'completed' is the one positive terminal for every flavour
@@ -80,6 +93,9 @@ export interface Item {
   // DO parameters (§3.1)
   deadline: string | null; // ISO date or datetime
   deadlineHardness: DeadlineHardness | null;
+  // Whether deadline/eventAt/eventEnd name a day or a moment. Never inspect
+  // the stored instant to answer this — read the flag.
+  datePrecision: DatePrecision;
   cadence: Cadence | null;
   optionality: Optionality;
   effort: Effort;

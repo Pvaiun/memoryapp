@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -420,5 +420,77 @@ describe('sleepDayKey — the map day the 5am cron builds', () => {
   it('handles offsets that push the date across UTC midnight', () => {
     // 9am Wednesday local in UTC+12 — Tuesday evening in UTC.
     expect(sleepDayKey(Date.parse('2026-07-21T21:00:00Z'), 720)).toBe('2026-07-22');
+  });
+});
+
+describe('date precision — a day is not a moment', () => {
+  const tz = 0;
+  // "Do the cat litters, today" — a date-only capture, stored at local noon
+  // because noon is the anchor that lands on the right calendar day in every
+  // timezone. Nothing about that anchor is a time the user gave.
+  const allDay = {
+    type: 'DO',
+    status: 'active',
+    deadline: '2026-07-26T12:00:00.000Z',
+    datePrecision: 'day' as const,
+    cadence: null,
+    doneToday: false,
+    createdAt: '2026-07-25T09:00:00.000Z',
+    eventAt: null,
+  };
+  const noon = Date.parse('2026-07-26T12:00:00Z');
+
+  it('an all-day deadline is not overdue at 12:01pm on its own day', () => {
+    // The regression: bubbleStatus compared the noon anchor to the clock, so
+    // every date-only chore turned red one minute after midday — from the
+    // storage convention, not from anything the user did or failed to do.
+    expect(deadlinePassed(allDay, noon + 60_000, tz)).toBe(false);
+    expect(deadlinePassed(allDay, noon + 11 * 3_600_000, tz)).toBe(false); // 11pm
+  });
+
+  it('an all-day deadline goes overdue when its sleep day ends, not at midnight', () => {
+    // 4:59am the next morning is still the same sleep day.
+    expect(deadlinePassed(allDay, Date.parse('2026-07-27T04:59:00Z'), tz)).toBe(false);
+    expect(deadlinePassed(allDay, Date.parse('2026-07-27T05:00:00Z'), tz)).toBe(true);
+  });
+
+  it('a timed deadline is overdue the instant it passes', () => {
+    const timed = { ...allDay, datePrecision: 'time' as const, deadline: '2026-07-26T19:00:00.000Z' };
+    expect(deadlinePassed(timed, Date.parse('2026-07-26T18:59:00Z'), tz)).toBe(false);
+    expect(deadlinePassed(timed, Date.parse('2026-07-26T19:01:00Z'), tz)).toBe(true);
+  });
+
+  it('momentPassed: only a timed thing can go by while the day is still on', () => {
+    expect(momentPassed(allDay, noon + 6 * 3_600_000, tz)).toBe(false);
+    const timed = { ...allDay, datePrecision: 'time' as const, deadline: '2026-07-26T19:00:00.000Z' };
+    expect(momentPassed(timed, Date.parse('2026-07-26T18:00:00Z'), tz)).toBe(false);
+    expect(momentPassed(timed, Date.parse('2026-07-26T20:00:00Z'), tz)).toBe(true);
+  });
+
+  it("momentPassed: a rhythm's turn today counts once its hour goes by, unless ticked", () => {
+    // "Speak French with Kayla", daily at 7pm.
+    const rhythm = {
+      type: 'DO',
+      status: 'active',
+      deadline: null,
+      datePrecision: 'time' as const,
+      cadence: { freq: 'daily' as const, interval: 1, atTime: '19:00' },
+      doneToday: false,
+      createdAt: '2026-07-01T09:00:00.000Z',
+      eventAt: null,
+    };
+    expect(momentPassed(rhythm, Date.parse('2026-07-26T18:00:00Z'), tz)).toBe(false);
+    expect(momentPassed(rhythm, Date.parse('2026-07-26T21:00:00Z'), tz)).toBe(true);
+    // Ticked off releases it — the same predicate the checkbox reads.
+    expect(momentPassed({ ...rhythm, doneToday: true }, Date.parse('2026-07-26T21:00:00Z'), tz)).toBe(false);
+  });
+
+  it('an all-day event is live all its own day, spent only once the day is', () => {
+    // The same bug in the other direction: a one-hour grace past the noon
+    // anchor retired "Gabe comes over Thursday" at 1pm on Thursday.
+    const ev = { eventAt: '2026-07-26T12:00:00.000Z', eventEnd: null, cadence: null, datePrecision: 'day' as const };
+    expect(eventPassed(ev, noon + 3 * 3_600_000, tz)).toBe(false);
+    expect(eventPassed(ev, Date.parse('2026-07-27T04:59:00Z'), tz)).toBe(false);
+    expect(eventPassed(ev, Date.parse('2026-07-27T05:00:00Z'), tz)).toBe(true);
   });
 });

@@ -12,7 +12,7 @@ import {
   withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
-import { eventPassed, isDoneForNow } from '../../../shared/cadence';
+import { eventPassed, isDoneForNow, momentPassed } from '../../../shared/cadence';
 import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
@@ -167,9 +167,20 @@ export default function DescentView({
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ripples, setRipples] = useState<Ripple[]>([]);
 
+  // The map is composed at the morning build and then holds still — that
+  // stillness is the point, and nothing here re-ranks or re-sizes anything.
+  // But "has this moment gone by" is a question about now, not about the
+  // build, and the answer changes while the user is looking. A one-minute
+  // tick is all the resolution an hour hand needs; without it a card written
+  // at 5am still reads 7pm as upcoming at midnight.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // ----- derived scene ---------------------------------------------------
   const infos = useMemo(() => {
-    const nowMs = Date.now();
     const m = new Map<string, CardInfo>();
     for (const b of bubbles) {
       const status = bubbleStatus(b, items);
@@ -206,7 +217,7 @@ export default function DescentView({
       });
     }
     return m;
-  }, [bubbles, items]);
+  }, [bubbles, items, nowMs]);
   // Resolution is depth (user decision): a settled bubble gives up its Brain
   // prominence and rests at p 0 — the bottom of the gauge, the deep end of
   // the corridor — instead of holding its slot in the day all afternoon.
@@ -1017,12 +1028,18 @@ export default function DescentView({
         );
       // Recurring DOs check off per-occurrence (doneToday), not by status.
       const done = isDoneForNow(item);
+      // Lateness lands on the chip, never on the card: a card is routinely
+      // half late (the 11am went by, the 7pm hasn't) and any card-level mark
+      // would have to lie about that. The chip restyles in place and adds no
+      // words — appending "went by" would reflow the sentence and change the
+      // card's height, which is the one thing the map must not do during a day.
+      const late = !done && momentPassed(item, nowMs);
       return (
         <span
           key={i}
           role="checkbox"
           aria-checked={done}
-          className={`dsc-chip-tok${done ? ' done' : ''}`}
+          className={`dsc-chip-tok${done ? ' done' : ''}${late ? ' late' : ''}`}
           onClick={(e) => onChipTap(e, item, info.bubble.id)}
         >
           <span className="dsc-box" aria-hidden>

@@ -508,7 +508,13 @@ export function isTodayRelevant(
   const dayStartUtc =
     sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
-  if (i.deadline && new Date(i.deadline).getTime() < dayEndUtc) return true; // due today or overdue
+  // Compare by sleep DAY, not instant. A day-precision deadline due today is
+  // anchored at noon here, but nothing about this test may depend on where in
+  // the day the anchor sits — a strict instant comparison against dayEndUtc
+  // silently drops anything anchored at the boundary itself, and dropping a
+  // same-day item is this app's cardinal failure.
+  if (i.deadline && sleepDayOf(new Date(i.deadline).getTime(), tzOffsetMinutes) <= sleepDayOf(now.getTime(), tzOffsetMinutes))
+    return true; // due today or overdue
   if (i.eventAt) {
     const at = new Date(i.eventAt).getTime();
     const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
@@ -612,10 +618,30 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     const d = sleepDayDiff(new Date(iso).getTime(), now.getTime(), tzOffsetMinutes);
     return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
   };
+  // A date the user gave a time to reads differently from one they didn't:
+  // "Thursday at 3pm" is a moment to be at, "Thursday" is a day to fit it in.
+  // Without the clock time the Brain wrote "at noon" into card prose, from an
+  // anchor the user never said.
+  const atClock = (iso: string): string => {
+    if (i.datePrecision === 'day') return '';
+    const local = new Date(new Date(iso).getTime() + tzOffsetMinutes * 60_000);
+    const h = local.getUTCHours();
+    const m = local.getUTCMinutes();
+    return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, '0')}` : ''}${h >= 12 ? 'pm' : 'am'}`;
+  };
   const parts: string[] = [];
-  if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
+  if (i.deadline) {
+    // Time and hardness share one paren group — the same shape a recurring
+    // item's happens=today(7pm) already uses, so there is one convention for
+    // "the clock detail of this date" rather than two.
+    const qual = [atClock(i.deadline), i.deadlineHardness ?? 'hard'].filter(Boolean).join(', ');
+    parts.push(`due=${relDays(i.deadline)}(${qual})`);
+  }
   if (i.eventAt) {
-    parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
+    const clock = atClock(i.eventAt);
+    parts.push(
+      `happens=${relDays(i.eventAt)}${clock ? `(${clock})` : ''}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`,
+    );
   } else if (i.cadence) {
     // Recurring items otherwise never carry a date token at all, forcing the
     // Brain to re-derive "daily + it's Tuesday = today" mid-composition — the
@@ -827,7 +853,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), carrying a clock time in parens ONLY when the user actually named one — due=+2d(3pm, hard) is a moment to be at, due=+2d(hard) and happens=+2d are all-day, with no time attached and no hour to invent for them; an all-day item is not late during its own day, so speak of it as somewhere in the day rather than as a moment approaching; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
