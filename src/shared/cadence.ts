@@ -1,4 +1,4 @@
-import type { Cadence } from './types';
+import type { Cadence, DatePrecision } from './types';
 import { isClosedStatus } from './types';
 import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayOf } from './dates';
 
@@ -86,14 +86,136 @@ export function isDoneForNow(item: { status: string; cadence: Cadence | null; do
 // overruns) is spent: it reads like a completed task — "Lunch with Seb"
 // must not hold its place in the day all afternoon. Recurring events
 // re-arm per occurrence, so they never go spent this way.
+//
+// A DAY-precision event has no moment to pass. "Gabe comes over Thursday"
+// is live all Thursday; it is spent when Thursday is, at the 5am rollover.
+// Reading its noon anchor as a moment retired it at 1pm on its own day.
 export const EVENT_PASSED_GRACE_MS = 3_600_000;
 
 export function eventPassed(
-  item: { eventAt: string | null; eventEnd: string | null; cadence: Cadence | null },
+  item: {
+    eventAt: string | null;
+    eventEnd: string | null;
+    cadence: Cadence | null;
+    datePrecision?: DatePrecision;
+  },
   now: number,
+  tzOffsetMinutes?: number,
 ): boolean {
   if (!item.eventAt || item.cadence) return false;
-  return new Date(item.eventEnd ?? item.eventAt).getTime() + EVENT_PASSED_GRACE_MS < now;
+  const last = new Date(item.eventEnd ?? item.eventAt).getTime();
+  if (item.datePrecision === 'day') return sleepDayIndex(last, now, tzOffsetMinutes) < 0;
+  return last + EVENT_PASSED_GRACE_MS < now;
+}
+
+// When does any of the above next change its answer? Lateness is a step
+// function: it flips at instants that are already known — a deadline, a
+// rhythm's turn today, an event's grace running out — and is constant in
+// between. So a view that shows it needs one wake-up per instant, not a poll.
+//
+// Always finite, because the sleep-day rollover is a boundary in its own
+// right: at 5am all-day deadlines go overdue, spent events close, and every
+// day-distance label re-counts.
+export function nextLatenessBoundary(
+  items: {
+    type: string;
+    status: string;
+    deadline: string | null;
+    datePrecision?: DatePrecision;
+    cadence: Cadence | null;
+    doneToday: boolean;
+    createdAt: string;
+    eventAt: string | null;
+    eventEnd: string | null;
+  }[],
+  now: number,
+  tzOffsetMinutes?: number,
+): number {
+  const tz = tzOffsetMinutes ?? -new Date(now).getTimezoneOffset();
+  const dayStart = (idx: number) => idx * DAY_MS + (EARLY_MORNING_CUTOFF_MINUTES - tz) * 60_000;
+  const today = sleepDayOf(now, tz);
+  let next = dayStart(today + 1);
+  const consider = (t: number) => {
+    if (t > now && t < next) next = t;
+  };
+  for (const it of items) {
+    if (isClosedStatus(it.status)) continue;
+    if (it.type === 'DO') {
+      if (isDoneForNow(it)) continue;
+      // An all-day deadline has no instant to flip at — only the rollover,
+      // which already floors this.
+      if (it.deadline && it.datePrecision !== 'day') consider(new Date(it.deadline).getTime());
+      if (it.cadence?.atTime) {
+        const occ = nextAtTimeOccurrence(it.cadence, it.eventAt ?? it.createdAt, new Date(dayStart(today)), tz);
+        consider(occ.getTime());
+      }
+    } else if (it.type === 'HAPPEN' && it.eventAt && !it.cadence && it.datePrecision !== 'day') {
+      consider(new Date(it.eventEnd ?? it.eventAt).getTime() + EVENT_PASSED_GRACE_MS);
+    }
+  }
+  return next;
+}
+
+// Sleep-day distance from `now` to `t`, using the caller's fixed offset when
+// given (worker, which runs in UTC) and each instant's own local offset when
+// not (browser, so a DST change between the two can't skew the count). The
+// one place the two flavours of day math are chosen between.
+function sleepDayIndex(t: number, now: number, tzOffsetMinutes?: number): number {
+  if (tzOffsetMinutes === undefined) {
+    const idx = (ms: number) => sleepDayOf(ms, -new Date(ms).getTimezoneOffset());
+    return idx(t) - idx(now);
+  }
+  return sleepDayOf(t, tzOffsetMinutes) - sleepDayOf(now, tzOffsetMinutes);
+}
+
+// Has this item's DEADLINE gone by? The precision decides what "gone by"
+// can even mean: a moment is late the instant the clock passes it, a day is
+// late only once the sleep day has ended. Nothing may compare a day-precision
+// deadline to the clock — its noon anchor is a placement, not a time, and
+// treating it as one is what turned every date-only chore red at 12:01pm.
+export function deadlinePassed(
+  item: { deadline: string | null; datePrecision?: DatePrecision },
+  now: number,
+  tzOffsetMinutes?: number,
+): boolean {
+  if (!item.deadline) return false;
+  const due = new Date(item.deadline).getTime();
+  if (item.datePrecision === 'day') return sleepDayIndex(due, now, tzOffsetMinutes) < 0;
+  return due < now;
+}
+
+// The card-level question behind a late chip (descent option B): does this DO
+// have a moment TODAY that the clock has gone past while it sits unticked?
+// Deliberately narrow — it is the only honest form of "going late" the app
+// can show during a day:
+//   • a timed deadline that has passed, or any deadline from a day now over;
+//   • a recurring DO whose at-time turn today has come and gone unticked.
+// A day-precision deadline due today is never late today, which is the whole
+// point of storing precision.
+export function momentPassed(
+  item: {
+    type: string;
+    status: string;
+    deadline: string | null;
+    datePrecision?: DatePrecision;
+    cadence: Cadence | null;
+    doneToday: boolean;
+    createdAt: string;
+    eventAt: string | null;
+  },
+  now: number,
+  tzOffsetMinutes?: number,
+): boolean {
+  if (item.type !== 'DO' || item.status !== 'active') return false;
+  if (isDoneForNow({ status: item.status, cadence: item.cadence, doneToday: item.doneToday })) return false;
+  if (item.deadline) return deadlinePassed(item, now, tzOffsetMinutes);
+  if (item.cadence?.atTime) {
+    const tz = tzOffsetMinutes ?? -new Date(now).getTimezoneOffset();
+    const dayStart = new Date(sleepDayOf(now, tz) * DAY_MS + (EARLY_MORNING_CUTOFF_MINUTES - tz) * 60_000);
+    const occ = nextAtTimeOccurrence(item.cadence, item.eventAt ?? item.createdAt, dayStart, tz);
+    return occ.getTime() <= now && sleepDayIndex(occ.getTime(), now, tz) === 0;
+  }
+  return false;
 }
 
 // Resolved = nothing left to want from the item right now: checked off for
@@ -106,10 +228,12 @@ export function isResolvedForNow(
     doneToday: boolean;
     eventAt: string | null;
     eventEnd: string | null;
+    datePrecision?: DatePrecision;
   },
   now: number,
+  tzOffsetMinutes?: number,
 ): boolean {
-  return isDoneForNow(item) || isClosedStatus(item.status) || eventPassed(item, now);
+  return isDoneForNow(item) || isClosedStatus(item.status) || eventPassed(item, now, tzOffsetMinutes);
 }
 
 // Captured-today relevance (Now screen, §9.1): does this item carry TODAY's

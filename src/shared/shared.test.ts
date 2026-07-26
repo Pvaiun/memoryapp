@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextLatenessBoundary, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -420,5 +420,154 @@ describe('sleepDayKey — the map day the 5am cron builds', () => {
   it('handles offsets that push the date across UTC midnight', () => {
     // 9am Wednesday local in UTC+12 — Tuesday evening in UTC.
     expect(sleepDayKey(Date.parse('2026-07-21T21:00:00Z'), 720)).toBe('2026-07-22');
+  });
+});
+
+describe('date precision — a day is not a moment', () => {
+  const tz = 0;
+  // "Do the cat litters, today" — a date-only capture, stored at local noon
+  // because noon is the anchor that lands on the right calendar day in every
+  // timezone. Nothing about that anchor is a time the user gave.
+  const allDay = {
+    type: 'DO',
+    status: 'active',
+    deadline: '2026-07-26T12:00:00.000Z',
+    datePrecision: 'day' as const,
+    cadence: null,
+    doneToday: false,
+    createdAt: '2026-07-25T09:00:00.000Z',
+    eventAt: null,
+  };
+  const noon = Date.parse('2026-07-26T12:00:00Z');
+
+  it('an all-day deadline is not overdue at 12:01pm on its own day', () => {
+    // The regression: bubbleStatus compared the noon anchor to the clock, so
+    // every date-only chore turned red one minute after midday — from the
+    // storage convention, not from anything the user did or failed to do.
+    expect(deadlinePassed(allDay, noon + 60_000, tz)).toBe(false);
+    expect(deadlinePassed(allDay, noon + 11 * 3_600_000, tz)).toBe(false); // 11pm
+  });
+
+  it('an all-day deadline goes overdue when its sleep day ends, not at midnight', () => {
+    // 4:59am the next morning is still the same sleep day.
+    expect(deadlinePassed(allDay, Date.parse('2026-07-27T04:59:00Z'), tz)).toBe(false);
+    expect(deadlinePassed(allDay, Date.parse('2026-07-27T05:00:00Z'), tz)).toBe(true);
+  });
+
+  it('a timed deadline is overdue the instant it passes', () => {
+    const timed = { ...allDay, datePrecision: 'time' as const, deadline: '2026-07-26T19:00:00.000Z' };
+    expect(deadlinePassed(timed, Date.parse('2026-07-26T18:59:00Z'), tz)).toBe(false);
+    expect(deadlinePassed(timed, Date.parse('2026-07-26T19:01:00Z'), tz)).toBe(true);
+  });
+
+  it('momentPassed: only a timed thing can go by while the day is still on', () => {
+    expect(momentPassed(allDay, noon + 6 * 3_600_000, tz)).toBe(false);
+    const timed = { ...allDay, datePrecision: 'time' as const, deadline: '2026-07-26T19:00:00.000Z' };
+    expect(momentPassed(timed, Date.parse('2026-07-26T18:00:00Z'), tz)).toBe(false);
+    expect(momentPassed(timed, Date.parse('2026-07-26T20:00:00Z'), tz)).toBe(true);
+  });
+
+  it("momentPassed: a rhythm's turn today counts once its hour goes by, unless ticked", () => {
+    // "Speak French with Kayla", daily at 7pm.
+    const rhythm = {
+      type: 'DO',
+      status: 'active',
+      deadline: null,
+      datePrecision: 'time' as const,
+      cadence: { freq: 'daily' as const, interval: 1, atTime: '19:00' },
+      doneToday: false,
+      createdAt: '2026-07-01T09:00:00.000Z',
+      eventAt: null,
+    };
+    expect(momentPassed(rhythm, Date.parse('2026-07-26T18:00:00Z'), tz)).toBe(false);
+    expect(momentPassed(rhythm, Date.parse('2026-07-26T21:00:00Z'), tz)).toBe(true);
+    // Ticked off releases it — the same predicate the checkbox reads.
+    expect(momentPassed({ ...rhythm, doneToday: true }, Date.parse('2026-07-26T21:00:00Z'), tz)).toBe(false);
+  });
+
+  it('an all-day event is live all its own day, spent only once the day is', () => {
+    // The same bug in the other direction: a one-hour grace past the noon
+    // anchor retired "Gabe comes over Thursday" at 1pm on Thursday.
+    const ev = { eventAt: '2026-07-26T12:00:00.000Z', eventEnd: null, cadence: null, datePrecision: 'day' as const };
+    expect(eventPassed(ev, noon + 3 * 3_600_000, tz)).toBe(false);
+    expect(eventPassed(ev, Date.parse('2026-07-27T04:59:00Z'), tz)).toBe(false);
+    expect(eventPassed(ev, Date.parse('2026-07-27T05:00:00Z'), tz)).toBe(true);
+  });
+});
+
+describe('nextLatenessBoundary — schedule to the flip, never poll for it', () => {
+  const tz = 0;
+  const doItem = (over: object) => ({
+    type: 'DO',
+    status: 'active',
+    deadline: null as string | null,
+    datePrecision: 'time' as const,
+    cadence: null,
+    doneToday: false,
+    createdAt: '2026-07-01T09:00:00.000Z',
+    eventAt: null as string | null,
+    eventEnd: null as string | null,
+    ...over,
+  });
+  const at = (iso: string) => Date.parse(iso);
+
+  it('with nothing timed, the next boundary is the 5am rollover', () => {
+    const now = at('2026-07-26T13:39:00Z');
+    const allDay = doItem({ deadline: '2026-07-26T12:00:00.000Z', datePrecision: 'day' });
+    // One wake-up for the whole afternoon and evening, not four hundred.
+    expect(nextLatenessBoundary([allDay], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('a timed deadline later today is the next boundary', () => {
+    const now = at('2026-07-26T13:39:00Z');
+    const timed = doItem({ deadline: '2026-07-26T19:00:00.000Z' });
+    expect(nextLatenessBoundary([timed], now, tz)).toBe(at('2026-07-26T19:00:00Z'));
+  });
+
+  it("a rhythm's turn today counts, and only the soonest instant wins", () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const french = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } });
+    const checkIn = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '11:00' } });
+    expect(nextLatenessBoundary([french, checkIn], now, tz)).toBe(at('2026-07-26T11:00:00Z'));
+  });
+
+  it('instants already passed are not boundaries — they have flipped', () => {
+    const now = at('2026-07-26T20:00:00Z');
+    const french = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } });
+    // 7pm is behind us and the chip is already late; nothing more happens
+    // until the day turns over.
+    expect(nextLatenessBoundary([french], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('resolved items schedule nothing', () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const done = doItem({ deadline: '2026-07-26T19:00:00.000Z', status: 'completed' });
+    const ticked = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' }, doneToday: true });
+    expect(nextLatenessBoundary([done, ticked], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('a timed event schedules its grace expiry, when it goes spent', () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const lunch = {
+      type: 'HAPPEN',
+      status: 'active',
+      deadline: null,
+      datePrecision: 'time' as const,
+      cadence: null,
+      doneToday: false,
+      createdAt: '2026-07-01T09:00:00.000Z',
+      eventAt: '2026-07-26T12:00:00.000Z',
+      eventEnd: null,
+    };
+    expect(nextLatenessBoundary([lunch], now, tz)).toBe(at('2026-07-26T13:00:00Z')); // +1h grace
+  });
+
+  it('always returns a future instant, so scheduling can never spin', () => {
+    const now = at('2026-07-26T04:59:59Z');
+    const items = [
+      doItem({ deadline: '2026-07-20T19:00:00.000Z' }), // long overdue
+      doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } }),
+    ];
+    expect(nextLatenessBoundary(items, now, tz)).toBeGreaterThan(now);
   });
 });

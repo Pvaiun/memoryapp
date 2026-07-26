@@ -1,4 +1,4 @@
-import type { AffectEntry, BackendType, Cadence, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
+import type { AffectEntry, BackendType, Cadence, DatePrecision, EventActor, Flavour, Item, ItemView, RawText, Theme } from '../shared/types';
 import { deriveFlavour } from '../shared/flavour';
 import { effectivePriority } from '../shared/priority';
 import { completedWithinSleepDay, isNeglected } from '../shared/cadence';
@@ -19,6 +19,7 @@ interface ItemRow {
   status: string;
   deadline: string | null;
   deadline_hardness: string | null;
+  date_precision: string;
   cadence: string | null;
   optionality: string;
   effort: string;
@@ -54,6 +55,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
     status: row.status as Item['status'],
     deadline: row.deadline,
     deadlineHardness: (row.deadline_hardness as Item['deadlineHardness']) ?? null,
+    datePrecision: (row.date_precision as DatePrecision) ?? 'time',
     cadence: row.cadence ? (JSON.parse(row.cadence) as Cadence) : null,
     optionality: row.optionality as Item['optionality'],
     effort: row.effort as Item['effort'],
@@ -165,6 +167,7 @@ export interface NewItemInput {
   rawText: RawText;
   deadline?: string | null;
   deadlineHardness?: 'hard' | 'soft' | null;
+  datePrecision?: DatePrecision;
   cadence?: Cadence | null;
   optionality?: 'must' | 'nice';
   effort?: 'quick' | 'medium' | 'large';
@@ -187,13 +190,13 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
     .prepare(
       `INSERT INTO items (
         id, type, title, raw_texts, status,
-        deadline, deadline_hardness, cadence, optionality, effort, ping_natured,
+        deadline, deadline_hardness, date_precision, cadence, optionality, effort, ping_natured,
         event_at, event_end, alert_lead_minutes, show_on_calendar,
         priority_base, priority_boost, boost_updated_at, user_priority,
         flavour_override, created_at, updated_at, last_touched_at,
         last_completed_at, completion_count, streak, last_surfaced_at, surfaced_count,
         parse_confidence, capture_id, affect_tags, embedding
-      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,0,?,?,?,?)`,
+      ) VALUES (?,?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,NULL,NULL,?,?,?,NULL,0,0,NULL,0,?,?,?,?)`,
     )
     .bind(
       id,
@@ -202,6 +205,7 @@ export async function insertItem(db: D1Database, input: NewItemInput): Promise<s
       JSON.stringify([input.rawText]),
       input.deadline ?? null,
       input.deadlineHardness ?? null,
+      input.datePrecision ?? 'time',
       input.cadence ? JSON.stringify(input.cadence) : null,
       input.optionality ?? 'must',
       input.effort ?? 'medium',

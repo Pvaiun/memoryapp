@@ -38,6 +38,67 @@ describe('Layer-1 punctual push (§11.4)', () => {
     expect(computeDueAlerts(items, new Date('2026-07-20T15:01:00Z'))).toHaveLength(0);
   });
 
+  it('an all-day deadline never takes the punctual path', () => {
+    // The regression: a quick date-only task ran its 2h runway back from the
+    // noon ANCHOR and pushed "Due soon — 12:00pm" at 10am, naming a time the
+    // user never gave — then went silent for the rest of the day.
+    const allDay = [
+      {
+        ...baseItem,
+        deadline: '2026-07-20T12:00:00.000Z',
+        deadlineHardness: 'hard',
+        effort: 'quick' as const,
+        datePrecision: 'day' as const,
+      },
+    ];
+    expect(computeDueAlerts(allDay, new Date('2026-07-20T10:00:00Z'))).toHaveLength(0);
+    expect(computeDueAlerts(allDay, new Date('2026-07-20T11:30:00Z'))).toHaveLength(0);
+  });
+
+  it('all-day items get one evening sweep instead, at a waking hour', () => {
+    const allDay = [
+      { ...baseItem, deadline: '2026-07-20T12:00:00.000Z', deadlineHardness: 'hard', datePrecision: 'day' as const },
+    ];
+    // Nothing through the day…
+    expect(computeDueAlerts(allDay, new Date('2026-07-20T14:00:00Z'))).toHaveLength(0);
+    // …one push at 9pm local…
+    const sweep = computeDueAlerts(allDay, new Date('2026-07-20T21:02:00Z'));
+    expect(sweep).toHaveLength(1);
+    expect(sweep[0].body).toBe('Still open today');
+    // …and nothing in the small hours before the 5am boundary it goes late at.
+    expect(computeDueAlerts(allDay, new Date('2026-07-21T04:00:00Z'))).toHaveLength(0);
+  });
+
+  it('the sweep is one push for the day, not one per item', () => {
+    const items = [
+      { ...baseItem, id: 'a', title: 'Cat litters', deadline: '2026-07-20T12:00:00.000Z', deadlineHardness: 'hard', datePrecision: 'day' as const },
+      { ...baseItem, id: 'b', title: 'Declog the sink', deadline: '2026-07-20T12:00:00.000Z', deadlineHardness: 'hard', datePrecision: 'day' as const },
+    ];
+    const sweep = computeDueAlerts(items, new Date('2026-07-20T21:02:00Z'));
+    expect(sweep).toHaveLength(1);
+    expect(sweep[0].title).toBe('2 still open today');
+  });
+
+  it('an item already done today is not swept', () => {
+    const done = [
+      {
+        ...baseItem,
+        deadline: '2026-07-20T12:00:00.000Z',
+        deadlineHardness: 'hard',
+        datePrecision: 'day' as const,
+        lastCompletedAt: '2026-07-20T15:00:00.000Z',
+      },
+    ];
+    expect(computeDueAlerts(done, new Date('2026-07-20T21:02:00Z'))).toHaveLength(0);
+  });
+
+  it('the sweep speaks about today only — older misses belong to the map', () => {
+    const stale = [
+      { ...baseItem, deadline: '2026-07-17T12:00:00.000Z', deadlineHardness: 'hard', datePrecision: 'day' as const },
+    ];
+    expect(computeDueAlerts(stale, new Date('2026-07-20T21:02:00Z'))).toHaveLength(0);
+  });
+
   it('respects a per-event lead override ("remind me the night before")', () => {
     const items = [{ ...baseItem, type: 'HAPPEN', eventAt: '2026-07-20T15:00:00Z', alertLeadMinutes: 720 }];
     expect(computeDueAlerts(items, new Date('2026-07-20T04:00:00Z'))).toHaveLength(1);
@@ -114,6 +175,17 @@ describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
     expect(isTodayRelevant({ ...base, eventAt: '2026-07-18T12:00:00Z', eventEnd: '2026-07-25T12:00:00Z' }, now, tz)).toBe(true);
     expect(isTodayRelevant({ ...base, eventAt: '2026-07-18T12:00:00Z', eventEnd: '2026-07-19T12:00:00Z' }, now, tz)).toBe(false);
   });
+  it('an all-day deadline anchored at the sleep-day edge still counts', () => {
+    // The floor compares sleep DAYS, not instants. A day-precision deadline
+    // is anchored at local noon, but nothing here may depend on where in the
+    // day the anchor sits: an instant comparison against the day's end drops
+    // anything landing on the boundary itself, and dropping a same-day item
+    // is this app's cardinal failure.
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-20T16:00:00.000Z' }, now, tz)).toBe(true); // noon local
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T08:59:00.000Z' }, now, tz)).toBe(true); // 4:59am, same sleep day
+    expect(isTodayRelevant({ ...base, deadline: '2026-07-21T09:00:00.000Z' }, now, tz)).toBe(false); // 5am, next
+  });
+
   it('completed and undated items never count', () => {
     expect(isTodayRelevant({ ...base, status: 'completed', deadline: '2026-07-20T13:00:00Z' }, now, tz)).toBe(false);
     expect(isTodayRelevant(base, now, tz)).toBe(false);
@@ -267,6 +339,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     status: 'active',
     deadline: null,
     deadlineHardness: null,
+    datePrecision: 'time',
     cadence: null,
     optionality: 'must',
     effort: 'medium',
@@ -320,7 +393,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
       } as unknown as ItemView,
       now,
     );
-    expect(line).toContain('due=today(soft)');
+    expect(line).toContain('due=today(1pm, soft)');
     expect(line).toContain('[Gaming]');
     expect(line).toContain('optional');
     expect(line).toContain('quick');
@@ -468,7 +541,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
       new Date('2026-07-23T13:00:00Z'),
       -240,
     );
-    expect(line).toContain('due=+4d(hard)');
+    expect(line).toContain('due=+4d(10pm, hard)');
   });
   it('a 1am deadline is due=today through the evening before it', () => {
     // 10pm local July 23; due 1am local July 24 — same sleep day.
@@ -477,7 +550,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
       new Date('2026-07-24T02:00:00Z'),
       -240,
     );
-    expect(line).toContain('due=today(hard)');
+    expect(line).toContain('due=today(1am, hard)');
   });
 
   it('event ranges and recaptures render', () => {
@@ -492,7 +565,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
       } as unknown as ItemView,
       now,
     );
-    expect(line).toContain('happens=today..+5d');
+    expect(line).toContain('happens=today(4pm)..+5d');
     expect(line).toContain('recaptured=1');
     expect(line).toContain('seen=today');
   });

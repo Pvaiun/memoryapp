@@ -1,6 +1,6 @@
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
-import { describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
+import { deadlinePassed, describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
@@ -12,13 +12,17 @@ export function priorityColor(p: number): string {
 
 // Day distances are sleep-cycle days (5am boundary, same as localDay): a 1am
 // deadline reads "today" through the evening before it, not as tomorrow.
-function fmtDate(iso: string): string {
+//
+// `timed` says whether this date names a moment. An all-day date prints no
+// clock — it never had one. (This used to be guessed from the ISO containing
+// "T12:00:00", which is only what local noon serialises to for a user at UTC;
+// everywhere else the guess failed and all-day items announced a time.)
+function fmtDate(iso: string, timed: boolean): string {
   const d = new Date(iso);
   const days = sleepDayDiffLocal(d.getTime(), Date.now());
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (days === 0) return `today ${time}`;
-  if (days > 0 && days < 7)
-    return d.toLocaleDateString([], { weekday: 'short' }) + (iso.includes('T12:00:00') ? '' : ` ${time}`);
+  const time = timed ? ` ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+  if (days === 0) return `today${time}`;
+  if (days > 0 && days < 7) return d.toLocaleDateString([], { weekday: 'short' }) + time;
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -66,9 +70,12 @@ export default function ItemRow({
     : null;
   const dueOcc =
     !done && item.status === 'active' && item.cadence?.atTime ? nextOccurrenceFrom(item, sleepDayStart()) : null;
-  const dueLabel = dueOcc && dueOcc.getTime() >= Date.now() ? fmtDate(dueOcc.toISOString()) : null;
-  const overdue =
-    item.type === 'DO' && item.status === 'active' && item.deadline && new Date(item.deadline).getTime() < Date.now();
+  // A cadence occurrence always names a time (atTime is what produced it).
+  const dueLabel = dueOcc && dueOcc.getTime() >= Date.now() ? fmtDate(dueOcc.toISOString(), true) : null;
+  // An all-day deadline is not overdue during its own day — it goes overdue
+  // when the day does, at the 5am rollover.
+  const timed = item.datePrecision !== 'day';
+  const overdue = item.type === 'DO' && item.status === 'active' && deadlinePassed(item, Date.now());
 
   return (
     <div className={`item-row${done || closed ? ' done' : ''}`} onClick={() => onOpen(item)}>
@@ -108,20 +115,21 @@ export default function ItemRow({
           {item.deadline && (
             <span className={overdue ? 'overdue' : ''}>
               {overdue ? 'overdue · ' : 'due '}
-              {fmtDate(item.deadline)}
+              {fmtDate(item.deadline, timed)}
               {item.deadlineHardness === 'soft' ? ' (soft)' : ''}
             </span>
           )}
           {item.eventAt && (
             <span>
-              {fmtDate(item.eventAt)}
-              {item.eventEnd && ` – ${fmtDate(item.eventEnd)}`}
+              {fmtDate(item.eventAt, timed)}
+              {item.eventEnd && ` – ${fmtDate(item.eventEnd, timed)}`}
+              {!timed && ' · all day'}
             </span>
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
           {closed && item.status !== 'completed' && <span>{item.status}</span>}
           {doneToday && (
-            <span className="done-today">done today{nextOcc ? ` · next ${fmtDate(nextOcc.toISOString())}` : ''}</span>
+            <span className="done-today">done today{nextOcc ? ` · next ${fmtDate(nextOcc.toISOString(), !!item.cadence?.atTime)}` : ''}</span>
           )}
           {dueLabel && <span>{dueLabel.startsWith('today') ? dueLabel : `next ${dueLabel}`}</span>}
           {item.cadence && item.streak > 1 && <span className="streak">{item.streak} in a row</span>}

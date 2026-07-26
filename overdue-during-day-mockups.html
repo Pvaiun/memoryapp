@@ -1,0 +1,1122 @@
+<title>Going late — Memory day view</title>
+<style>
+  /* ---------- page tokens (themed) ---------- */
+  :root {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+    --ok: #2f8f5b;
+    --no: #c0435f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d1019;
+      --panel: #151a28;
+      --ink: #eef0fa;
+      --ink-dim: #9aa3c0;
+      --ink-faint: #5d647e;
+      --line: rgba(148, 163, 216, 0.16);
+      --accent: #8b93f8;
+      --accent-soft: rgba(139, 147, 248, 0.14);
+      --chip-ink: #0b0e17;
+      --ok: #6fd08c;
+      --no: #f0708c;
+    }
+  }
+  :root[data-theme='light'] {
+    --ground: #f4f5fa;
+    --panel: #ffffff;
+    --ink: #23263a;
+    --ink-dim: #5c6180;
+    --ink-faint: #8f95b4;
+    --line: rgba(60, 70, 120, 0.14);
+    --accent: #5f68d8;
+    --accent-soft: rgba(95, 104, 216, 0.1);
+    --chip-ink: #ffffff;
+    --ok: #2f8f5b;
+    --no: #c0435f;
+  }
+  :root[data-theme='dark'] {
+    --ground: #0d1019;
+    --panel: #151a28;
+    --ink: #eef0fa;
+    --ink-dim: #9aa3c0;
+    --ink-faint: #5d647e;
+    --line: rgba(148, 163, 216, 0.16);
+    --accent: #8b93f8;
+    --accent-soft: rgba(139, 147, 248, 0.14);
+    --chip-ink: #0b0e17;
+    --ok: #6fd08c;
+    --no: #f0708c;
+  }
+
+  /* ---------- app tokens (fixed — the app is dark-only) ---------- */
+  :root {
+    --a-bg: #0b0e17;
+    --a-card: linear-gradient(165deg, rgba(32, 38, 58, 0.9), rgba(19, 23, 37, 0.95));
+    --a-line: rgba(148, 163, 216, 0.14);
+    --a-line-strong: rgba(148, 163, 216, 0.26);
+    --a-text: #eef0fa;
+    --a-dim: #9aa3c0;
+    --a-faint: #5d647e;
+    --a-accent: #8b93f8;
+    --a-good: #6fd08c;
+    --a-warn: #e8c26a;
+    --a-danger: #f0708c;
+    /* proposed: lateness is not danger. desaturated, warm-neutral, quieter. */
+    --a-late: #bda98a;
+    --a-late-ink: #d8c9ae;
+  }
+  /* real theme accents, from api.ts themeColor() */
+  :root {
+    --th-relationship: hsl(235 62% 63%);
+    --th-home: hsl(165 62% 58%);
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--ground); }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 24px 90px; }
+
+  /* ---------- page typography ---------- */
+  .eyebrow {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 40px); font-weight: 800; letter-spacing: -0.025em;
+    line-height: 1.1; text-wrap: balance; margin-bottom: 16px;
+  }
+  .lede { font-size: 16.5px; color: var(--ink-dim); max-width: 64ch; }
+  .lede + .lede { margin-top: 12px; }
+  h2 { font-size: 22px; font-weight: 750; letter-spacing: -0.015em; margin-bottom: 6px; text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .kicker {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px;
+  }
+  section { margin-top: 76px; }
+  .prose { font-size: 15px; color: var(--ink-dim); max-width: 58ch; }
+  .prose p { margin-bottom: 12px; }
+  .prose p:last-child { margin-bottom: 0; }
+  .prose strong { color: var(--ink); font-weight: 650; }
+  code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.86em; background: var(--accent-soft);
+    border-radius: 6px; padding: 1.5px 6px; color: var(--ink);
+  }
+  .row {
+    display: grid; grid-template-columns: 340px minmax(0, 1fr);
+    gap: 40px; align-items: start; margin-top: 22px;
+  }
+  @media (max-width: 900px) { .row { grid-template-columns: minmax(0, 1fr); gap: 28px; } }
+
+  /* ---------- the scrubber: one clock drives every mock ---------- */
+  .instrument {
+    position: sticky; top: 0; z-index: 40;
+    margin: 40px 0 0; padding: 18px 22px 20px;
+    background: color-mix(in srgb, var(--panel) 97%, transparent);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 16px;
+  }
+  .instrument-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .instrument-label {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .clock {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 26px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink);
+  }
+  .clock-note { font-size: 13px; color: var(--ink-dim); margin-left: 10px; font-family: inherit; font-weight: 500; }
+  input[type='range'] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 26px; background: transparent; cursor: pointer; display: block;
+  }
+  input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent) var(--pct, 0%), var(--line) var(--pct, 0%));
+  }
+  input[type='range']::-moz-range-track {
+    height: 6px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent) var(--pct, 0%), var(--line) var(--pct, 0%));
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent); border: 3px solid var(--panel); margin-top: -7px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.28);
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--panel);
+    background: var(--accent); box-shadow: 0 1px 5px rgba(0,0,0,0.28);
+  }
+  .ticks {
+    display: flex; justify-content: space-between; margin-top: 4px;
+    font-size: 11px; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .jumps { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .jump {
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--line); background: transparent; color: var(--ink-dim); cursor: pointer;
+  }
+  .jump:hover { border-color: var(--accent); color: var(--ink); }
+  .jump:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- app surface: faithful to src/app/styles.css ---------- */
+  .stage {
+    background: var(--a-bg);
+    background-image: radial-gradient(900px 480px at 50% -180px, rgba(122,132,247,0.08), transparent 70%);
+    border: 1px solid var(--a-line); border-radius: 20px;
+    padding: 24px 20px; overflow: hidden;
+  }
+  .stage-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 288px)); gap: 16px; align-items: start; }
+  @media (max-width: 700px) { .stage-strip { grid-template-columns: minmax(0, 288px); } }
+  .state-label {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--a-faint); margin-bottom: 9px; display: block;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* card anatomy — copied from .dsc-*; CARD_W = 288 (DescentView.tsx:62) */
+  .card { position: relative; text-align: left; width: 288px; max-width: 100%; }
+  .card-body {
+    position: relative; display: block; border-radius: 22px;
+    border: 1px solid var(--a-line); background: var(--a-card);
+    padding: 20px 20px 18px 24px; overflow: hidden;
+  }
+  .rim {
+    position: absolute; top: 50%; transform: translateY(-50%); height: 62%;
+    left: 0; width: 4px; border-radius: 0 4px 4px 0;
+    background: var(--card-accent); pointer-events: none;
+    transition: background 260ms ease, height 260ms ease;
+  }
+  .sentence { display: block; font-size: 17px; line-height: 1.6; color: var(--a-dim); }
+  .tok { font-weight: 700; color: var(--a-text); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; margin: 2px 0;
+    padding: 3px 12px 3px 8px; border-radius: 11px;
+    border: 1px solid color-mix(in srgb, var(--card-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--card-accent) 13%, transparent);
+    color: var(--a-text); font-weight: 650; line-height: 1.35;
+    transition: border-color 260ms ease, background 260ms ease, color 260ms ease;
+  }
+  .box {
+    flex: none; width: 15px; height: 15px; border-radius: 5px;
+    border: 1.5px solid color-mix(in srgb, var(--card-accent) 65%, var(--a-faint));
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; line-height: 1; color: var(--a-good);
+    transition: border-color 260ms ease;
+  }
+  .notch {
+    position: absolute; top: 0; right: 0; padding: 3px 9px 4px;
+    border-radius: 0 18px 0 10px;
+    background: color-mix(in srgb, var(--card-accent) 20%, transparent);
+    font-size: 9px; font-weight: 750; letter-spacing: 0.07em; text-transform: uppercase;
+    font-variant-numeric: tabular-nums; color: var(--a-text);
+    transition: background 260ms ease, color 260ms ease;
+  }
+  .pips { display: flex; gap: 5px; margin-top: 9px; }
+  .pip { flex: 1; max-width: 34px; height: 4px; border-radius: 2px; background: var(--a-line); }
+  .pip.filled { background: color-mix(in srgb, var(--card-accent) 70%, transparent); }
+  .count {
+    position: absolute; top: 11px; right: 15px; font-size: 11.5px; font-weight: 600;
+    font-variant-numeric: tabular-nums; color: var(--a-faint); white-space: nowrap;
+  }
+  .acc-rel { --card-accent: var(--th-relationship); }
+  .acc-home { --card-accent: var(--th-home); }
+
+  /* descent header strip (for option E) */
+  .dhead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 4px 14px; font-size: 12px; color: var(--a-faint);
+    border-bottom: 1px solid var(--a-line); margin-bottom: 16px;
+  }
+  .dhead b { color: var(--a-dim); font-weight: 650; }
+  .went-by {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    background: color-mix(in srgb, var(--a-late) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--a-late) 34%, transparent);
+    color: var(--a-late-ink); font-weight: 650; font-size: 11.5px;
+    opacity: 0; transform: translateY(-3px);
+    transition: opacity 300ms ease, transform 300ms ease;
+  }
+  .went-by.on { opacity: 1; transform: none; }
+  .went-by i { width: 5px; height: 5px; border-radius: 50%; background: var(--a-late); font-style: normal; }
+
+  /* ============ OPTION-SPECIFIC LATE TREATMENTS ============ */
+
+  /* today (control): whole-card red the instant noon passes */
+  .opt-today .notch.is-noon-late { background: color-mix(in srgb, var(--a-danger) 26%, transparent); }
+  .opt-today .card-body.is-noon-late { border-color: color-mix(in srgb, var(--a-danger) 46%, transparent); }
+  .opt-today .rim.is-noon-late { background: var(--a-danger); }
+
+  /* A · notch flips */
+  .opt-a .notch.is-late {
+    background: color-mix(in srgb, var(--a-late) 26%, transparent);
+    color: var(--a-late-ink);
+  }
+
+  /* B · the chip that went by goes hollow */
+  .opt-b .chip.is-late {
+    background: transparent;
+    border-color: color-mix(in srgb, var(--a-late) 55%, transparent);
+    border-style: dashed;
+    color: var(--a-late-ink);
+  }
+  .opt-b .chip.is-late .box { border-color: color-mix(in srgb, var(--a-late) 70%, transparent); }
+  .opt-b .chip.is-late .when { color: var(--a-late); font-weight: 700; }
+
+  /* C · day rail drains along the top edge */
+  .dayrail {
+    position: absolute; top: 0; left: 20px; right: 20px; height: 4px;
+    border-radius: 0 0 2px 2px; background: var(--a-line-strong);
+  }
+  .dayrail-fill {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    background: color-mix(in srgb, var(--card-accent) 55%, transparent);
+    transition: width 120ms linear;
+  }
+  .dayrail-mark {
+    position: absolute; top: -1px; width: 6px; height: 6px; margin-left: -3px;
+    border-radius: 50%; background: var(--a-line-strong);
+    transition: background 260ms ease, box-shadow 260ms ease;
+  }
+  .dayrail-mark.is-late {
+    background: var(--a-late);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--a-late) 22%, transparent);
+  }
+
+  /* D · rim gains a late segment */
+  .rim-stack {
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    height: 62%; width: 4px; border-radius: 0 4px 4px 0;
+    display: flex; flex-direction: column; overflow: hidden; background: var(--card-accent);
+  }
+  .rim-late {
+    width: 100%; background: var(--a-late); height: 0;
+    transition: height 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .rim-late.on { height: 46%; }
+
+  /* ---------- comparison table ---------- */
+  .table-scroll { overflow-x: auto; margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; min-width: 660px; font-size: 14px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-faint); border-bottom-color: var(--ink-faint);
+  }
+  td:first-child { font-weight: 650; color: var(--ink); white-space: nowrap; }
+  td { color: var(--ink-dim); }
+  .yes { color: var(--ok); font-weight: 700; }
+  .nope { color: var(--no); font-weight: 700; }
+  .mid { color: var(--ink-faint); font-weight: 700; }
+
+  /* ---------- notification band ---------- */
+  .band-wrap { margin-top: 22px; display: flex; flex-direction: column; gap: 22px; }
+  .band {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px 20px 22px;
+  }
+  .band h3 { margin-bottom: 3px; }
+  .band .sub { font-size: 13px; color: var(--ink-faint); margin-bottom: 20px; }
+  .track {
+    position: relative; height: 34px; border-radius: 8px;
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--ink-faint) 22%, transparent) 0%,
+      transparent 4%, transparent 74%,
+      color-mix(in srgb, var(--ink-faint) 22%, transparent) 78%);
+    border: 1px solid var(--line);
+  }
+  .dead {
+    position: absolute; top: 0; bottom: 0; border-radius: 0;
+    background: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--no) 13%, transparent) 0 6px,
+      transparent 6px 12px);
+    border-left: 1px dashed color-mix(in srgb, var(--no) 45%, transparent);
+    border-right: 1px dashed color-mix(in srgb, var(--no) 45%, transparent);
+  }
+  .fire {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel);
+  }
+  .fire.bad { background: var(--no); }
+  .fire.good { background: var(--ok); }
+  .track-labels {
+    position: relative; height: 40px; margin-top: 6px;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  .track-labels span {
+    position: absolute; transform: translateX(-50%);
+    text-align: center; width: 130px; line-height: 1.35;
+  }
+  .hours {
+    display: flex; justify-content: space-between; margin-top: 2px;
+    font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- verdict ---------- */
+  .verdict {
+    margin-top: 84px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 18px; padding: 32px 34px 34px;
+  }
+  .verdict h2 { margin-bottom: 14px; }
+  .verdict .prose { max-width: 68ch; font-size: 15.5px; }
+  .rec {
+    display: flex; gap: 14px; align-items: flex-start; margin-top: 20px;
+    padding-top: 18px; border-top: 1px solid var(--line);
+  }
+  .rec-badge {
+    flex: none; padding: 4px 12px; border-radius: 999px;
+    background: var(--accent); color: var(--chip-ink);
+    font-size: 11.5px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .footnote {
+    margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--ink-faint); max-width: 66ch;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Memory · Day view · Going late</div>
+    <h1>Something going late, while the day is still on</h1>
+    <p class="lede">
+      The map is composed once at the 5am rebuild and then holds still. Prominence drift is off the table —
+      the map earns its keep by being a <strong>shape you can remember</strong>, and re-ranking cards mid-afternoon
+      destroys exactly that. So whatever lateness looks like, it has to happen <strong>in place</strong>:
+      same card, same position, same silhouette.
+    </p>
+    <p class="lede">
+      Five treatments below, all driven by one clock. Drag it through the sleep day and watch the same two real
+      cards from today's map respond. The last section covers what changes once dates can be timeless.
+    </p>
+  </header>
+
+  <div class="instrument">
+    <div class="instrument-head">
+      <div>
+        <div class="instrument-label">Sleep day · 5am → 5am</div>
+        <div class="clock"><span id="clock">1:39pm</span><span class="clock-note" id="clock-note">map built 4 hours ago</span></div>
+      </div>
+    </div>
+    <input type="range" id="scrub" min="0" max="1439" value="519" step="1" aria-label="Time of day" />
+    <div class="ticks"><span>5am</span><span>10am</span><span>3pm</span><span>8pm</span><span>1am</span><span>5am</span></div>
+    <div class="jumps">
+      <button class="jump" data-go="60">6am · build</button>
+      <button class="jump" data-go="355">10:55am</button>
+      <button class="jump" data-go="375">11:15am · check-in missed</button>
+      <button class="jump" data-go="420">noon</button>
+      <button class="jump" data-go="855">7:15pm · French missed</button>
+      <button class="jump" data-go="1155">12:15am · dishwasher</button>
+    </div>
+  </div>
+
+  <section>
+    <div class="kicker">The precedent</div>
+    <h2>The map already moves during the day — but only downward</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Worth naming before choosing anything: <code>DescentView</code> already re-depths cards mid-day.
+          A bubble whose items are all resolved gives up its Brain prominence and sinks to <code>p 0</code> —
+          <em>"resolution is depth (user decision)"</em>. It also distinguishes how it got there:
+          <code>settledWord</code> reads <strong>"done"</strong> when you worked it and <strong>"passed"</strong>
+          when the clock alone settled it.
+        </p>
+        <p>
+          So the corridor already has a vocabulary for <em>a moment going by</em> — it just spends it entirely on
+          things leaving. A <code>HAPPEN</code> that passes goes quiet and sinks. A <code>DO</code> whose moment
+          passes does nothing at all. That asymmetry is the gap, and it argues for a treatment that's the
+          <em>opposite gesture</em> to settling, not a louder version of urgency.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">HAPPEN · moment passed</span>
+            <div class="card acc-rel">
+              <div class="card-body" style="opacity: 0.5">
+                <span class="rim" style="opacity: 0.5"></span>
+                <span class="sentence"><b class="tok">Kyle tomorrow</b> — passed.</span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 10px; line-height: 1.5">
+              Sinks to the deep end. Handled today.
+            </p>
+          </div>
+          <div>
+            <span class="state-label">DO · moment passed</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="notch">TODAY</span>
+                <span class="sentence">
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 10px; line-height: 1.5">
+              Identical at 6am and 11pm. Nothing happens.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Control · what ships today</div>
+    <h2>Today the card does change — for the wrong reason, at the wrong time</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Date-only deadlines are stored at <strong>local noon</strong> (<code>localNoonIso</code>).
+          <code>bubbleStatus</code> compares that instant to <code>Date.now()</code>, so
+          <strong>Home chores</strong> flips to red <em>overdue</em> at <strong>12:01pm</strong> —
+          from the storage convention, not from anything you did or didn't do.
+        </p>
+        <p>
+          Meanwhile <code>deriveDeadlineNotch</code> counts in whole sleep-days, so the notch still says
+          <strong>TODAY</strong>. Two bricks on one card, disagreeing, every afternoon.
+        </p>
+        <p>
+          And the one item on that card with a <em>real</em> moment — the dishwasher at midnight — is still
+          eleven hours away when the card goes red.
+        </p>
+      </div>
+      <div class="stage opt-today">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">Now</span>
+            <div class="card acc-home">
+              <div class="card-body" data-late-noon>
+                <span class="rim" data-late-noon></span>
+                <span class="notch" data-late-noon>TODAY</span>
+                <span class="sentence">
+                  Due today:
+                  <span class="chip"><span class="box"></span>cat litters</span>
+                  and
+                  <span class="chip"><span class="box"></span>declog the sink</span>.
+                  <span class="chip"><span class="box"></span>Start the dishwasher</span> tonight too.
+                </span>
+                <span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip"></i></span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="state-label">Status chip · live</span>
+            <div style="display: flex; flex-direction: column; gap: 12px; padding-top: 4px">
+              <div style="display: flex; align-items: center; gap: 10px">
+                <span id="ctrl-dot" style="width: 9px; height: 9px; border-radius: 50%; background: var(--a-danger); flex: none"></span>
+                <span id="ctrl-word" style="color: var(--a-text); font-weight: 650; font-size: 15px">overdue</span>
+              </div>
+              <p style="font-size: 12.5px; color: var(--a-faint); line-height: 1.5">
+                <code style="background: rgba(148,163,216,0.12); color: var(--a-dim)">bubbleStatus.ts:59</code>
+                — <code style="background: rgba(148,163,216,0.12); color: var(--a-dim)">if (due &lt; now) overdue = true</code>
+              </p>
+              <p style="font-size: 12.5px; color: var(--a-faint); line-height: 1.5">
+                Fires at 12:01pm regardless of the notch, which is day-granular and stays on
+                <strong style="color: var(--a-dim)">TODAY</strong> until 5am tomorrow.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Option A</div>
+    <h2>The notch flips</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          The corner brick already exists and already carries time pressure. It just gains a past tense:
+          <strong>7PM</strong> → <strong>SINCE 7PM</strong>. One string, one colour token, no new element.
+        </p>
+        <p>
+          Silhouette is untouched — the notch is already there, already that size. But it's the smallest
+          type on the card at 9px, and it's the first thing depth crops. At corridor distance you'd never see it.
+        </p>
+      </div>
+      <div class="stage opt-a">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label" data-before>Before 7pm</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="notch">7PM</span>
+                <span class="sentence">
+                  Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="state-label">Live</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="notch" data-late="840" data-late-text="SINCE 7PM" data-early-text="7PM">7PM</span>
+                <span class="sentence">
+                  Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Option B</div>
+    <h2>The chip that went by goes hollow</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Lateness lands on the <strong>individual chip</strong>, not the card. The chip loses its accent fill
+          and takes a dashed edge. Everything else is untouched.
+        </p>
+        <p>
+          It deliberately <strong>adds no words</strong>. At the real 288px card width the prose already wraps
+          hard around inline-flex chips, so any appended "· went by" reflows the sentence and the card changes
+          height — which is the shape problem again, in miniature. Restyling in place is the only move that
+          leaves the layout alone.
+        </p>
+        <p>
+          This is also the honest one. A card is routinely <em>half</em> late — the 11am check-in went by, the
+          7pm French hasn't yet — and every card-level treatment has to lie about that. It puts the mark exactly
+          where the tap already goes.
+        </p>
+        <p>
+          Cost: it reads at arm's length, not across the corridor, and a chip going hollow is a
+          <em>subtraction</em>, which is quiet by design. Drag past 11am and 7pm to see them go one at a time.
+        </p>
+      </div>
+      <div class="stage opt-b">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">Sunday with Kayla</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="sentence">
+                  Weekly
+                  <span class="chip" data-late="360"><span class="box"></span>check-in with Kayla</span>
+                  at <b class="tok">11am</b>, and
+                  <span class="chip" data-late="840"><span class="box"></span>French together</span>
+                  at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="state-label">Home chores</span>
+            <div class="card acc-home">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="count">0/3</span>
+                <span class="sentence">
+                  Due today:
+                  <span class="chip"><span class="box"></span>cat litters</span>
+                  and
+                  <span class="chip"><span class="box"></span>declog the sink</span>.
+                  <span class="chip" data-late="1140"><span class="box"></span>Start the dishwasher</span>
+                  tonight too.
+                </span>
+                <span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip"></i></span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 12px; line-height: 1.5">
+              The two timeless chores never go hollow — nothing was missed until the day ends.
+              Only the midnight dishwasher has a moment to miss.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Option C</div>
+    <h2>A day rail drains along the top edge</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Reuses the span rail's slot and visual language exactly — the 4px track hugging the card's top edge —
+          but the axis is <strong>today, 5am to 5am</strong>, and the ticks are the card's own moments.
+          The fill advances; a moment you passed unticked lights up behind it.
+        </p>
+        <p>
+          It's the only option that shows <em>how long ago</em>, which is the thing that actually differs between
+          "7:05pm" and "11:40pm". It's also the only one that adds a component and puts a slowly-moving element
+          on every card — a small but real tax on the still-life quality.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">Sunday with Kayla</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="dayrail">
+                  <span class="dayrail-fill" data-dayfill></span>
+                  <span class="dayrail-mark" data-late="360" style="left: 25%"></span>
+                  <span class="dayrail-mark" data-late="840" style="left: 58.3%"></span>
+                </span>
+                <span class="rim"></span>
+                <span class="sentence">
+                  Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="state-label">Home chores</span>
+            <div class="card acc-home">
+              <div class="card-body">
+                <span class="dayrail">
+                  <span class="dayrail-fill" data-dayfill></span>
+                  <span class="dayrail-mark" data-late="1140" style="left: 79.2%"></span>
+                </span>
+                <span class="rim"></span>
+                <span class="count">0/3</span>
+                <span class="sentence">
+                  Due today:
+                  <span class="chip"><span class="box"></span>cat litters</span>
+                  and
+                  <span class="chip"><span class="box"></span>declog the sink</span>.
+                  <span class="chip"><span class="box"></span>Start the dishwasher</span> tonight too.
+                </span>
+                <span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip"></i></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Option D</div>
+    <h2>The rim takes a second colour</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          The theme rim is one of exactly three homes for the accent, it sits on every card, and it survives
+          depth better than anything else on the card. Give it a second segment that grows as moments go by.
+        </p>
+        <p>
+          Best glanceability of the five — you'd read it from the top of the corridor. But it spends the rim,
+          which is currently pure identity: <em>this card is Relationship</em>. Making it also carry state means
+          the one element you use to recognize a card at distance now changes during the day. That's the closest
+          thing here to the drift problem, just in colour instead of position.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">Sunday with Kayla</span>
+            <div class="card acc-rel">
+              <div class="card-body">
+                <span class="rim-stack"><span class="rim-late" data-rimlate="360"></span></span>
+                <span class="sentence">
+                  Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <span class="state-label">At corridor distance</span>
+            <div class="card acc-rel" style="transform: scale(0.62); transform-origin: top left; width: 161%">
+              <div class="card-body">
+                <span class="rim-stack"><span class="rim-late" data-rimlate="360"></span></span>
+                <span class="sentence">
+                  Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+                  <b class="tok">French together</b> at <b class="tok">7pm</b>.
+                </span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 14px; line-height: 1.5">
+              Still legible small — where A's 9px notch and B's dashed edge have both vanished.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Option E</div>
+    <h2>Nothing on the card — the header counts it</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Leave all thirty cards exactly as composed and put the whole concept in the header, next to the
+          date line, where the descent already tracks <code>urgentCount</code>. The ledger — already built,
+          already lists every card with its status word — gains <strong>went by</strong> alongside
+          <strong>done</strong> and <strong>overdue</strong>.
+        </p>
+        <p>
+          Perfect shape preservation: it is literally impossible for this to change a card. And the count is
+          arguably the true unit — you don't need to know <em>which</em> card at a glance, you need to know
+          there's something to go back for.
+        </p>
+        <p>
+          Cost: it's a number, not a place. You have to go looking.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="dhead">
+          <span><b>Sunday 26 July</b> · built 5:02am</span>
+          <span class="went-by" data-wentby><i></i><span data-wentby-text>2 went by</span></span>
+        </div>
+        <div class="card acc-rel">
+          <div class="card-body">
+            <span class="rim"></span>
+            <span class="sentence">
+              Weekly <b class="tok">check-in with Kayla</b> at <b class="tok">11am</b>, and
+              <b class="tok">French together</b> at <b class="tok">7pm</b>.
+            </span>
+          </div>
+        </div>
+        <div style="margin-top: 16px" class="card acc-home">
+          <div class="card-body">
+            <span class="rim"></span>
+            <span class="count">0/3</span>
+            <span class="sentence">
+              Due today:
+              <span class="chip"><span class="box"></span>cat litters</span>
+              and
+              <span class="chip"><span class="box"></span>declog the sink</span>.
+              <span class="chip"><span class="box"></span>Start the dishwasher</span> tonight too.
+            </span>
+            <span class="pips"><i class="pip"></i><i class="pip"></i><i class="pip"></i></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">Side by side</div>
+    <h2>What each one costs</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Silhouette</th>
+            <th>Reads at distance</th>
+            <th>Half-late cards</th>
+            <th>Where it lives</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A · Notch flips</td>
+            <td><span class="yes">unchanged</span></td>
+            <td><span class="nope">no</span> — 9px, crops first</td>
+            <td><span class="nope">lies</span> — card-level</td>
+            <td><code>cards.ts</code> notch label</td>
+          </tr>
+          <tr>
+            <td>B · Chip hollows</td>
+            <td><span class="yes">unchanged</span></td>
+            <td><span class="mid">arm's length</span></td>
+            <td><span class="yes">exact</span></td>
+            <td><code>DescentView</code> chip render</td>
+          </tr>
+          <tr>
+            <td>C · Day rail</td>
+            <td><span class="mid">new element</span></td>
+            <td><span class="mid">partial</span></td>
+            <td><span class="yes">exact</span> + elapsed</td>
+            <td>new brick in <code>cards.ts</code></td>
+          </tr>
+          <tr>
+            <td>D · Rim segment</td>
+            <td><span class="yes">unchanged</span></td>
+            <td><span class="yes">yes</span></td>
+            <td><span class="mid">proportional</span></td>
+            <td><code>.dsc-rim</code> + accent</td>
+          </tr>
+          <tr>
+            <td>E · Header count</td>
+            <td><span class="yes">untouchable</span></td>
+            <td><span class="yes">yes</span>, but off-card</td>
+            <td><span class="yes">counts items</span></td>
+            <td>header + ledger word</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">The other half</div>
+    <h2>Timeless dates shrink the problem to a third of its size</h2>
+    <div class="row">
+      <div class="prose">
+        <p>
+          Every mock above is driven by real moments — 11am, 7pm, midnight. Today's map has
+          <strong>fourteen</strong> dated items and only <strong>five</strong> carry a genuine clock time.
+          The rest are noon-anchored fictions.
+        </p>
+        <p>
+          Once a date can be <em>day-precision</em>, a timeless item has no moment to miss during the day.
+          It becomes late at the sleep-day boundary — <strong>5am</strong> — which is exactly when the map
+          rebuilds anyway. So its lateness is a <em>build-time fact</em>, composed into the card's prose by the
+          Brain, and never a within-day transition at all.
+        </p>
+        <p>
+          That's the real prize: the within-day display problem stops applying to cat litters and the sink, and
+          applies only to things you actually said a time for.
+        </p>
+      </div>
+      <div class="stage">
+        <div class="stage-strip">
+          <div>
+            <span class="state-label">Today · noon fiction</span>
+            <div class="card acc-home opt-today">
+              <div class="card-body" data-late-noon>
+                <span class="rim" data-late-noon></span>
+                <span class="notch" data-late-noon>TODAY</span>
+                <span class="sentence">
+                  Due today: <span class="chip"><span class="box"></span>cat litters</span>.
+                </span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 12px; line-height: 1.5">
+              Red from 12:01pm. Notch disagrees. Nothing was actually missed.
+            </p>
+          </div>
+          <div>
+            <span class="state-label">Day-precision</span>
+            <div class="card acc-home">
+              <div class="card-body">
+                <span class="rim"></span>
+                <span class="notch">TODAY</span>
+                <span class="sentence">
+                  Sometime today: <span class="chip"><span class="box"></span>cat litters</span>.
+                </span>
+              </div>
+            </div>
+            <p style="font-size: 12.5px; color: var(--a-faint); margin-top: 12px; line-height: 1.5">
+              Holds still all day. Tomorrow's build says
+              <em style="color: var(--a-dim)">"the litters didn't happen yesterday"</em> — in prose, in the
+              Brain's voice, where it belongs.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">The 4am problem</div>
+    <h2>The sleep-day boundary is for state, never for speech</h2>
+    <p class="prose" style="max-width: 64ch">
+      If a timeless item goes late at 5am, the naive move is to notify then. That's useless, and the current
+      runway model already produces a related absurdity in the other direction. The rule that resolves both:
+      <strong>day-precision items never take the punctual push path.</strong> They get one evening sweep, at a
+      waking hour, and then silence until the map speaks in the morning.
+    </p>
+    <div class="band-wrap">
+      <div class="band">
+        <h3>Today · "Do the cat litters", quick, due today</h3>
+        <p class="sub">Date-only → stored at noon → 120-minute runway measured from a time you never said.</p>
+        <div class="track">
+          <div class="dead" style="left: 75%; right: 0"></div>
+          <span class="fire bad" style="left: 20.8%"></span>
+        </div>
+        <div class="track-labels">
+          <span style="left: 20.8%">10:00am<br />"Due soon — 12:00pm"</span>
+          <span style="left: 50%; color: var(--no)">then nothing, all day</span>
+        </div>
+        <div class="hours"><span>5am</span><span>11am</span><span>5pm</span><span>11pm</span><span>5am</span></div>
+      </div>
+
+      <div class="band">
+        <h3>Proposed · day-precision, evening sweep</h3>
+        <p class="sub">No moment, so no punctual alert. One sweep at a configured evening hour; a hard quiet zone after it.</p>
+        <div class="track">
+          <div class="dead" style="left: 79%; right: 0"></div>
+          <span class="fire good" style="left: 66.7%"></span>
+        </div>
+        <div class="track-labels">
+          <span style="left: 66.7%">9:00pm<br />"3 still open today"</span>
+          <span style="left: 89%; color: var(--ink-faint)">quiet zone<br />no pushes</span>
+        </div>
+        <div class="hours"><span>5am</span><span>11am</span><span>5pm</span><span>11pm</span><span>5am</span></div>
+      </div>
+
+      <div class="band">
+        <h3>Unchanged · timed items keep the punctual path</h3>
+        <p class="sub">A real clock time is a real moment. These already work; nothing here touches them.</p>
+        <div class="track">
+          <div class="dead" style="left: 79%; right: 0"></div>
+          <span class="fire" style="left: 25%"></span>
+          <span class="fire" style="left: 58.3%"></span>
+        </div>
+        <div class="track-labels">
+          <span style="left: 25%">11:00am<br />check-in</span>
+          <span style="left: 58.3%">7:00pm<br />French</span>
+        </div>
+        <div class="hours"><span>5am</span><span>11am</span><span>5pm</span><span>11pm</span><span>5am</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="verdict">
+    <h2>Where I'd land</h2>
+    <div class="prose">
+      <p>
+        <strong>Do the timeless work first, and possibly only that.</strong> It deletes the noon lie, fixes the
+        notch/chip contradiction, and removes two-thirds of the within-day cases by making them build-time
+        cases instead — where the Brain can say them in prose, which is a far better instrument than any
+        badge. It's the change that makes the display question small enough to answer well.
+      </p>
+      <p>
+        For what's left — genuinely timed things going by — <strong>B</strong> is the honest answer and
+        <strong>D</strong> is the visible one. They're not exclusive: the rim carries "something on this card
+        went by" at distance, the chip says which one when you arrive. That pairing costs no silhouette and
+        no position.
+      </p>
+      <p>
+        I'd rule out <strong>A</strong> (invisible where it matters) and <strong>C</strong> (a moving part on
+        every card, against a map whose value is stillness). <strong>E</strong> is worth keeping as an addition
+        whichever way you go — the ledger already has the slot.
+      </p>
+    </div>
+    <div class="rec">
+      <span class="rec-badge">Build order</span>
+      <div class="prose" style="max-width: 60ch">
+        Day-precision dates end to end (schema, parser, display, push) → then B alone → then D only if B proves
+        too quiet in practice. Each step is independently shippable and none of them move a card.
+      </div>
+    </div>
+    <p class="footnote">
+      Cards, chips, notches, pips and rim geometry are copied from <code>src/app/styles.css</code>; accents are
+      the real <code>themeColor()</code> hashes for Relationship and Home. The lateness token is deliberately
+      not <code>--danger</code> — being late is not an emergency, and the app already spends red on
+      due-now and happening-now.
+    </p>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var scrub = document.getElementById('scrub');
+    var clock = document.getElementById('clock');
+    var note = document.getElementById('clock-note');
+    var ctrlWord = document.getElementById('ctrl-word');
+
+    // minutes since 5am → label
+    function fmt(mins) {
+      var h = Math.floor(((mins + 300) % 1440) / 60);
+      var m = (mins + 300) % 60;
+      var ampm = h >= 12 ? 'pm' : 'am';
+      var hr = ((h + 11) % 12) + 1;
+      return hr + ':' + String(m).padStart(2, '0') + ampm;
+    }
+
+    var NOON = 420; // 12:00pm, in minutes since 5am
+
+    function render(t) {
+      scrub.style.setProperty('--pct', ((t / 1439) * 100).toFixed(2) + '%');
+      clock.textContent = fmt(t);
+
+      var built = 60; // 6am
+      if (t < built) note.textContent = 'before the morning build';
+      else {
+        var hrs = Math.round((t - built) / 60);
+        note.textContent = hrs < 1 ? 'map just built' : 'map built ' + hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+      }
+
+      // generic: anything with data-late flips at its moment
+      document.querySelectorAll('[data-late]').forEach(function (el) {
+        var at = parseInt(el.getAttribute('data-late'), 10);
+        var late = t >= at;
+        el.classList.toggle('is-late', late);
+        var lateText = el.getAttribute('data-late-text');
+        if (lateText) el.textContent = late ? lateText : el.getAttribute('data-early-text');
+      });
+
+      // option B trailing phrase
+      document.querySelectorAll('[data-when]').forEach(function (el) {
+        var at = parseInt(el.getAttribute('data-when'), 10);
+        el.textContent = t >= at ? el.getAttribute('data-when-text') : '';
+      });
+
+      // option C fill
+      document.querySelectorAll('[data-dayfill]').forEach(function (el) {
+        el.style.width = ((t / 1439) * 100).toFixed(2) + '%';
+      });
+
+      // option D rim segment
+      document.querySelectorAll('[data-rimlate]').forEach(function (el) {
+        el.classList.toggle('on', t >= parseInt(el.getAttribute('data-rimlate'), 10));
+      });
+
+      // control: the noon lie
+      var noonLate = t >= NOON;
+      document.querySelectorAll('[data-late-noon]').forEach(function (el) {
+        el.classList.toggle('is-noon-late', noonLate);
+      });
+      // both states are red in bubbleStatus — only the word changes at noon
+      if (ctrlWord) ctrlWord.textContent = noonLate ? 'overdue' : 'due today';
+
+      // option E count
+      var gone = (t >= 360 ? 1 : 0) + (t >= 840 ? 1 : 0) + (t >= 1140 ? 1 : 0);
+      document.querySelectorAll('[data-wentby]').forEach(function (el) {
+        el.classList.toggle('on', gone > 0);
+      });
+      document.querySelectorAll('[data-wentby-text]').forEach(function (el) {
+        el.textContent = gone + ' went by';
+      });
+    }
+
+    scrub.addEventListener('input', function () { render(parseInt(scrub.value, 10)); });
+    document.querySelectorAll('[data-go]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        scrub.value = b.getAttribute('data-go');
+        render(parseInt(scrub.value, 10));
+      });
+    });
+    render(parseInt(scrub.value, 10));
+  })();
+</script>

@@ -120,6 +120,11 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       tz,
     );
 
+    // The parser already knows whether the phrase named a time; until now that
+    // fact was dropped at the door and three surfaces re-guessed it from the
+    // stored noon anchor. Keep it. Whichever date this item type carries is
+    // the one that decides — an undated item's precision is inert.
+    const resolved = p.type === 'HAPPEN' ? eventAt : deadline;
     const itemEmbedding = await embed(env, p.title);
     const id = await insertItem(db, {
       type: p.type,
@@ -127,6 +132,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       rawText: { ts: nowIso(), text: parsed.items.length > 1 ? p.title : req.text },
       deadline: p.type === 'DO' ? deadline?.iso ?? null : null,
       deadlineHardness: p.type === 'DO' && deadline ? p.deadlineHardness ?? 'hard' : null,
+      datePrecision: resolved && !resolved.hasTime ? 'day' : 'time',
       cadence: p.type === 'KNOW' ? null : p.cadence,
       optionality: p.optionality,
       effort: p.effort,

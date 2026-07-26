@@ -1,5 +1,5 @@
 import type { Bubble, ItemView } from '../../shared/types';
-import { isResolvedForNow } from '../../shared/cadence';
+import { deadlinePassed, isResolvedForNow, momentPassed } from '../../shared/cadence';
 import { sleepDayDiffLocal } from '../../shared/dates';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
@@ -42,6 +42,7 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
   const now = Date.now();
   let overdue = false;
   let dueToday = false;
+  let wentBy = false; // a moment today came and went unticked
   let happeningNow = false;
   let redEventDiff = Infinity; // sleep-day distance of the nearest ≤2-day event
   let soonestDueDays = Infinity; // sleep-day distance of the nearest deadline
@@ -54,12 +55,17 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
     // Passed one-shot events go quiet too: lunch, once eaten, stops being "now".
     if (!it || isResolvedForNow(it, now)) continue;
     if (it.deadline) {
-      const due = new Date(it.deadline).getTime();
-      const dueDays = sleepDayDiffLocal(due, now);
-      if (due < now) overdue = true;
+      const dueDays = sleepDayDiffLocal(new Date(it.deadline).getTime(), now);
+      // Overdue means the deadline is genuinely behind us. For an all-day
+      // deadline that is a question about days, not the clock — comparing its
+      // noon anchor to now turned every date-only chore red at 12:01pm.
+      if (deadlinePassed(it, now)) overdue = true;
       else if (dueDays <= 0) dueToday = true;
       else if (dueDays < 7) soonestDueDays = Math.min(soonestDueDays, dueDays);
     }
+    // A timed thing whose hour went by today, still unticked. Distinct from
+    // overdue: the deadline is today, the day is not over, but the moment is.
+    if (momentPassed(it, now)) wentBy = true;
     if (it.neglected) slipped = true;
     if (it.eventAt) {
       const at = new Date(it.eventAt).getTime();
@@ -69,18 +75,20 @@ export function bubbleStatus(bubble: Bubble, items: Record<string, ItemView>): B
       else if (at > now) nextEvent = Math.min(nextEvent, at);
     }
   }
-  if (overdue || dueToday || happeningNow || redEventDiff < Infinity) {
+  if (overdue || dueToday || wentBy || happeningNow || redEventDiff < Infinity) {
     const label = overdue
       ? 'overdue'
       : happeningNow
         ? 'now'
-        : dueToday
-          ? 'due today'
-          : redEventDiff <= 0
-            ? 'today'
-            : redEventDiff === 1
-              ? 'tomorrow'
-              : 'in 2 days';
+        : wentBy
+          ? 'went by'
+          : dueToday
+            ? 'due today'
+            : redEventDiff <= 0
+              ? 'today'
+              : redEventDiff === 1
+                ? 'tomorrow'
+                : 'in 2 days';
     return { tone: 'red', color: TONE_COLORS.red, label };
   }
   if (soonestDueDays < Infinity) {

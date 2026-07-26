@@ -1640,6 +1640,19 @@ textarea:focus {
   border-color: var(--line);
   background: transparent;
 }
+/* went by: a timed thing whose hour passed today, still unticked. The accent
+   fill drains and the edge goes dashed-red — a subtraction, not an alarm, and
+   the same red the rest of the app already spends on due-now. Deliberately no
+   added words: the chip restyles inside its own box, so the sentence never
+   reflows and the card keeps the height and shape it had at dawn. */
+.dsc-chip-tok.late {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  border-style: dashed;
+}
+.dsc-chip-tok.late .dsc-box {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+}
 .dsc-box {
   flex: none;
   width: 15px;
