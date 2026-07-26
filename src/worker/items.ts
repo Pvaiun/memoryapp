@@ -1,4 +1,4 @@
-import type { AffectTag, Cadence, Flavour, ItemView } from '../shared/types';
+import type { AffectTag, Cadence, DatePrecision, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
 import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, occurrencesBetween } from '../shared/cadence';
 import { resolveDatePhrase, sleepDayOf } from '../shared/dates';
@@ -168,8 +168,16 @@ export async function missItem(env: Env, id: string): Promise<ItemView | null> {
   if (item.status !== 'active' && item.status !== 'passed') return null;
   // Nothing to miss before the moment arrives — the event must have started.
   // (Started is enough: "I'm not going to make it" is real ten minutes in,
-  // before the grace hour lets eventPassed call it spent.)
-  if (!item.eventAt || new Date(item.eventAt).getTime() > Date.now()) return null;
+  // before the grace hour lets eventPassed call it spent.) A day-precision
+  // event has no moment to start at: it is underway for the whole sleep day,
+  // so its noon anchor must not gate the morning half of its own day.
+  if (!item.eventAt) return null;
+  const tz = await getTzOffset(db);
+  const startedBy =
+    item.datePrecision === 'day'
+      ? sleepDayOf(new Date(item.eventAt).getTime(), tz) > sleepDayOf(Date.now(), tz)
+      : new Date(item.eventAt).getTime() > Date.now();
+  if (startedBy) return null;
   await updateItemFields(db, id, { status: 'missed' });
   await logEvent(db, 'user', 'missed', {
     itemId: id,
@@ -186,7 +194,10 @@ export async function reopenItem(env: Env, id: string): Promise<ItemView | null>
   const db = env.DB;
   const item = await getItem(db, id);
   if (!item || !['dismissed', 'passed', 'missed'].includes(item.status)) return null;
-  const next = item.status === 'missed' && eventPassed(item, Date.now()) ? 'passed' : 'active';
+  // The worker runs in UTC, so day-precision spentness needs the user's offset
+  // to know which sleep day the event's date fell in.
+  const tzOffset = await getTzOffset(db);
+  const next = item.status === 'missed' && eventPassed(item, Date.now(), tzOffset) ? 'passed' : 'active';
   await updateItemFields(db, id, { status: next });
   // Immutable correction model (§7.1): a compensating event, not an erasure.
   await logEvent(db, 'user', 'reopened', {
@@ -225,6 +236,10 @@ export interface ItemEdits {
   deadline?: string | null; // ISO, or a natural phrase the client passes through
   deadlinePhrase?: string | null;
   deadlineHardness?: 'hard' | 'soft' | null;
+  // Explicit from the item sheet's all-day toggle. A resolved *phrase* sets
+  // this itself (the parser knows whether a time was said), so an explicit
+  // value only overrides when no phrase was supplied.
+  datePrecision?: DatePrecision;
   cadence?: Cadence | null;
   optionality?: 'must' | 'nice';
   effort?: 'quick' | 'medium' | 'large';
@@ -257,9 +272,15 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
 
   if (edits.title !== undefined && edits.title.trim()) set('title', 'title', edits.title.trim());
   if (edits.type !== undefined) set('type', 'type', edits.type);
+  // A re-parsed phrase carries its own precision — "Thursday" clears any
+  // stale time-precision the item had, and vice versa. An explicit toggle
+  // applies below, where it can also win over a phrase-derived value.
   if (edits.deadlinePhrase) {
     const r = resolveDatePhrase(edits.deadlinePhrase, new Date(), edits.tzOffsetMinutes);
-    if (r) set('deadline', 'deadline', r.iso);
+    if (r) {
+      set('deadline', 'deadline', r.iso);
+      set('date_precision', 'datePrecision', r.hasTime ? 'time' : 'day');
+    }
   } else if (edits.deadline !== undefined) {
     set('deadline', 'deadline', edits.deadline);
   }
@@ -270,11 +291,18 @@ export async function editItem(env: Env, id: string, edits: ItemEdits): Promise<
   if (edits.pingNatured !== undefined) set('ping_natured', 'pingNatured', edits.pingNatured ? 1 : 0);
   if (edits.eventAtPhrase) {
     const r = resolveDatePhrase(edits.eventAtPhrase, new Date(), edits.tzOffsetMinutes);
-    if (r) set('event_at', 'eventAt', r.iso);
+    if (r) {
+      set('event_at', 'eventAt', r.iso);
+      set('date_precision', 'datePrecision', r.hasTime ? 'time' : 'day');
+      if (r.endIso) set('event_end', 'eventEnd', r.endIso);
+    }
   } else if (edits.eventAt !== undefined) {
     set('event_at', 'eventAt', edits.eventAt);
   }
-  if (edits.eventEnd !== undefined) set('event_end', 'eventEnd', edits.eventEnd);
+  if (edits.eventEnd !== undefined && !edits.eventAtPhrase) set('event_end', 'eventEnd', edits.eventEnd);
+  // The sheet's all-day toggle. Last word, so flipping it on an item whose
+  // date is unchanged still takes effect.
+  if (edits.datePrecision !== undefined) set('date_precision', 'datePrecision', edits.datePrecision);
   if (edits.alertLeadMinutes !== undefined) set('alert_lead_minutes', 'alertLeadMinutes', edits.alertLeadMinutes);
   if (edits.showOnCalendar !== undefined) set('show_on_calendar', 'showOnCalendar', edits.showOnCalendar ? 1 : 0);
   // Rescheduling a passed/missed event to a future moment reopens it — the

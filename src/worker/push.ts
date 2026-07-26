@@ -1,5 +1,6 @@
 import { nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
-import type { Effort } from '../shared/types';
+import { sleepDayOf } from '../shared/dates';
+import type { DatePrecision, Effort } from '../shared/types';
 import type { Env } from './env';
 import { getTzOffset, listItems, logEvent, newId, nowIso } from './db';
 import { sendPush, type PushSubscriptionRecord, type VapidKeys } from './webpush';
@@ -18,6 +19,19 @@ const RUNWAY_MINUTES: Record<Effort, number> = {
 
 const DEFAULT_EVENT_LEAD_MINUTES = 45; // "just before" (≈30–60 min)
 
+// All-day items have no moment, so the punctual path has nothing true to
+// measure from — run against a noon anchor it produced "Due soon — 12:00pm"
+// at 10am for a time the user never said, then went silent for the rest of
+// the day. They get one sweep instead, at an hour the user is awake.
+//
+// Deliberately NOT the sleep-day boundary. A day-precision item becomes late
+// at 5am, and that is the right answer for STATE — the map rebuilds then and
+// composes the miss into its prose. It is the wrong answer for SPEECH: a
+// stack of notifications at 4am is no use to anybody. The boundary governs
+// what is true; this hour governs when we say anything.
+const DAY_SWEEP_HOUR = 21; // 9pm user-local
+const DAY_SWEEP_WINDOW_MS = 10 * 60_000;
+
 export interface DueAlert {
   itemId: string;
   occurrenceKey: string; // ISO of the occurrence this alert covers (idempotency)
@@ -35,10 +49,12 @@ export function computeDueAlerts(
     eventAt: string | null;
     deadline: string | null;
     deadlineHardness: string | null;
+    datePrecision?: DatePrecision;
     effort: Effort;
     alertLeadMinutes: number | null;
     cadence: import('../shared/types').Cadence | null;
     createdAt: string;
+    lastCompletedAt?: string | null;
   }[],
   now: Date,
   tzOffsetMinutes = 0,
@@ -52,12 +68,40 @@ export function computeDueAlerts(
   };
   const alerts: DueAlert[] = [];
   const nowMs = now.getTime();
+  const today = sleepDayOf(nowMs, tzOffsetMinutes);
+  // Minutes into the user's local wall-clock day — the sweep is scheduled by
+  // the hour the user sees, not by the sleep-day offset.
+  const local = new Date(nowMs + tzOffsetMinutes * 60_000);
+  const sweepDueMs = (local.getUTCHours() * 60 + local.getUTCMinutes() - DAY_SWEEP_HOUR * 60) * 60_000;
+  const inSweepWindow = sweepDueMs >= 0 && sweepDueMs < DAY_SWEEP_WINDOW_MS;
+  const openAllDay: string[] = [];
 
   for (const item of items) {
     if (item.status !== 'active') continue;
 
+    // All-day items due TODAY and still open, gathered for the evening sweep.
+    // Nothing punctual fires for them; the runway path below skips them too.
+    //
+    // Today only, deliberately. Something all-day that went overdue days ago
+    // is the map's to carry — the morning build composes it into the card's
+    // prose, where it can be said once and in context. Re-pushing it every
+    // evening would be the same nagging the punctual path was doing, just on
+    // a slower clock.
+    if (
+      item.type === 'DO' &&
+      item.datePrecision === 'day' &&
+      item.deadline &&
+      sleepDayOf(new Date(item.deadline).getTime(), tzOffsetMinutes) === today &&
+      sleepDayOf(new Date(item.lastCompletedAt ?? 0).getTime(), tzOffsetMinutes) !== today
+    ) {
+      openAllDay.push(item.title);
+    }
+
     // HAPPEN events — just before (§11.4), one alert per occurrence.
-    if (item.type === 'HAPPEN' && item.eventAt) {
+    // An all-day event has no moment to be just-before, and nothing to tick
+    // off either, so it gets no punctual alert and no sweep — the morning map
+    // is where "Gabe comes over today" belongs.
+    if (item.type === 'HAPPEN' && item.eventAt && item.datePrecision !== 'day') {
       const leadMs = (item.alertLeadMinutes ?? DEFAULT_EVENT_LEAD_MINUTES) * 60_000;
       const occurrence = item.cadence
         ? nextOccurrence(item.cadence, item.eventAt, now)
@@ -73,8 +117,10 @@ export function computeDueAlerts(
       }
     }
 
-    // Hard-deadline DOs — effort-scaled runway (§11.4).
-    if (item.type === 'DO' && item.deadline && item.deadlineHardness === 'hard') {
+    // Hard-deadline DOs — effort-scaled runway (§11.4). Timed deadlines only:
+    // a runway measured back from an all-day item's noon anchor lands at an
+    // arbitrary hour and speaks a due time the user never gave.
+    if (item.type === 'DO' && item.deadline && item.deadlineHardness === 'hard' && item.datePrecision !== 'day') {
       const runwayMs = RUNWAY_MINUTES[item.effort] * 60_000;
       const dueMs = new Date(item.deadline).getTime();
       if (nowMs >= dueMs - runwayMs && nowMs < dueMs) {
@@ -108,8 +154,25 @@ export function computeDueAlerts(
       }
     }
   }
+
+  // One evening sweep for everything all-day still open, as a single push —
+  // not one per item, which is what made the punctual path wrong for these in
+  // the first place. Keyed on the sleep day so it can only fire once, and
+  // attributed to the first open item so tapping it opens something real.
+  if (inSweepWindow && openAllDay.length) {
+    alerts.push({
+      itemId: DAY_SWEEP_ITEM_ID,
+      occurrenceKey: `day-sweep:${today}`,
+      title: openAllDay.length === 1 ? openAllDay[0] : `${openAllDay.length} still open today`,
+      body: openAllDay.length === 1 ? 'Still open today' : openAllDay.slice(0, 3).join(' · '),
+    });
+  }
   return alerts;
 }
+
+// The evening sweep is about the day, not one item, so it has no item to
+// point at. Push delivery treats a non-uuid id as "just open the app".
+export const DAY_SWEEP_ITEM_ID = '__day-sweep__';
 
 export async function runPushScan(env: Env): Promise<{ sent: number; skipped: number }> {
   const db = env.DB;

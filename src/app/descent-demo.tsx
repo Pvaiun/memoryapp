@@ -24,6 +24,7 @@ function mkItem(over: Partial<ItemView>): ItemView {
     status: 'active',
     deadline: null,
     deadlineHardness: null,
+    datePrecision: 'time',
     cadence: null,
     optionality: 'must',
     effort: 'medium',
@@ -73,8 +74,25 @@ const defs: {
     name: "Sarah & Deidra's visit",
     p: 0.95,
     items: [
-      mkItem({ title: 'Clean the litter boxes', themes: theme('Home-Visitors') }),
-      mkItem({ title: 'Make up the guest room', themes: theme('Home-Visitors') }),
+      // Two chips in different states on one card: a timed thing whose hour
+      // went by unticked (renders "late" — hollow, dashed, red) beside an
+      // all-day one that cannot go late during its own day. A card is
+      // routinely half late, and this is the case that proves the chip is the
+      // right place for the mark.
+      mkItem({
+        title: 'Clean the litter boxes',
+        deadline: iso(now - 2 * 3600e3),
+        deadlineHardness: 'hard',
+        datePrecision: 'time',
+        themes: theme('Home-Visitors'),
+      }),
+      mkItem({
+        title: 'Make up the guest room',
+        deadline: iso(now + 3 * 3600e3),
+        deadlineHardness: 'hard',
+        datePrecision: 'day',
+        themes: theme('Home-Visitors'),
+      }),
       mkItem({
         title: 'Sarah & Deidra staying',
         type: 'HAPPEN',
