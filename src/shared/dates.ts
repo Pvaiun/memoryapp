@@ -15,79 +15,34 @@ export interface ResolvedDate {
   endIso?: string; // for range phrases ("July 20 to July 25")
 }
 
-export const DAY_PARTS = ['morning', 'afternoon', 'evening', 'night'] as const;
+// The five windows a day is divided into, in order. The capture model picks a
+// window; this table is the only place that turns one into an hour. Code never
+// tries to read a time of day out of the text — "after work", "once the kids
+// are down" and "before standup" are language, and classifying them is the
+// model's job, not a regex's.
+export const DAY_PARTS = ['morning', 'midday', 'afternoon', 'evening', 'night'] as const;
 export type DayPart = (typeof DAY_PARTS)[number];
 
-// Parts of the day, as anchor hours in the user's local clock. chrono knows
-// these words but reports isCertain('hour') === false for them, so before this
-// table "tomorrow evening" fell through to the date-only noon anchor — an
-// evening errand sorted ahead of a 3pm meeting and read as "due at 12pm".
-//
-// `hour` is where the part is anchored; `until` is the hour it stops making
-// sense, used when the capture happens mid-part ("tonight" typed at 8pm must
-// not land at 7pm and read as already overdue).
-interface DayPartAnchor {
-  part: DayPart;
-  hour: number;
-  minute: number;
-  until: number;
-}
-
-const DAY_PART_ANCHORS: Record<DayPart, DayPartAnchor> = {
-  morning: { part: 'morning', hour: 9, minute: 0, until: 12 },
-  afternoon: { part: 'afternoon', hour: 16, minute: 0, until: 17 },
-  evening: { part: 'evening', hour: 19, minute: 0, until: 22 },
-  night: { part: 'night', hour: 22, minute: 0, until: 23 },
+const DAY_PART_HOURS: Record<DayPart, number> = {
+  morning: 9,
+  midday: 12,
+  afternoon: 16,
+  evening: 19,
+  night: 22,
 };
 
-// English has far more ways to name a time of day than any table can hold
-// ("after my shift", "once the kids are down", "before standup"). This is the
-// FAST PATH, not the boundary of what works: the common expressions, resolved
-// deterministically so the same text always gives the same hour. Anything it
-// misses falls through to the model's dayPart classification (withDayPart),
-// which is open-vocabulary. A miss here costs a fallback, never a wrong hour.
-//
-// Ordered so compounds beat the bare word they contain — "late afternoon"
-// before "afternoon", "mid-morning" before "morning" — and otherwise walking
-// the day in order.
-const DAY_PART_PHRASES: [RegExp, DayPartAnchor][] = [
-  [/\b(dawn|sunrise|first light|crack of dawn)\b/i, { part: 'morning', hour: 6, minute: 30, until: 8 }],
-  [/\b(first thing|early (in the )?morning|before work)\b/i, { part: 'morning', hour: 8, minute: 30, until: 11 }],
-  [/\bmid-? ?morning\b/i, { part: 'morning', hour: 10, minute: 30, until: 12 }],
-  [/\b(late morning|brunch)\b/i, { part: 'morning', hour: 11, minute: 0, until: 12 }],
-  [/\bbefore lunch\b/i, { part: 'morning', hour: 11, minute: 30, until: 12 }],
-  [/\b(lunch ?time|over lunch|at lunch)\b/i, { part: 'afternoon', hour: 12, minute: 0, until: 14 }],
-  [/\bafter lunch\b/i, { part: 'afternoon', hour: 13, minute: 30, until: 15 }],
-  [/\bafter school\b/i, { part: 'afternoon', hour: 16, minute: 0, until: 18 }],
-  [/\b(late afternoon|tea ?time)\b/i, { part: 'afternoon', hour: 17, minute: 0, until: 18 }],
-  [/\b(after work|end of (the )?(day|workday)|eod|cob|close of business)\b/i,
-    { part: 'evening', hour: 18, minute: 0, until: 20 }],
-  [/\b(sunset|sundown|dusk)\b/i, DAY_PART_ANCHORS.evening],
-  [/\b(tonight|this evening)\b/i, DAY_PART_ANCHORS.evening],
-  [/\bafter (dinner|supper)\b/i, { part: 'evening', hour: 20, minute: 0, until: 22 }],
-  [/\b(before bed|bed ?time|before sleep)\b/i, DAY_PART_ANCHORS.night],
-  // Later than a plain "night", which anchors at 10pm — there is nowhere left
-  // to slide to, so this one stands as written.
-  [/\b(late (at )?night|middle of the night|overnight)\b/i, { part: 'night', hour: 23, minute: 0, until: 23 }],
-  [/\bmorning\b/i, DAY_PART_ANCHORS.morning],
-  [/\bafternoon\b/i, DAY_PART_ANCHORS.afternoon],
-  [/\bevening\b/i, DAY_PART_ANCHORS.evening],
-  [/\bnight(-?time)?\b/i, DAY_PART_ANCHORS.night],
-];
-
-function matchDayPart(phrase: string): DayPartAnchor | null {
-  for (const [re, anchor] of DAY_PART_PHRASES) if (re.test(phrase)) return anchor;
-  return null;
+// Each window runs until the next one starts; night runs to the end of the day.
+function windowEnd(part: DayPart): number {
+  const next = DAY_PARTS[DAY_PARTS.indexOf(part) + 1];
+  return next ? DAY_PART_HOURS[next] : 24;
 }
 
-// The word a 'daypart' anchor stands for, read back off the hour it landed on
-// so a nudged time still describes itself correctly.
-export function dayPartWord(localHour: number): DayPart | 'midday' {
-  if (localHour < 12) return 'morning';
-  if (localHour < 14) return 'midday';
-  if (localHour < 18) return 'afternoon';
-  if (localHour < 21) return 'evening';
-  return 'night';
+// The window an hour belongs to — the inverse of the table above, so a stored
+// anchor always describes itself with the word it came from.
+export function dayPartWord(localHour: number): DayPart {
+  let word: DayPart = DAY_PARTS[0];
+  for (const p of DAY_PARTS) if (localHour >= DAY_PART_HOURS[p]) word = p;
+  return word;
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -148,23 +103,16 @@ export function resolveDatePhrase(phrase: string, ref: Date, tzOffsetMinutes?: n
     if (!results.length) return null;
   }
   const r = results[0];
-  // A stated clock time wins; failing that, a stated part of the day; failing
-  // that, the phrase names a day and nothing more.
-  const dayPart = r.start.isCertain('hour') ? null : matchDayPart(phrase);
-  const precision: TimePrecision = r.start.isCertain('hour') ? 'time' : dayPart ? 'daypart' : 'day';
+  const hasTime = r.start.isCertain('hour');
   // Date-only phrases anchor to NOON local — "tomorrow" captured at 1:48am
-  // must not produce a 1:48am deadline.
-  const iso =
-    precision === 'time'
-      ? r.start.date().toISOString()
-      : dayPart
-        ? dayPartIso(r.start.date(), tz, dayPart, ref)
-        : localNoonIso(r.start.date(), tz);
+  // must not produce a 1:48am deadline. A window named in the text reaches us
+  // as the model's dayPart, applied by withDayPart once we're back in capture.
+  const iso = hasTime ? r.start.date().toISOString() : localNoonIso(r.start.date(), tz);
   let endIso: string | undefined;
   if (r.end) {
     endIso = r.end.isCertain('hour') ? r.end.date().toISOString() : localNoonIso(r.end.date(), tz);
   }
-  return { iso, precision, ...(endIso ? { endIso } : {}) };
+  return { iso, precision: hasTime ? 'time' : 'day', ...(endIso ? { endIso } : {}) };
 }
 
 function localHourIso(d: Date, tzOffsetMinutes: number, hour: number, minute: number): string {
@@ -177,21 +125,21 @@ function localNoonIso(d: Date, tzOffsetMinutes: number): string {
   return localHourIso(d, tzOffsetMinutes, 12, 0);
 }
 
-// A day part anchors at its hour — unless the capture is already inside it, in
-// which case anchoring backwards would make the item overdue the moment it was
-// written ("do the dishes tonight", typed at 8pm). Slide to the part's closing
-// hour instead; only if that has passed too does the anchor stand as written.
-function dayPartIso(d: Date, tzOffsetMinutes: number, anchor: DayPartAnchor, ref: Date): string {
-  const at = localHourIso(d, tzOffsetMinutes, anchor.hour, anchor.minute);
+// A window anchors at its start hour — unless the capture is already inside it,
+// which would make the item overdue the moment it was written ("do the dishes
+// tonight", typed at 8pm). Slide to the window's last minute instead; if that
+// has passed too, the anchor stands as written.
+function dayPartIso(d: Date, tzOffsetMinutes: number, part: DayPart, ref: Date): string {
+  const at = localHourIso(d, tzOffsetMinutes, DAY_PART_HOURS[part], 0);
   if (new Date(at).getTime() > ref.getTime()) return at;
-  const closing = localHourIso(d, tzOffsetMinutes, anchor.until, 0);
-  return new Date(closing).getTime() > ref.getTime() ? closing : at;
+  const last = localHourIso(d, tzOffsetMinutes, windowEnd(part) - 1, 59);
+  return new Date(last).getTime() > ref.getTime() ? last : at;
 }
 
-// Raise a day-only resolution to a part of the day the capture's *meaning*
-// implies rather than states (§10: the parser may colour in a default, but it
-// may never invent precision it didn't have). Never touches a resolution that
-// already carries a stated time or day part.
+// Place a day-only resolution in the window the capture model picked. This is
+// the one way a time of day other than noon gets set without a stated clock
+// time — and it can only ever land on a window start, never an invented hour.
+// A stated clock time is already 'time' precision, so it is never touched.
 export function withDayPart(
   resolved: ResolvedDate | null,
   part: DayPart | null,
@@ -199,9 +147,8 @@ export function withDayPart(
   tzOffsetMinutes?: number,
 ): ResolvedDate | null {
   if (!resolved || !part || resolved.precision !== 'day') return resolved;
-  const anchor = DAY_PART_ANCHORS[part];
-  if (!anchor) return resolved;
-  return { ...resolved, iso: dayPartIso(new Date(resolved.iso), tzOffsetMinutes ?? 0, anchor, ref), precision: 'daypart' };
+  if (!(part in DAY_PART_HOURS)) return resolved;
+  return { ...resolved, iso: dayPartIso(new Date(resolved.iso), tzOffsetMinutes ?? 0, part, ref), precision: 'daypart' };
 }
 
 // Items stored before time_precision existed carry null; the convention then
@@ -214,12 +161,11 @@ export function inferPrecision(iso: string, stored: TimePrecision | null, tzOffs
   return local.getUTCHours() === 12 && local.getUTCMinutes() === 0 && local.getUTCSeconds() === 0 ? 'day' : 'time';
 }
 
-// Recovery net for dropped times: when the extracted phrase resolved date-only
-// (noon anchor) but the item's own raw text carries a clock time or a part of
-// the day on the SAME local day ("put laundry away before 3:00 p.m." → phrase
-// "today"; "grab milk tomorrow evening" → phrase "tomorrow"), take it from the
-// source. Same-day guard keeps unrelated dates in multi-intent text from
-// hijacking it.
+// Recovery net for dropped clock times: when the extracted phrase resolved
+// date-only (noon anchor) but the item's own raw text carries a time on the
+// SAME local day ("put laundry away before 3:00 p.m." → phrase "today"),
+// take the time from the source. Same-day guard keeps unrelated dates in
+// multi-intent text from hijacking it.
 export function refineWithSourceTime(
   resolved: ResolvedDate | null,
   sourceText: string,

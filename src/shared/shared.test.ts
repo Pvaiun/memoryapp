@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { atTimeOccurrencesBetween, completedWithinSleepDay, eventPassed, happeningToday, isNeglected, isResolvedForNow, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
-import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, dayPartWord, inferPrecision, sleepDayDiff, sleepDayKey, withDayPart } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, DAY_PARTS, dayPartWord, inferPrecision, sleepDayDiff, sleepDayKey, withDayPart } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -341,120 +341,84 @@ describe('deterministic dates (§12)', () => {
   });
 });
 
-describe('parts of the day are times (§12)', () => {
+describe('day windows (§12)', () => {
   // 9:00am local on Monday July 20, at UTC-4.
   const ref = new Date('2026-07-20T13:00:00Z');
   const TZ = -240;
   const localHour = (iso: string) => new Date(new Date(iso).getTime() + TZ * 60_000).getUTCHours();
 
-  it('a stated day part anchors to that part, never to midday', () => {
-    for (const [phrase, hour] of [
-      ['tomorrow morning', 9],
-      ['tomorrow afternoon', 16],
-      ['tomorrow evening', 19],
-      ['tomorrow night', 22],
-      ['Wednesday morning', 9],
-      ['first thing tomorrow', 8],
-      ['tomorrow by end of day', 18],
-    ] as const) {
+  it('a phrase with no clock time is day-only, wherever the words point', () => {
+    // Code does not read a time of day out of text — that is the model's job,
+    // and it arrives separately as dayPart. Everything here anchors at noon.
+    for (const phrase of ['tomorrow', 'tomorrow evening', 'Wednesday morning', 'tomorrow after work']) {
       const r = resolveDatePhrase(phrase, ref, TZ)!;
-      expect([phrase, r.precision]).toEqual([phrase, 'daypart']);
-      expect([phrase, localHour(r.iso)]).toEqual([phrase, hour]);
+      expect([phrase, r.precision]).toEqual([phrase, 'day']);
+      expect([phrase, localHour(r.iso)]).toEqual([phrase, 12]);
     }
   });
 
-  it('a day part lands on the day the phrase names, not the one the hour spills into', () => {
-    const r = resolveDatePhrase('tomorrow evening', ref, TZ)!;
-    expect(r.iso).toBe('2026-07-21T23:00:00.000Z'); // 7pm on the 21st at UTC-4
-  });
-
-  it('a stated clock time still wins over the day-part word', () => {
-    const r = resolveDatePhrase('tomorrow evening at 6:30pm', ref, TZ)!;
+  it('a stated clock time resolves as a time, untouched by any window', () => {
+    const r = resolveDatePhrase('tomorrow at 3pm', ref, TZ)!;
     expect(r.precision).toBe('time');
-    expect(r.iso).toBe('2026-07-21T22:30:00.000Z');
+    expect(r.iso).toBe('2026-07-21T19:00:00.000Z');
+    expect(withDayPart(r, 'morning', ref, TZ)!.iso).toBe(r.iso);
   });
 
-  it('a bare day still anchors to noon', () => {
-    const r = resolveDatePhrase('tomorrow', ref, TZ)!;
+  it('the model\'s window places a day-only date on its start hour', () => {
+    for (const [part, hour] of [
+      ['morning', 9],
+      ['midday', 12],
+      ['afternoon', 16],
+      ['evening', 19],
+      ['night', 22],
+    ] as const) {
+      const r = withDayPart(resolveDatePhrase('tomorrow', ref, TZ), part, ref, TZ)!;
+      expect([part, r.precision]).toEqual([part, 'daypart']);
+      expect([part, localHour(r.iso)]).toEqual([part, hour]);
+    }
+  });
+
+  it('no window means noon, and says nothing about a time', () => {
+    const r = withDayPart(resolveDatePhrase('tomorrow', ref, TZ), null, ref, TZ)!;
     expect(r.precision).toBe('day');
     expect(localHour(r.iso)).toBe(12);
   });
 
-  it('a day part already underway slides to its closing hour, not into the past', () => {
-    // 8pm local — "tonight" must not resolve to 7pm and read as overdue.
+  it('a window lands on the day the phrase named', () => {
+    const r = withDayPart(resolveDatePhrase('tomorrow', ref, TZ), 'evening', ref, TZ)!;
+    expect(r.iso).toBe('2026-07-21T23:00:00.000Z'); // 7pm on the 21st at UTC-4
+  });
+
+  it('a window already underway slides to its last minute, not into the past', () => {
+    // 8pm local — an evening capture must not land at 7pm and read as overdue.
     const evening = new Date('2026-07-21T00:00:00Z');
-    const r = resolveDatePhrase('tonight', evening, TZ)!;
+    const r = withDayPart(resolveDatePhrase('today', evening, TZ), 'evening', evening, TZ)!;
     expect(new Date(r.iso).getTime()).toBeGreaterThan(evening.getTime());
-    expect(localHour(r.iso)).toBe(22);
-    // Sliding past 9pm re-labels it: "tonight" typed at 8pm reads as "night",
-    // which is the honest word for a capture made that late.
-    expect(dayPartWord(localHour(r.iso))).toBe('night');
+    expect(localHour(r.iso)).toBe(21);
   });
 
-  it('refineWithSourceTime recovers a day part the phrase extraction dropped', () => {
-    const dropped = resolveDatePhrase('tomorrow', ref, TZ)!;
-    const refined = refineWithSourceTime(dropped, 'grab milk tomorrow evening', ref, TZ)!;
-    expect(refined.precision).toBe('daypart');
-    expect(localHour(refined.iso)).toBe(19);
-  });
-
-  it('withDayPart colours in a bare day, and never overrides what was stated', () => {
-    const bare = resolveDatePhrase('tomorrow', ref, TZ)!;
-    const coloured = withDayPart(bare, 'evening', ref, TZ)!;
-    expect(coloured.precision).toBe('daypart');
-    expect(localHour(coloured.iso)).toBe(19);
-    // A stated morning is not overwritten by an inferred evening.
-    const stated = resolveDatePhrase('tomorrow morning', ref, TZ)!;
-    expect(withDayPart(stated, 'evening', ref, TZ)!.iso).toBe(stated.iso);
-    // Nor is a stated clock time.
-    const timed = resolveDatePhrase('tomorrow at 3pm', ref, TZ)!;
-    expect(withDayPart(timed, 'evening', ref, TZ)!.iso).toBe(timed.iso);
-  });
-
-  it('reads the common day-of-day wordings, not just the four bare parts', () => {
-    for (const [phrase, hour] of [
-      ['tomorrow at dawn', 6],
-      ['tomorrow mid-morning', 10],
-      ['tomorrow before lunch', 11],
-      ['tomorrow after lunch', 13],
-      ['tomorrow after school', 16],
-      ['tomorrow late afternoon', 17],
-      ['tomorrow after work', 18],
-      ['tomorrow at sunset', 19],
-      ['tomorrow after dinner', 20],
-      ['tomorrow before bed', 22],
-    ] as const) {
-      const r = resolveDatePhrase(phrase, ref, TZ)!;
-      expect([phrase, r.precision]).toEqual([phrase, 'daypart']);
-      expect([phrase, localHour(r.iso)]).toEqual([phrase, hour]);
+  it('every hour a window can produce reads back as that same window', () => {
+    // The round trip is what keeps the UI honest: an anchor is only ever shown
+    // as the word it came from, so the two tables can never drift apart.
+    for (const part of DAY_PARTS) {
+      const start = withDayPart(resolveDatePhrase('tomorrow', ref, TZ), part, ref, TZ)!;
+      expect([part, dayPartWord(localHour(start.iso))]).toEqual([part, part]);
+      // ...including the slid anchor, taken at the window's own start hour.
+      const inside = new Date(new Date(start.iso).getTime() + 60_000);
+      const slid = withDayPart(resolveDatePhrase('today', inside, TZ), part, inside, TZ)!;
+      expect([part, dayPartWord(localHour(slid.iso))]).toEqual([part, part]);
     }
   });
 
-  it('a wording the table misses falls through to the model, not to midday', () => {
-    // The table cannot enumerate English. Anything it misses resolves day-only,
-    // which is exactly the state withDayPart is allowed to fill — so the model's
-    // coarse classification rescues it instead of the item landing at noon.
-    const missed = resolveDatePhrase('tomorrow once the kids are down', ref, TZ)!;
-    expect(missed.precision).toBe('day');
-    const rescued = withDayPart(missed, 'night', ref, TZ)!;
-    expect(rescued.precision).toBe('daypart');
-    expect(localHour(rescued.iso)).toBe(22);
-  });
-
-  it('a table hit is never overridden by the model, however it classified', () => {
-    // Both paths can fire on the same capture; the deterministic one wins, so a
-    // liberal classifier cannot destabilise the phrasings we resolve ourselves.
-    const hit = resolveDatePhrase('tomorrow after work', ref, TZ)!;
-    expect(withDayPart(hit, 'morning', ref, TZ)!.iso).toBe(hit.iso);
-    expect(localHour(hit.iso)).toBe(18);
-  });
-
-  it('dayPartWord reads the part back off the hour it landed on', () => {
-    expect(dayPartWord(9)).toBe('morning');
-    expect(dayPartWord(12)).toBe('midday');
-    expect(dayPartWord(16)).toBe('afternoon');
-    expect(dayPartWord(19)).toBe('evening');
-    expect(dayPartWord(22)).toBe('night');
+  it('refineWithSourceTime still recovers a clock time the extraction dropped', () => {
+    // Captured 12:34 local (UTC-4): phrase came back as "today" (noon anchor),
+    // but the raw text says "before 3:00 p.m." — recover 15:00 local.
+    const at1234 = new Date('2026-07-20T16:34:00Z');
+    const dateOnly = resolveDatePhrase('today', at1234, TZ)!;
+    expect(dateOnly.precision).toBe('day');
+    const refined = refineWithSourceTime(dateOnly, 'put laundry away before 3:00 p.m.', at1234, TZ)!;
+    expect(refined.precision).toBe('time');
+    expect(refined.iso).toBe('2026-07-20T19:00:00.000Z');
   });
 
   it('inferPrecision reads legacy rows off their anchor, in the user\'s own timezone', () => {
