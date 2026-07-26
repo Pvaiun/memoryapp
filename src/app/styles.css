@@ -1517,6 +1517,39 @@ textarea:focus {
   opacity: 0.85;
 }
 
+/* A day that holds something becomes a panel. Where a day starts and stops was
+   previously only inferable from a gap and a hairline, so items read as one
+   undifferentiated column — and the day label had to shout to mark the seam,
+   which put it in competition with the titles. The shape carries that now, so
+   the label can sit back and the title is the only thing at full strength.
+   Empty days stay bare lines: nothing to contain, nothing to draw. */
+.cal-agenda-day {
+  margin-bottom: 7px;
+  padding: 0 10px;
+  background: rgba(148, 163, 216, 0.04);
+  border: 1px solid rgba(148, 163, 216, 0.07);
+  border-radius: 14px;
+}
+.cal-agenda-day.has {
+  padding-bottom: 7px;
+}
+.cal-agenda-day.has .ag-day {
+  padding-top: 7px;
+}
+/* a quiet day is the same shape, just thin: panelling only the busy days made
+   the week read as two different kinds of thing stacked together */
+.cal-agenda-day:not(.has) .ag-day {
+  padding: 6px 2px;
+}
+.cal-agenda-day.is-today {
+  background: rgba(139, 147, 248, 0.07);
+  border-color: rgba(139, 147, 248, 0.2);
+}
+/* the panel's own top edge is the seam, so the label's rule is redundant */
+.cal-agenda-day .ag-rule {
+  display: none;
+}
+
 /* A week of agenda. Deliberately unpositioned: day blocks must report
    offsetTop against .calv-scroll for the spine's day mark to work, which a
    positioned ancestor here would break. */
@@ -1535,11 +1568,11 @@ textarea:focus {
 }
 .ag-day b {
   flex: none;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text);
+  color: var(--text-dim);
 }
 .ag-day.today b {
   color: var(--accent);
@@ -1594,8 +1627,8 @@ textarea:focus {
    a full week read as a rainbow — and theme is exactly the kind of colour §6
    says the calendar never earns. Neutral here; the title does the talking. */
 .ag-what {
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 1.28;
   color: var(--text);
   border-left: 2px solid color-mix(in srgb, var(--ag-c, var(--line-strong)) 70%, transparent);
@@ -1631,8 +1664,30 @@ textarea:focus {
 /* A multi-day event is a bracket down every day it covers, with those days
    nested inside it — so "Saturday is part of the trip" is structural, and no
    continuation marker or week-boundary special case is needed. */
+/* A trip is one thing, so it is one panel — its days don't each draw their own
+   or the stretch reads as scattered fragments with the trip's name floating
+   loose among them. No border here: the bracket in the margin is the edge. */
 .ag-group {
   position: relative;
+  margin-bottom: 7px;
+  padding: 0 10px 7px;
+  background: rgba(148, 163, 216, 0.04);
+  border-radius: 14px;
+}
+.ag-group .cal-agenda-day {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+.ag-group .cal-agenda-day.has {
+  padding-bottom: 4px;
+}
+/* inside the trip's panel the days have no shapes of their own, so the rule
+   comes back to separate them */
+.ag-group .cal-agenda-day .ag-rule {
+  display: block;
 }
 .ag-bracket {
   position: absolute;
@@ -1657,8 +1712,8 @@ textarea:focus {
 /* Aligned with the row titles, not the day labels — it names a thing, so it
    sits where things sit. */
 .ag-span-label {
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text);
   /* 44px gutter + 7px gap + 2px rail + 9px inset — the exact left edge of a
      row title, so the trip reads as a thing among things */

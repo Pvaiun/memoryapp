@@ -361,7 +361,7 @@ export default function CalendarView({
     return (
       <div
         key={k}
-        className="cal-agenda-day"
+        className={`cal-agenda-day${rows.length ? ' has' : ''}${k === today ? ' is-today' : ''}`}
         ref={(el) => {
           if (el) dayRefs.current.set(k, el);
           else dayRefs.current.delete(k);
