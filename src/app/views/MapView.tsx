@@ -25,15 +25,16 @@ function brainTime(iso: string): string {
 }
 
 // The one moment a captured item is anchored to, if any: an event's start, a
-// set rhythm's time, or a timed deadline. Date-only deadlines (stored at
-// noon) carry no time; undated captures never reach this bucket.
+// set rhythm's time, or a timed deadline. All-day items carry no moment;
+// undated captures never reach this bucket.
 function capturedDue(item: ItemView): string | null {
-  // Date-only dates anchor at noon (dates.localNoonIso); the T12:00:00 marker
-  // is how the app tells "all day" from a real clock time (same test ItemRow
-  // uses), so an all-day event or dateless deadline shows no time.
-  if (item.type === 'HAPPEN' && item.eventAt && !item.eventAt.includes('T12:00:00')) return brainTime(item.eventAt);
+  // datePrecision is the app's answer to "did the user name a time" — read it
+  // rather than inspecting the stored instant, whose date-only form is anchored
+  // at local noon and serialises differently in every timezone.
+  const timed = item.datePrecision !== 'day';
+  if (item.type === 'HAPPEN' && item.eventAt && timed) return brainTime(item.eventAt);
   if (item.cadence?.atTime) return describeAtTime(item.cadence.atTime);
-  if (item.deadline && !item.deadline.includes('T12:00:00')) return brainTime(item.deadline);
+  if (item.deadline && timed) return brainTime(item.deadline);
   return null;
 }
 

@@ -61,17 +61,22 @@ function addDays(d: Date, n: number): Date {
   return x;
 }
 
-// Date-only values anchor to local noon (dates.ts), so noon-exact means "no
-// clock time" — same convention ItemRow reads.
-function clock(d: Date): string | null {
-  if (d.getHours() === 12 && d.getMinutes() === 0) return null;
+// Whether a date names a moment comes from the item, not from the instant.
+// Reading it off the clock ("is this exactly noon?") made a real noon meeting
+// indistinguishable from an all-day entry, in both directions.
+function isTimed(item: ItemView | undefined): boolean {
+  return !!item && item.datePrecision !== 'day';
+}
+
+function clock(d: Date, item: ItemView | undefined): string | null {
+  if (!isTimed(item)) return null;
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 // A grid cell is ~7 characters wide, so the full "7:30 PM" would eat the title.
 // Compact it to "7:30p" / "2p" — enough to place the event, room left to read it.
-function chipTime(d: Date): string | null {
-  if (d.getHours() === 12 && d.getMinutes() === 0) return null;
+function chipTime(d: Date, item: ItemView | undefined): string | null {
+  if (!isTimed(item)) return null;
   const h = d.getHours();
   const m = d.getMinutes();
   const suffix = h < 12 ? 'a' : 'p';
@@ -81,8 +86,8 @@ function chipTime(d: Date): string | null {
 
 // The agenda's time gutter is a fixed column, so times keep their minutes and
 // line up on the colon — "11:00a" over "7:00p", not the chip's clipped "7p".
-function agendaTime(d: Date): string | null {
-  if (d.getHours() === 12 && d.getMinutes() === 0) return null;
+function agendaTime(d: Date, item: ItemView | undefined): string | null {
+  if (!isTimed(item)) return null;
   const h = d.getHours();
   return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}${h < 12 ? 'a' : 'p'}`;
 }
@@ -178,15 +183,14 @@ export default function CalendarView({
     // All-day first, then by clock time — the reading order of a real day.
     for (const list of m.values()) {
       list.sort((a, b) => {
-        const ca = clock(new Date(a.date));
-        const cb = clock(new Date(b.date));
-        if (!ca && cb) return -1;
-        if (ca && !cb) return 1;
+        const ta = isTimed(items[a.itemId]);
+        const tb = isTimed(items[b.itemId]);
+        if (ta !== tb) return ta ? 1 : -1;
         return a.date.localeCompare(b.date);
       });
     }
     return m;
-  }, [entries]);
+  }, [entries, items]);
 
   // Multi-day one-offs render as one continuous band per week (month) or a
   // bracket down the days they cover (agenda), not per-day marks — a five-day
@@ -302,7 +306,7 @@ export default function CalendarView({
       const c = itemColor(item);
       const due = e.kind === 'deadline';
       const rec = e.kind === 'occurrence';
-      const t = due ? null : agendaTime(new Date(e.date));
+      const t = due ? null : agendaTime(new Date(e.date), item);
       // Recurring DOs never reach status='completed' — their checked state is
       // doneToday, released again when the sleep-cycle day rolls (5am).
       const checkable = item.type === 'DO' && (item.status === 'active' || item.status === 'completed');
@@ -499,7 +503,7 @@ export default function CalendarView({
                             const c = itemColor(item);
                             const due = e.kind === 'deadline';
                             const rec = e.kind === 'occurrence';
-                            const t = due ? null : chipTime(new Date(e.date));
+                            const t = due ? null : chipTime(new Date(e.date), item);
                             return (
                               <span
                                 key={`${e.itemId}-${ei}`}
@@ -532,7 +536,7 @@ export default function CalendarView({
                     let label: string;
                     if (s.end <= keys[6]) {
                       const end = new Date(item.eventEnd!);
-                      const t = clock(end);
+                      const t = clock(end, item);
                       label = `${item.title} · until ${end.toLocaleDateString([], { weekday: 'short' })}${t ? ` ${t}` : ''}`;
                     } else {
                       label = `${item.title} ›`;

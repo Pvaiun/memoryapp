@@ -508,7 +508,13 @@ export function isTodayRelevant(
   const dayStartUtc =
     sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
   const dayEndUtc = dayStartUtc + DAY;
-  if (i.deadline && new Date(i.deadline).getTime() < dayEndUtc) return true; // due today or overdue
+  // Compare by sleep DAY, not instant. A day-precision deadline due today is
+  // anchored at noon here, but nothing about this test may depend on where in
+  // the day the anchor sits — a strict instant comparison against dayEndUtc
+  // silently drops anything anchored at the boundary itself, and dropping a
+  // same-day item is this app's cardinal failure.
+  if (i.deadline && sleepDayOf(new Date(i.deadline).getTime(), tzOffsetMinutes) <= sleepDayOf(now.getTime(), tzOffsetMinutes))
+    return true; // due today or overdue
   if (i.eventAt) {
     const at = new Date(i.eventAt).getTime();
     const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
@@ -612,10 +618,30 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     const d = sleepDayDiff(new Date(iso).getTime(), now.getTime(), tzOffsetMinutes);
     return d < 0 ? `${-d}d-overdue` : d === 0 ? 'today' : `+${d}d`;
   };
+  // A date the user gave a time to reads differently from one they didn't:
+  // "Thursday at 3pm" is a moment to be at, "Thursday" is a day to fit it in.
+  // Without the clock time the Brain wrote "at noon" into card prose, from an
+  // anchor the user never said.
+  const atClock = (iso: string): string => {
+    if (i.datePrecision === 'day') return '';
+    const local = new Date(new Date(iso).getTime() + tzOffsetMinutes * 60_000);
+    const h = local.getUTCHours();
+    const m = local.getUTCMinutes();
+    return `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, '0')}` : ''}${h >= 12 ? 'pm' : 'am'}`;
+  };
   const parts: string[] = [];
-  if (i.deadline) parts.push(`due=${relDays(i.deadline)}(${i.deadlineHardness ?? 'hard'})`);
+  if (i.deadline) {
+    // Time and hardness share one paren group — the same shape a recurring
+    // item's happens=today(7pm) already uses, so there is one convention for
+    // "the clock detail of this date" rather than two.
+    const qual = [atClock(i.deadline), i.deadlineHardness ?? 'hard'].filter(Boolean).join(', ');
+    parts.push(`due=${relDays(i.deadline)}(${qual})`);
+  }
   if (i.eventAt) {
-    parts.push(`happens=${relDays(i.eventAt)}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`);
+    const clock = atClock(i.eventAt);
+    parts.push(
+      `happens=${relDays(i.eventAt)}${clock ? `(${clock})` : ''}${i.eventEnd ? `..${relDays(i.eventEnd)}` : ''}`,
+    );
   } else if (i.cadence) {
     // Recurring items otherwise never carry a date token at all, forcing the
     // Brain to re-derive "daily + it's Tuesday = today" mid-composition — the
@@ -827,7 +853,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), with a clock time in parens only when the user named one — due=+2d(3pm, hard) has a time, due=+2d(hard) and happens=+2d name the day with no time attached; deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
@@ -858,7 +884,7 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid
 "sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance carrying the facts — what, when, who: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. The card's size on the map already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, slipping=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
 
 THE CARD GRAMMAR (only these two marks):
-- **bold** the recognizable nouns — people, entities, dates. At distance the card crops to its bold tokens alone, so they must scan as a fragment.
+- **bold** the recognizable nouns — people, entities, dates. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
 - [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". The phrase must read naturally inside the sentence. Every active DO on a card must be a chip — completing from the card is the point, and a DO that requires opening the sheet to tick off is a broken card. (Rotation bubbles are the exception: no chips.)
 
 CONSTRUCTION follows the cluster's shape:
@@ -886,7 +912,7 @@ TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's 
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"sentence" IS the card — the user reads nothing else on the day view. Carry the facts: what, when, who. The card's size on the map already conveys how much it matters — never state a card's importance, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, slipping=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. A quiet bubble gets a short sentence; a loud one gets more words only when it has more facts to carry, never padding. Never state the number of items in a batch — the card renders the true count itself. Two marks only: **bold** the recognizable nouns (people, dates, entities — at distance the card crops to its bold tokens alone), and [phrase](iN) renders as a tappable checkbox completing DO item iN — give every active DO on the card a chip that reads naturally in the prose.
+"sentence" IS the card — the user reads nothing else on the day view. Carry the facts: what, when, who. The card's size on the map already conveys how much it matters — never state a card's importance, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, slipping=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. A quiet bubble gets a short sentence; a loud one gets more words only when it has more facts to carry, never padding. Never state the number of items in a batch — the card renders the true count itself. Two marks only: **bold** the recognizable nouns (people, dates, entities — at distance the card crops to its marked tokens alone), and [phrase](iN) renders as a tappable checkbox completing DO item iN — give every active DO on the card a chip that reads naturally in the prose; a phrase naming a DO is a chip, never bold.
 
 "firstStep": when one big or stalled thing needs a way in rather than volume, offer a short invitation asking the user for their own first move (their typed answer becomes a real item on the card). Never write the step's content yourself. Otherwise null.
 

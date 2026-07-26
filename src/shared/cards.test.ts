@@ -27,6 +27,7 @@ function item(over: Partial<ItemView>): ItemView {
     status: 'active',
     deadline: null,
     deadlineHardness: null,
+    datePrecision: 'time',
     cadence: null,
     optionality: 'must',
     effort: 'medium',
