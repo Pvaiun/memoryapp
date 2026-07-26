@@ -35,9 +35,9 @@ interface DayPartAnchor {
 
 const DAY_PART_ANCHORS: Record<DayPart, DayPartAnchor> = {
   morning: { part: 'morning', hour: 9, minute: 0, until: 12 },
-  afternoon: { part: 'afternoon', hour: 15, minute: 0, until: 18 },
-  evening: { part: 'evening', hour: 19, minute: 0, until: 23 },
-  night: { part: 'night', hour: 21, minute: 0, until: 23 },
+  afternoon: { part: 'afternoon', hour: 16, minute: 0, until: 17 },
+  evening: { part: 'evening', hour: 19, minute: 0, until: 22 },
+  night: { part: 'night', hour: 22, minute: 0, until: 23 },
 };
 
 // Ordered most-specific-first: "tonight" must be read before "night", "early
@@ -45,11 +45,13 @@ const DAY_PART_ANCHORS: Record<DayPart, DayPartAnchor> = {
 // (lunchtime, end of day) still resolve to an anchor — they're stated times of
 // day, just not ones chrono marks certain.
 const DAY_PART_PHRASES: [RegExp, DayPartAnchor][] = [
-  [/\b(first thing|at dawn|early (in the )?morning)\b/i, { part: 'morning', hour: 8, minute: 0, until: 11 }],
-  [/\b(late (at )?night|middle of the night|overnight)\b/i, { part: 'night', hour: 22, minute: 0, until: 23 }],
+  [/\b(first thing|at dawn|early (in the )?morning)\b/i, { part: 'morning', hour: 8, minute: 30, until: 11 }],
+  // Later than a plain "night", which now anchors at 10pm — there is nowhere
+  // left to slide to, so this one stands as written.
+  [/\b(late (at )?night|middle of the night|overnight)\b/i, { part: 'night', hour: 23, minute: 0, until: 23 }],
   [/\b(tonight|this evening)\b/i, DAY_PART_ANCHORS.evening],
-  [/\b(end of (the )?(day|workday)|eod)\b/i, { part: 'evening', hour: 17, minute: 0, until: 23 }],
-  [/\b(lunch ?time|over lunch|at lunch)\b/i, { part: 'afternoon', hour: 12, minute: 30, until: 14 }],
+  [/\b(end of (the )?(day|workday)|eod)\b/i, { part: 'evening', hour: 18, minute: 0, until: 20 }],
+  [/\b(lunch ?time|over lunch|at lunch)\b/i, { part: 'afternoon', hour: 12, minute: 0, until: 14 }],
   [/\bmorning\b/i, DAY_PART_ANCHORS.morning],
   [/\bafternoon\b/i, DAY_PART_ANCHORS.afternoon],
   [/\bevening\b/i, DAY_PART_ANCHORS.evening],
@@ -66,7 +68,7 @@ function matchDayPart(phrase: string): DayPartAnchor | null {
 export function dayPartWord(localHour: number): DayPart | 'midday' {
   if (localHour < 11) return 'morning';
   if (localHour < 14) return 'midday';
-  if (localHour < 17) return 'afternoon';
+  if (localHour < 18) return 'afternoon';
   if (localHour < 21) return 'evening';
   return 'night';
 }

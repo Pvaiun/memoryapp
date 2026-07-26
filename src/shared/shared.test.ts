@@ -350,12 +350,12 @@ describe('parts of the day are times (§12)', () => {
   it('a stated day part anchors to that part, never to midday', () => {
     for (const [phrase, hour] of [
       ['tomorrow morning', 9],
-      ['tomorrow afternoon', 15],
+      ['tomorrow afternoon', 16],
       ['tomorrow evening', 19],
-      ['tomorrow night', 21],
+      ['tomorrow night', 22],
       ['Wednesday morning', 9],
       ['first thing tomorrow', 8],
-      ['tomorrow by end of day', 17],
+      ['tomorrow by end of day', 18],
     ] as const) {
       const r = resolveDatePhrase(phrase, ref, TZ)!;
       expect([phrase, r.precision]).toEqual([phrase, 'daypart']);
@@ -385,7 +385,10 @@ describe('parts of the day are times (§12)', () => {
     const evening = new Date('2026-07-21T00:00:00Z');
     const r = resolveDatePhrase('tonight', evening, TZ)!;
     expect(new Date(r.iso).getTime()).toBeGreaterThan(evening.getTime());
-    expect(localHour(r.iso)).toBe(23);
+    expect(localHour(r.iso)).toBe(22);
+    // Sliding past 9pm re-labels it: "tonight" typed at 8pm reads as "night",
+    // which is the honest word for a capture made that late.
+    expect(dayPartWord(localHour(r.iso))).toBe('night');
   });
 
   it('refineWithSourceTime recovers a day part the phrase extraction dropped', () => {
@@ -411,7 +414,7 @@ describe('parts of the day are times (§12)', () => {
   it('dayPartWord reads the part back off the hour it landed on', () => {
     expect(dayPartWord(9)).toBe('morning');
     expect(dayPartWord(12)).toBe('midday');
-    expect(dayPartWord(15)).toBe('afternoon');
+    expect(dayPartWord(16)).toBe('afternoon');
     expect(dayPartWord(19)).toBe('evening');
     expect(dayPartWord(22)).toBe('night');
   });
