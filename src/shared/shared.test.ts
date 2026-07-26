@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextLatenessBoundary, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -492,5 +492,82 @@ describe('date precision — a day is not a moment', () => {
     expect(eventPassed(ev, noon + 3 * 3_600_000, tz)).toBe(false);
     expect(eventPassed(ev, Date.parse('2026-07-27T04:59:00Z'), tz)).toBe(false);
     expect(eventPassed(ev, Date.parse('2026-07-27T05:00:00Z'), tz)).toBe(true);
+  });
+});
+
+describe('nextLatenessBoundary — schedule to the flip, never poll for it', () => {
+  const tz = 0;
+  const doItem = (over: object) => ({
+    type: 'DO',
+    status: 'active',
+    deadline: null as string | null,
+    datePrecision: 'time' as const,
+    cadence: null,
+    doneToday: false,
+    createdAt: '2026-07-01T09:00:00.000Z',
+    eventAt: null as string | null,
+    eventEnd: null as string | null,
+    ...over,
+  });
+  const at = (iso: string) => Date.parse(iso);
+
+  it('with nothing timed, the next boundary is the 5am rollover', () => {
+    const now = at('2026-07-26T13:39:00Z');
+    const allDay = doItem({ deadline: '2026-07-26T12:00:00.000Z', datePrecision: 'day' });
+    // One wake-up for the whole afternoon and evening, not four hundred.
+    expect(nextLatenessBoundary([allDay], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('a timed deadline later today is the next boundary', () => {
+    const now = at('2026-07-26T13:39:00Z');
+    const timed = doItem({ deadline: '2026-07-26T19:00:00.000Z' });
+    expect(nextLatenessBoundary([timed], now, tz)).toBe(at('2026-07-26T19:00:00Z'));
+  });
+
+  it("a rhythm's turn today counts, and only the soonest instant wins", () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const french = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } });
+    const checkIn = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '11:00' } });
+    expect(nextLatenessBoundary([french, checkIn], now, tz)).toBe(at('2026-07-26T11:00:00Z'));
+  });
+
+  it('instants already passed are not boundaries — they have flipped', () => {
+    const now = at('2026-07-26T20:00:00Z');
+    const french = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } });
+    // 7pm is behind us and the chip is already late; nothing more happens
+    // until the day turns over.
+    expect(nextLatenessBoundary([french], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('resolved items schedule nothing', () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const done = doItem({ deadline: '2026-07-26T19:00:00.000Z', status: 'completed' });
+    const ticked = doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' }, doneToday: true });
+    expect(nextLatenessBoundary([done, ticked], now, tz)).toBe(at('2026-07-27T05:00:00Z'));
+  });
+
+  it('a timed event schedules its grace expiry, when it goes spent', () => {
+    const now = at('2026-07-26T09:00:00Z');
+    const lunch = {
+      type: 'HAPPEN',
+      status: 'active',
+      deadline: null,
+      datePrecision: 'time' as const,
+      cadence: null,
+      doneToday: false,
+      createdAt: '2026-07-01T09:00:00.000Z',
+      eventAt: '2026-07-26T12:00:00.000Z',
+      eventEnd: null,
+    };
+    expect(nextLatenessBoundary([lunch], now, tz)).toBe(at('2026-07-26T13:00:00Z')); // +1h grace
+  });
+
+  it('always returns a future instant, so scheduling can never spin', () => {
+    const now = at('2026-07-26T04:59:59Z');
+    const items = [
+      doItem({ deadline: '2026-07-20T19:00:00.000Z' }), // long overdue
+      doItem({ cadence: { freq: 'daily', interval: 1, atTime: '19:00' } }),
+    ];
+    expect(nextLatenessBoundary(items, now, tz)).toBeGreaterThan(now);
   });
 });

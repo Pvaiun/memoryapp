@@ -12,7 +12,7 @@ import {
   withMemberChips,
 } from '../../../shared/cards';
 import type { CardConstruction, CardSegment, DeadlineNotchBrick, SpanRailBrick } from '../../../shared/cards';
-import { eventPassed, isDoneForNow, momentPassed } from '../../../shared/cadence';
+import { eventPassed, isDoneForNow, momentPassed, nextLatenessBoundary } from '../../../shared/cadence';
 import { themeColor } from '../../api';
 import { bubbleCounts, bubbleStatus } from '../bubbleStatus';
 import type { BubbleStatus } from '../bubbleStatus';
@@ -170,13 +170,33 @@ export default function DescentView({
   // The map is composed at the morning build and then holds still — that
   // stillness is the point, and nothing here re-ranks or re-sizes anything.
   // But "has this moment gone by" is a question about now, not about the
-  // build, and the answer changes while the user is looking. A one-minute
-  // tick is all the resolution an hour hand needs; without it a card written
-  // at 5am still reads 7pm as upcoming at midnight.
+  // build, and the answer changes while the user is looking: without this a
+  // card written at 5am still reads 7pm as upcoming at midnight.
+  //
+  // Scheduled, not polled. The flip instants are already known, so we sleep
+  // until the next one instead of waking every minute to ask — which also
+  // kept re-deriving the scene and rewriting the same rebuild-story entry to
+  // localStorage all day. Typically a handful of wake-ups per day: one per
+  // timed thing on the map, plus the 5am rollover.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(id);
+    const at = nextLatenessBoundary(Object.values(items), nowMs);
+    // The cap is a safety net for a device that slept through its timer or a
+    // clock that jumped, never the mechanism.
+    const delay = Math.min(Math.max(at - Date.now(), 0) + 1_000, 30 * 60_000);
+    const id = window.setTimeout(() => setNowMs(Date.now()), delay);
+    return () => window.clearTimeout(id);
+  }, [items, nowMs]);
+
+  // A backgrounded tab has its timers throttled or frozen outright, so coming
+  // back is itself a moment to re-ask — otherwise a phone picked up at 11pm
+  // shows the state it had when it was pocketed.
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden) setNowMs(Date.now());
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
   // ----- derived scene ---------------------------------------------------

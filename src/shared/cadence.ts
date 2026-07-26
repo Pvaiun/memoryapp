@@ -108,6 +108,54 @@ export function eventPassed(
   return last + EVENT_PASSED_GRACE_MS < now;
 }
 
+// When does any of the above next change its answer? Lateness is a step
+// function: it flips at instants that are already known — a deadline, a
+// rhythm's turn today, an event's grace running out — and is constant in
+// between. So a view that shows it needs one wake-up per instant, not a poll.
+//
+// Always finite, because the sleep-day rollover is a boundary in its own
+// right: at 5am all-day deadlines go overdue, spent events close, and every
+// day-distance label re-counts.
+export function nextLatenessBoundary(
+  items: {
+    type: string;
+    status: string;
+    deadline: string | null;
+    datePrecision?: DatePrecision;
+    cadence: Cadence | null;
+    doneToday: boolean;
+    createdAt: string;
+    eventAt: string | null;
+    eventEnd: string | null;
+  }[],
+  now: number,
+  tzOffsetMinutes?: number,
+): number {
+  const tz = tzOffsetMinutes ?? -new Date(now).getTimezoneOffset();
+  const dayStart = (idx: number) => idx * DAY_MS + (EARLY_MORNING_CUTOFF_MINUTES - tz) * 60_000;
+  const today = sleepDayOf(now, tz);
+  let next = dayStart(today + 1);
+  const consider = (t: number) => {
+    if (t > now && t < next) next = t;
+  };
+  for (const it of items) {
+    if (isClosedStatus(it.status)) continue;
+    if (it.type === 'DO') {
+      if (isDoneForNow(it)) continue;
+      // An all-day deadline has no instant to flip at — only the rollover,
+      // which already floors this.
+      if (it.deadline && it.datePrecision !== 'day') consider(new Date(it.deadline).getTime());
+      if (it.cadence?.atTime) {
+        const occ = nextAtTimeOccurrence(it.cadence, it.eventAt ?? it.createdAt, new Date(dayStart(today)), tz);
+        consider(occ.getTime());
+      }
+    } else if (it.type === 'HAPPEN' && it.eventAt && !it.cadence && it.datePrecision !== 'day') {
+      consider(new Date(it.eventEnd ?? it.eventAt).getTime() + EVENT_PASSED_GRACE_MS);
+    }
+  }
+  return next;
+}
+
 // Sleep-day distance from `now` to `t`, using the caller's fixed offset when
 // given (worker, which runs in UTC) and each instant's own local offset when
 // not (browser, so a DST change between the two can't skew the count). The
