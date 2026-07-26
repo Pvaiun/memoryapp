@@ -500,6 +500,29 @@
     padding: 3px 0 5px;
   }
   .ag-span-label small { display: block; font-size: 9px; font-weight: 600; color: var(--a-faint); margin-top: 1px; }
+
+  /* the spine as scroll position: the day currently at the top of the agenda
+     is marked, so the spine reads as "where am I" as well as "how heavy" */
+  .spine .d { padding: 2px 0 3px; border-radius: 9px; }
+  .spine .d.at { background: var(--a-accent-soft); }
+  .spine.stuck {
+    position: relative;
+    background: var(--a-bg);
+    box-shadow: 0 6px 12px -8px rgba(8, 10, 22, 0.9);
+  }
+  /* two phones side by side, for showing the same view at two scroll offsets */
+  .pair { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 26px; }
+  /* these two frames are cropped to the scroller — no capture bar or tabs, so
+     they hug their content instead of leaving dead space below it */
+  .pair .phone { height: 524px; }
+  .pair figure { margin: 0; display: flex; flex-direction: column; }
+  .pair figcaption {
+    margin-top: 12px; max-width: 360px;
+    font-size: 13px; color: var(--ink-faint);
+  }
+  .pair figcaption b { color: var(--ink-dim); font-weight: 650; }
+  /* a scrolled-past row, cut by the top edge of the agenda */
+  .ag-cut { opacity: 0.45; }
 </style>
 
 <div class="wrap">
@@ -983,6 +1006,144 @@
     </div>
   </section>
 
+  <!-- ================= BEHAVIOUR ================= -->
+  <section>
+    <div class="kicker">Variant D · Behaviour</div>
+    <h2>Scrolling, switching, remembering</h2>
+    <div class="prose" style="margin-top: 16px; max-width: 70ch;">
+      <p><strong>The spine sticks and the week runs underneath it.</strong> The agenda isn't a
+      seven-day window with prev/next arrows — it's the same continuous scroller the month strip
+      already is, over the same 14 months. The spine pins to the top and re-renders to whichever week
+      currently owns the top of the viewport, exactly the way the month name already does.</p>
+      <p>That's not new machinery. <code>CalendarView.tsx:150</code> already reads scroll position into
+      a <code>topIdx</code> and drives a sticky header off it — the only change is that the header
+      becomes seven columns instead of a month name.</p>
+    </div>
+
+    <div class="pair">
+      <figure>
+        <div class="phone">
+          <div class="p-body" style="padding-top: 4px;">
+            <div class="cal-top">
+              <b>Jul 26 – Aug 1</b>
+              <span class="seg"><span>Month</span><span class="on">Week</span></span>
+            </div>
+            <div class="spine stuck">
+              <span class="d today at"><u>S</u><s>26</s><span class="load"><i style="width:100%"></i></span></span>
+              <span class="d"><u>M</u><s>27</s><span class="load"><i style="width:20%"></i></span></span>
+              <span class="d"><u>T</u><s>28</s><span class="load"><i style="width:40%"></i></span></span>
+              <span class="d"><u>W</u><s>29</s><span class="load"><i style="width:40%"></i></span></span>
+              <span class="d"><u>T</u><s>30</s><span class="load"><i style="width:20%"></i></span></span>
+              <span class="d"><u>F</u><s>31</s><span class="load"><i style="width:40%"></i></span></span>
+              <span class="d"><u>S</u><s>1</s><span class="load"></span></span>
+            </div>
+            <div class="ag">
+              <div class="ag-day today"><b>Sun 26</b><span class="tag">TODAY</span><span class="rule"></span></div>
+              <div class="ag-row"><span class="when">11:00a</span><span class="what" style="--c: var(--th-rel)">Relationship check-in with Kayla <i>⟳</i></span><span class="box"></span></div>
+              <div class="ag-row"><span class="when">7:00p</span><span class="what" style="--c: var(--th-rel)">Speak French with Kayla <i>⟳</i></span><span class="box"></span></div>
+              <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Do the cat litters</span><span class="box"></span></div>
+              <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Declog the hair in the sink</span><span class="box"></span></div>
+              <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Put the paintings up instead of the walk</span><span class="box"></span></div>
+              <div class="ag-day"><b>Mon 27</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-friends)">Hanging out with Kyle</span></div>
+              <div class="ag-day"><b>Tue 28</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-health)">Phone call from triage nurse</span></div>
+              <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-fin)">Meeting with Manulife guy</span></div>
+              <div class="ag-day"><b>Wed 29</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when">10:00a</span><span class="what" style="--c: var(--th-health)">Therapy <i>⟳</i></span></div>
+              <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-health)">Strength class at the park</span></div>
+              <div class="ag-day"><b>Thu 30</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when due" style="--c: var(--th-admin)">due</span><span class="what" style="--c: var(--th-admin)">Type out and print my will</span><span class="box"></span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>At rest.</b> Spine shows this week; Sunday is marked because it's the day at the
+        top of the agenda.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="p-body" style="padding-top: 4px;">
+            <div class="cal-top">
+              <b>Aug 2 – 8</b>
+              <span class="seg"><span>Month</span><span class="on">Week</span></span>
+            </div>
+            <div class="spine stuck">
+              <span class="d"><u>S</u><s>2</s><span class="load"></span></span>
+              <span class="d at"><u>M</u><s>3</s><span class="load"><i style="width:20%"></i></span></span>
+              <span class="d"><u>T</u><s>4</s><span class="load"></span></span>
+              <span class="d"><u>W</u><s>5</s><span class="load"><i style="width:20%"></i></span></span>
+              <span class="d"><u>T</u><s>6</s><span class="load"></span></span>
+              <span class="d"><u>F</u><s>7</s><span class="load"><i style="width:20%"></i></span></span>
+              <span class="d"><u>S</u><s>8</s><span class="load"><i style="width:20%"></i></span></span>
+            </div>
+            <div class="ag">
+              <div class="ag-day"><b>Mon 3</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when due" style="--c: var(--th-home)">due</span><span class="what" style="--c: var(--th-home)">Find a sign for the gaming room door</span><span class="box"></span></div>
+              <div class="ag-day"><b>Tue 4</b><span class="rule"></span></div>
+              <div class="ag-none">Nothing.</div>
+              <div class="ag-day"><b>Wed 5</b><span class="rule"></span></div>
+              <div class="ag-row"><span class="when">·</span><span class="what" style="--c: var(--th-friends)">Nyissa's defense party</span></div>
+              <div class="ag-day"><b>Thu 6</b><span class="rule"></span></div>
+              <div class="ag-none">Nothing.</div>
+              <div class="ag-group" style="--c: var(--th-friends)">
+                <span class="bracket"></span>
+                <div class="gcontent">
+                  <div class="ag-day"><b>Fri 7</b><span class="rule"></span></div>
+                  <div class="ag-span-label">Cottage trip with Kyle, Ari, and Molly<small>Fri 7 – Sun 9</small></div>
+                  <div class="ag-day"><b>Sat 8</b><span class="rule"></span></div>
+                  <div class="ag-day"><b>Sun 9</b><span class="rule"></span></div>
+                </div>
+              </div>
+              <div class="ag-day"><b>Mon 10</b><span class="rule"></span></div>
+              <div class="ag-none">Nothing.</div>
+              <div class="ag-day"><b>Tue 11</b><span class="rule"></span></div>
+              <div class="ag-none">Nothing.</div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Scrolled on.</b> Same view, no navigation — the spine has swapped to the next
+        week and the mark moved to Monday. The cottage bracket crosses the week boundary without
+        noticing it.</figcaption>
+      </figure>
+    </div>
+
+    <div class="row" style="margin-top: 44px;">
+      <div class="prose">
+        <p><strong>This is what makes the spine worth its 40px</strong> — which was the thing I couldn't
+        answer before. Standing still it's just a load summary sitting above an agenda that says the
+        same thing better. Scrolling, it becomes three things at once: how heavy the week is, where you
+        currently are in it, and — if the columns are tappable — how to jump. That's a scrollbar with
+        meaning, and nothing else on the screen does that job.</p>
+        <p><strong>Two scales, no redundancy.</strong> The spine tracks weeks. Months are the coarser
+        landmark, so they get a quiet in-flow rule as you scroll past them, the same
+        <code>.cal-month-mark</code> the month view already draws. You always know what week you're in
+        without losing what month it is.</p>
+      </div>
+      <div class="prose">
+        <p><strong>On the toggle, I'd say tap and not pinch.</strong> The zoom <em>metaphor</em> is
+        right — month is the whole shape with no words, agenda is the words for one week — but a pinch
+        implies a continuum, and there are no intermediate states between them. It's also the third time
+        a lens has come up here, and the last two were built and removed.</p>
+        <p>So: the segmented control where the Today button currently sits, plus the gesture you already
+        have — <strong>tapping a day in the month view drops you into the agenda at that day.</strong>
+        That's "zoom in", done with an existing tap. Going back out is the Month button.</p>
+        <p>The detail that makes it feel like zoom rather than navigation: <strong>the toggle keeps the
+        date at the top of the viewport.</strong> Both views are the same scroller over the same range,
+        so "what's at the top" is a shared coordinate. Look at August in month view, hit Week, and
+        you're in August — not bounced back to today.</p>
+        <p>It also <em>deletes</em> a surface. If tapping a day opens the agenda there, the day-detail
+        bottom sheet has no job left — the agenda is the sheet, for seven days instead of one.</p>
+        <div class="code-note">Remembering the view is the small one: a <code>'month' | 'week'</code>
+        state read lazily from <code>localStorage</code> and written on set — the same shape as
+        <code>memory.nowView</code> and <code>memory.fallSpeed</code> in <code>App.tsx:121</code>. Worth
+        persisting the <em>mode</em> only, not the scroll position: coming back to the calendar should
+        still land on today. It can live inside <code>CalendarView</code>, since nothing else touches
+        it, unless Settings ever wants a default-view row.</div>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= RECOMMENDATION ================= -->
   <div class="verdict">
     <div class="kicker">Where this lands</div>
@@ -1002,11 +1163,16 @@
       need new layout engines. D needs the day-detail sheet's row renderer pointed at seven days instead
       of one — and it inherits working rows for free, so items become tappable and DOs become
       checkable inside the calendar for the first time.</p>
-      <p><strong>What I'd actually want to test</strong>, if this gets built: (1) does the spine earn
-      its 40px, or is it decoration once the agenda is right below it — the honest test is to ship it
-      and try deleting it; (2) does a continuously-scrolling agenda want to be called "Week" at all, or
-      is the week just a divider rule in a list that runs forever; (3) whether it makes the month grid
-      feel redundant for anything except finding a specific date.</p>
+      <p><strong>Two of the three things I wanted to test are now answered by the design itself.</strong>
+      The spine earns its 40px once it sticks and tracks scroll — standing still it's a summary the
+      agenda repeats better, but moving it's shape, position and navigation at once. And the week stops
+      needing to be a window: it's the sticky ruler over a list that runs continuously, which is also
+      what makes the toggle a zoom rather than a jump, since both views share "what date is at the
+      top".</p>
+      <p><strong>What's still genuinely open</strong> is whether this makes the month grid redundant for
+      anything except finding a specific date — sharper now, because the agenda also retires the
+      day-detail sheet. Two surfaces collapse into one. That's the thing to watch after a week of
+      living with it: whether you ever press Month on purpose.</p>
       <p>One thing that hasn't changed: the Brain already writes "Next week's appointments" as a card,
       unprompted, and it was on today's map. If the only question is <em>what does my week look like</em>,
       that sentence may still beat every mock-up on this page. D is worth building if you want the
