@@ -46,7 +46,90 @@ const TOP_INSET = 2; // today's week rests this far below the top edge
 const LOAD_FULL = 5;
 
 const MODE_KEY = 'memory.calView';
+const CACHE_KEY = 'memory.calCache';
 const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+// The 60-week window the calendar renders, anchored on the Sunday of today's
+// week. A module function rather than component-only, so the prefetch below can
+// warm the same range the view will ask for.
+export function calendarWeeks(today: string): Date[] {
+  const anchor = new Date(`${today}T12:00:00`);
+  const first = addDays(anchor, -anchor.getDay() - WEEKS_BACK * 7);
+  first.setHours(0, 0, 0, 0);
+  return Array.from({ length: WEEKS_TOTAL }, (_, i) => addDays(first, i * 7));
+}
+
+// The server walks occurrences per item, so the range is fetched in chunks
+// (see CHUNK_WEEKS) and stitched back together here.
+async function fetchCalendar(weeks: Date[]): Promise<CalendarCache> {
+  const calls = [];
+  for (let i = 0; i < WEEKS_TOTAL; i += CHUNK_WEEKS) {
+    const to = addDays(weeks[0], Math.min(i + CHUNK_WEEKS, WEEKS_TOTAL) * 7);
+    calls.push(api.calendar(weeks[i].toISOString(), to.toISOString()));
+  }
+  const rs = await Promise.all(calls);
+  return {
+    builtAt: new Date().toISOString(),
+    day: localDay(),
+    entries: rs.flatMap((r) => r.entries),
+    items: Object.assign({}, ...rs.map((r) => r.items)) as Record<string, ItemView>,
+  };
+}
+
+// Paint the cached calendar, revalidate behind it — the same trade the map
+// already makes. Without it the agenda opens on a skeleton of empty days and
+// fills in a beat later; that beat used to be hidden by the long scroll to
+// today, and removing the scroll is what exposed it.
+interface CalendarCache {
+  builtAt: string;
+  day: string;
+  entries: Entry[];
+  items: Record<string, ItemView>;
+}
+
+// Entries are keyed by date, so a cache built for a slightly different window
+// still paints correctly — days outside the rendered range are simply never
+// looked up. Past a week the drift stops being worth painting at all.
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function readCalendarCache(): CalendarCache | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as CalendarCache;
+    if (!c?.builtAt || !Array.isArray(c.entries) || !c.items) return null;
+    if (Date.now() - new Date(c.builtAt).getTime() > CACHE_MAX_AGE_MS) return null;
+    // doneToday is the one field in here that is about a day rather than a
+    // date. A cache written yesterday would paint this morning's rhythm as
+    // already ticked until the revalidation landed — and the 5am rollover
+    // releases doneness anyway, so false is exactly what the server will say.
+    if (c.day !== localDay()) {
+      c.items = Object.fromEntries(Object.entries(c.items).map(([id, it]) => [id, { ...it, doneToday: false }]));
+    }
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+function writeCalendarCache(c: CalendarCache): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(c));
+  } catch {
+    /* private mode or quota — the calendar just fetches before painting, as before */
+  }
+}
+
+// Warm the cache before the tab is ever opened, so the first calendar open on
+// a device paints instead of loading. Only when there is nothing usable to
+// paint: the cache outlives the session, so once written every later open is
+// already warm, and warming again would spend eight requests per app boot to
+// help an open that is no longer slow. Fire-and-forget — a failure costs
+// nothing, because the view fetches for itself regardless.
+export function prefetchCalendar(): void {
+  if (readCalendarCache()) return;
+  fetchCalendar(calendarWeeks(localDay())).then(writeCalendarCache).catch(() => {});
+}
 
 function readMode(): CalMode {
   try {
@@ -130,16 +213,15 @@ export default function CalendarView({
   // on the evening's date. Cell placement stays wall-clock — it's a calendar.
   const today = localDay();
 
-  const weeks = useMemo(() => {
-    const anchor = new Date(`${today}T12:00:00`);
-    const first = addDays(anchor, -anchor.getDay() - WEEKS_BACK * 7);
-    first.setHours(0, 0, 0, 0);
-    return Array.from({ length: WEEKS_TOTAL }, (_, i) => addDays(first, i * 7));
-  }, [today]);
+  const weeks = useMemo(() => calendarWeeks(today), [today]);
 
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [items, setItems] = useState<Record<string, ItemView>>({});
+  // Read once, synchronously, so the very first paint already has the real day
+  // heights — which is also what makes the open-on-this-week placement land in
+  // the right place first time.
+  const cached = useRef(readCalendarCache()).current;
+  const [entries, setEntries] = useState<Entry[]>(cached?.entries ?? []);
+  const [loaded, setLoaded] = useState(!!cached);
+  const [items, setItems] = useState<Record<string, ItemView>>(cached?.items ?? {});
   // Which rendering you last used is a per-device preference, like the Now view
   // — coming back to the calendar shouldn't reset how you read it.
   const [mode, setModeState] = useState<CalMode>(readMode);
@@ -168,18 +250,16 @@ export default function CalendarView({
     }
   }, []);
 
+  // Revalidate on every mount and whenever an item changes (refreshKey), so a
+  // capture or a tick is reflected without any dirty-tracking to get wrong.
   useEffect(() => {
     let cancelled = false;
-    const calls = [];
-    for (let i = 0; i < WEEKS_TOTAL; i += CHUNK_WEEKS) {
-      const to = addDays(weeks[0], Math.min(i + CHUNK_WEEKS, WEEKS_TOTAL) * 7);
-      calls.push(api.calendar(weeks[i].toISOString(), to.toISOString()));
-    }
-    Promise.all(calls)
-      .then((rs) => {
+    fetchCalendar(weeks)
+      .then((c) => {
         if (cancelled) return;
-        setEntries(rs.flatMap((r) => r.entries));
-        setItems(Object.assign({}, ...rs.map((r) => r.items)));
+        setEntries(c.entries);
+        setItems(c.items);
+        writeCalendarCache(c);
       })
       .catch(console.error)
       .finally(() => {
