@@ -1553,6 +1553,12 @@ textarea:focus {
   /* a permanent margin for span brackets, so a day never shifts sideways
      depending on whether a multi-day event happens to cover it */
   padding-left: 12px;
+  /* The spine is a week; the list is a continuous run of days. Without a break
+     in the rhythm there is nothing to tell you where the spine's seven days
+     start, so the boundary reads only when today happens to be a Sunday. A
+     wider gap says it without adding a rule — the same logic that let the day
+     wash replace the day border. */
+  margin-bottom: 16px;
 }
 .ag-day {
   display: flex;
@@ -1674,8 +1680,12 @@ textarea:focus {
   border-top: none;
   border-top-left-radius: 0;
 }
+/* A trip that runs past Saturday carries on through the week gap rather than
+   breaking into two stubs either side of it: the week boundary is a fact about
+   weeks, not about the trip. -16px is the gap between one week's group and the
+   next one's, so the two segments meet. */
 .ag-bracket.cont-b {
-  bottom: 0;
+  bottom: -16px;
   border-bottom: none;
   border-bottom-left-radius: 0;
 }
