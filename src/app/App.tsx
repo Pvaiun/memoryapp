@@ -10,7 +10,7 @@ import SettingsSheet from './components/SettingsSheet';
 import MapView, { capturedForToday } from './views/MapView';
 import type { NowView } from './views/MapView';
 import BrowseView from './views/BrowseView';
-import CalendarView from './views/CalendarView';
+import CalendarView, { prefetchCalendar } from './views/CalendarView';
 import SearchView from './views/SearchView';
 import ItemSheet from './components/ItemSheet';
 
@@ -231,6 +231,11 @@ export default function App() {
 
   useEffect(() => {
     loadMap();
+    // Warm the calendar's cache behind the map, so opening that tab paints
+    // instead of loading. Deliberately after the map's own request is in
+    // flight: the map is the surface the app opens on, and this is eight
+    // requests that must not compete with it for first paint.
+    const warm = window.setTimeout(prefetchCalendar, 1500);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
@@ -242,6 +247,7 @@ export default function App() {
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      window.clearTimeout(warm);
       if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
     };
   }, [loadMap]);
