@@ -277,7 +277,12 @@ export default function CalendarView({
     if (loaded) placed.current = true;
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTop = offsetTopIn(row, el) - TOP_INSET;
+    // 'instant', not 'auto': .calv-scroll sets scroll-behavior: smooth, which
+    // governs plain scrollTop assignment as well, and 'auto' defers to exactly
+    // that. Either would animate the whole eight weeks from the top of the
+    // strip down to today — twice, since this runs again once entries land.
+    // Landing on today is not a journey; only the Today button is.
+    if (el && row) el.scrollTo({ top: offsetTopIn(row, el) - TOP_INSET, behavior: 'instant' });
   }, [loaded]);
 
   // Switching mode is a zoom, not a jump: hold the date that was at the top of
@@ -291,7 +296,7 @@ export default function CalendarView({
     const day = pendingDay.current;
     pendingDay.current = null;
     const target = (day && dayRefs.current.get(day)) || rowRefs.current[topIdx];
-    if (target) el.scrollTop = offsetTopIn(target, el) - TOP_INSET;
+    if (target) el.scrollTo({ top: offsetTopIn(target, el) - TOP_INSET, behavior: 'instant' });
   }, [mode, topIdx]);
 
   const goToday = useCallback(() => {
