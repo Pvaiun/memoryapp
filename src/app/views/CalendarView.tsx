@@ -138,6 +138,7 @@ export default function CalendarView({
   }, [today]);
 
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [items, setItems] = useState<Record<string, ItemView>>({});
   // Which rendering you last used is a per-device preference, like the Now view
   // — coming back to the calendar shouldn't reset how you read it.
@@ -180,7 +181,10 @@ export default function CalendarView({
         setEntries(rs.flatMap((r) => r.entries));
         setItems(Object.assign({}, ...rs.map((r) => r.items)));
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -261,11 +265,20 @@ export default function CalendarView({
 
   // Open with today's week as the very top line — it's a scrolling calendar,
   // so the past is one scroll up; the present shouldn't cost a row of screen.
+  //
+  // Placed twice, and the second time is the one that counts. At mount every
+  // day is an empty pill, so the eight weeks of past above today are at their
+  // shortest; when the entries land those weeks grow and carry today's week
+  // down the strip, leaving a scrollTop that now points days earlier. Once
+  // placed against real content the flag stops it fighting the user's scroll.
+  const placed = useRef(false);
   useLayoutEffect(() => {
+    if (placed.current) return;
+    if (loaded) placed.current = true;
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
     if (el && row) el.scrollTop = offsetTopIn(row, el) - TOP_INSET;
-  }, []);
+  }, [loaded]);
 
   // Switching mode is a zoom, not a jump: hold the date that was at the top of
   // the viewport. Both renderings are the same scroller over the same weeks, so
@@ -326,8 +339,15 @@ export default function CalendarView({
       const t = due ? null : agendaTime(new Date(e.date), item);
       // Recurring DOs never reach status='completed' — their checked state is
       // doneToday, released again when the sleep-cycle day rolls (5am).
-      const checkable = item.type === 'DO' && (item.status === 'active' || item.status === 'completed');
-      const done = isClosedStatus(item.status) || isDoneForNow(item);
+      // ...and doneness belongs to the occurrence it was ticked for. isDoneForNow
+      // answers "is the rhythm satisfied right now", which is true of today's
+      // occurrence only — painting next Sunday's as already done says a thing
+      // that hasn't happened yet is finished. Same for its checkbox: a future
+      // occurrence has nothing to tick, and ticking it would mark today's.
+      const rhythm = !!item.cadence;
+      const checkable =
+        item.type === 'DO' && (item.status === 'active' || item.status === 'completed') && (!rhythm || k === today);
+      const done = isClosedStatus(item.status) || (isDoneForNow(item) && (!rhythm || k === today));
       return (
         <div
           key={`${e.itemId}-${i}`}
