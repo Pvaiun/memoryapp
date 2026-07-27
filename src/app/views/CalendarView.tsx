@@ -144,10 +144,10 @@ export default function CalendarView({
   // — coming back to the calendar shouldn't reset how you read it.
   const [mode, setModeState] = useState<CalMode>(readMode);
   // The week sitting at the top of the viewport names the header; today's
-  // visibility gates the "Today" button; in the agenda the day at the top is
+  // visibility gates the "This week" button; in the agenda the day at the top is
   // marked on the spine. All three are read passively from scroll.
   const [topIdx, setTopIdx] = useState(WEEKS_BACK);
-  const [todayVisible, setTodayVisible] = useState(true);
+  const [weekVisible, setWeekVisible] = useState(true);
   const [topDay, setTopDay] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -226,7 +226,7 @@ export default function CalendarView({
   const spanItemIds = useMemo(() => new Set(spans.map((s) => s.itemId)), [spans]);
 
   // Passive scroll read: which week is topmost (names the header) and whether
-  // today's week is still on screen (gates the Today button). No snapping, no
+  // this week is still on screen (gates the This week button). No snapping, no
   // programmatic-scroll guards — the strip is one flat zoom that scrolls freely.
   const onScroll = useCallback(() => {
     if (ticking.current) return;
@@ -247,7 +247,7 @@ export default function CalendarView({
       const trow = rowRefs.current[WEEKS_BACK];
       if (trow) {
         const rt = offsetTopIn(trow, el);
-        setTodayVisible(rt < bottom - 24 && rt + trow.offsetHeight > top);
+        setWeekVisible(rt < bottom - 24 && rt + trow.offsetHeight > top);
       }
       // The spine also marks the day you're standing on. Only the top week's
       // seven days can hold that mark, so the extra scan stays seven elements.
@@ -277,7 +277,12 @@ export default function CalendarView({
     if (loaded) placed.current = true;
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
-    if (el && row) el.scrollTop = offsetTopIn(row, el) - TOP_INSET;
+    // 'instant', not 'auto': .calv-scroll sets scroll-behavior: smooth, which
+    // governs plain scrollTop assignment as well, and 'auto' defers to exactly
+    // that. Either would animate the whole eight weeks from the top of the
+    // strip down to today — twice, since this runs again once entries land.
+    // Landing on today is not a journey; only the Today button is.
+    if (el && row) el.scrollTo({ top: offsetTopIn(row, el) - TOP_INSET, behavior: 'instant' });
   }, [loaded]);
 
   // Switching mode is a zoom, not a jump: hold the date that was at the top of
@@ -291,10 +296,10 @@ export default function CalendarView({
     const day = pendingDay.current;
     pendingDay.current = null;
     const target = (day && dayRefs.current.get(day)) || rowRefs.current[topIdx];
-    if (target) el.scrollTop = offsetTopIn(target, el) - TOP_INSET;
+    if (target) el.scrollTo({ top: offsetTopIn(target, el) - TOP_INSET, behavior: 'instant' });
   }, [mode, topIdx]);
 
-  const goToday = useCallback(() => {
+  const goThisWeek = useCallback(() => {
     const el = scrollRef.current;
     const row = rowRefs.current[WEEKS_BACK];
     if (el && row) el.scrollTo({ top: offsetTopIn(row, el) - TOP_INSET, behavior: 'smooth' });
@@ -407,9 +412,9 @@ export default function CalendarView({
       <div className="calv-head">
         <h3>{mode === 'week' ? headWeek : headMonth.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
         <div className="calv-tools">
-          {!todayVisible && (
-            <button className="cal-today-btn" onClick={goToday}>
-              Today
+          {!weekVisible && (
+            <button className="cal-today-btn" onClick={goThisWeek}>
+              This week
             </button>
           )}
           {/* A tap, not a pinch: month and agenda are two renderings, not two
