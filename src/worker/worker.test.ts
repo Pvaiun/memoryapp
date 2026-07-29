@@ -4,8 +4,11 @@ import {
   aliasItems,
   brainItemLine,
   compactEventLines,
+  isBackgroundItem,
   isTodayRelevant,
   PROFILE_EVENT_TYPES,
+  ROTATION_MAX_PICKS,
+  rotationBackstopPicks,
   selectBrainSystem,
   shouldMorningRebuild,
   tierProminences,
@@ -285,6 +288,80 @@ describe('shouldMorningRebuild — the 5am cron gate (§9.1 precompute)', () => 
   it('a slow rebuild in flight blocks the next tick, but not forever', () => {
     expect(shouldMorningRebuild({ ...base, startedAt: '2026-07-22T09:00:00Z' })).toBe(false); // 2 min ago
     expect(shouldMorningRebuild({ ...base, startedAt: '2026-07-22T08:50:00Z' })).toBe(true); // 12 min — retry
+  });
+});
+
+describe('rotationBackstopPicks — background items are owed turns (§9.2 floor)', () => {
+  const now = new Date('2026-07-20T12:00:00Z');
+  const bg = (over: Partial<ItemView> & { id: string }): ItemView =>
+    ({
+      type: 'DO',
+      title: 'Watch Fight Club',
+      rawTexts: [{ ts: '', text: '' }],
+      status: 'active',
+      deadline: null,
+      cadence: null,
+      eventAt: null,
+      eventEnd: null,
+      createdAt: '2026-07-10T12:00:00Z',
+      lastSurfacedAt: null,
+      effectivePriority: 0.5,
+      ...over,
+    }) as unknown as ItemView;
+  const none = new Set<string>();
+
+  it('a never-shown dateless item past the Captured-Today grace is owed a turn', () => {
+    const picks = rotationBackstopPicks([bg({ id: 'a', createdAt: '2026-07-16T12:00:00Z' })], none, now, 0);
+    expect(picks.map((i) => i.id)).toEqual(['a']);
+  });
+
+  it('a fresh capture is not — Captured Today already showed it', () => {
+    const items = [bg({ id: 'y', createdAt: '2026-07-19T12:00:00Z' }), bg({ id: 'g', createdAt: '2026-07-18T12:00:00Z' })];
+    expect(rotationBackstopPicks(items, none, now, 0)).toEqual([]);
+  });
+
+  it('a recent turn releases an item for a week; a stale one re-arms it', () => {
+    const items = [
+      bg({ id: 'recent', lastSurfacedAt: '2026-07-17T12:00:00Z' }),
+      bg({ id: 'stale', lastSurfacedAt: '2026-07-12T12:00:00Z' }),
+      bg({ id: 'edge', lastSurfacedAt: '2026-07-13T12:00:00Z' }),
+    ];
+    expect(rotationBackstopPicks(items, none, now, 0).map((i) => i.id)).toEqual(['stale', 'edge']);
+  });
+
+  it('items the Brain already surfaced this build are not double-shown', () => {
+    const items = [bg({ id: 'a' }), bg({ id: 'b' })];
+    expect(rotationBackstopPicks(items, new Set(['a', 'b']), now, 0)).toEqual([]);
+  });
+
+  it('dated, event, and recurring items are never background — their dates pull them up', () => {
+    expect(isBackgroundItem(bg({ id: 'a', deadline: '2026-07-25T12:00:00Z' }))).toBe(false);
+    expect(isBackgroundItem(bg({ id: 'b', eventAt: '2026-07-25T12:00:00Z' }))).toBe(false);
+    expect(isBackgroundItem(bg({ id: 'c', cadence: { unit: 'day', interval: 1 } } as never))).toBe(false);
+    expect(isBackgroundItem(bg({ id: 'd' }))).toBe(true);
+  });
+
+  it('reference KNOWs stay out; keep-warm KNOWs (priority or recapture) rotate', () => {
+    expect(isBackgroundItem(bg({ id: 'ref', type: 'KNOW', effectivePriority: 0.25 } as never))).toBe(false);
+    expect(isBackgroundItem(bg({ id: 'warm', type: 'KNOW', effectivePriority: 0.5 } as never))).toBe(true);
+    expect(
+      isBackgroundItem(
+        bg({ id: 'recap', type: 'KNOW', effectivePriority: 0.25, rawTexts: [{ ts: '', text: '' }, { ts: '', text: '' }] } as never),
+      ),
+    ).toBe(true);
+  });
+
+  it('picks are capped and longest-waiting-first, priority breaking ties', () => {
+    const items = [
+      bg({ id: 'newest', createdAt: '2026-07-15T12:00:00Z' }),
+      bg({ id: 'lowPrio', createdAt: '2026-07-01T12:00:00Z', effectivePriority: 0.25 }),
+      bg({ id: 'highPrio', createdAt: '2026-07-01T12:00:00Z', effectivePriority: 1 }),
+      bg({ id: 'oldest', createdAt: '2026-06-20T12:00:00Z' }),
+      bg({ id: 'seenLongAgo', createdAt: '2026-06-01T12:00:00Z', lastSurfacedAt: '2026-07-05T12:00:00Z' }),
+    ];
+    const picks = rotationBackstopPicks(items, none, now, 0);
+    expect(picks).toHaveLength(ROTATION_MAX_PICKS);
+    expect(picks.map((i) => i.id)).toEqual(['oldest', 'highPrio', 'lowPrio']);
   });
 });
 

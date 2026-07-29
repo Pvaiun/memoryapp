@@ -294,6 +294,26 @@ export async function rebuildMap(
     builtBubbles.push({ name: 'Also today', prominence: 0.8, items: missed.length });
   }
 
+  // Rehearsal-rotation floor (§9.2): background items owed a turn that the
+  // Brain didn't give one get a quiet card at the bottom of the map. Same
+  // pattern as "Also today" — the model curates; the code keeps the promise.
+  const turns = rotationBackstopPicks(items, surfacedIds, now, tz);
+  if (turns.length) {
+    const bubbleId = newId();
+    const sentence = composeSentence(turns, now, tz, 'Still around: ').slice(0, 600);
+    await db
+      .prepare(
+        'INSERT INTO bubbles (id, day, name, kind, prominence, reason, sentence, first_step, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      )
+      .bind(bubbleId, day, 'Been a while', 'situation', 0.18, stripSentence(sentence).slice(0, 300), sentence, null, nowIso())
+      .run();
+    for (const item of turns) {
+      await db.prepare('INSERT OR IGNORE INTO bubble_items (bubble_id, item_id) VALUES (?,?)').bind(bubbleId, item.id).run();
+      surfacedIds.add(item.id);
+    }
+    builtBubbles.push({ name: 'Been a while', prominence: 0.18, items: turns.length });
+  }
+
   // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
   const ts = nowIso();
   for (const id of surfacedIds) {
@@ -525,6 +545,49 @@ export function isTodayRelevant(
   // floor silently excludes it — the exact hole that dropped a daily task.
   if (cadenceOccurrenceToday(i, now, tzOffsetMinutes)) return true;
   return false;
+}
+
+// Rehearsal-rotation floor (§9.2): like the same-day guarantee above, the
+// promise that background items take turns lives in code, not in the model's
+// compliance — a week of maps that never once showed a dateless item is the
+// observed regression this answers. A background item is dateless: no
+// deadline, no event, no rhythm — nothing else on the map ever pulls it up.
+// Reference KNOWs (low priority, never recaptured) stay out; they exist for
+// search, not rehearsal.
+export const ROTATION_NEW_GRACE_DAYS = 2; // Captured Today already showed it this recently
+export const ROTATION_STALE_DAYS = 7; // a turn at least this often
+export const ROTATION_MAX_PICKS = 3; // quiet slice — under-rotate rather than over-rotate
+
+export function isBackgroundItem(i: ItemView): boolean {
+  if (i.status !== 'active' || i.deadline || i.eventAt || i.cadence) return false;
+  return i.type !== 'KNOW' || i.effectivePriority >= 0.35 || i.rawTexts.length > 1;
+}
+
+// The stalest few background items the Brain didn't surface this build, owed
+// a turn: never shown and past the Captured-Today grace, or last shown over a
+// week ago. Picks get a fresh last_surfaced_at downstream, which keeps them
+// out of this pool for another week — the backstop self-throttles.
+export function rotationBackstopPicks(
+  items: ItemView[],
+  surfacedIds: Set<string>,
+  now: Date,
+  tzOffsetMinutes: number,
+): ItemView[] {
+  const owed = items.filter((i) => {
+    if (surfacedIds.has(i.id) || !isBackgroundItem(i)) return false;
+    const since = i.lastSurfacedAt ?? i.createdAt;
+    const days = sleepDayDiff(now.getTime(), new Date(since).getTime(), tzOffsetMinutes);
+    return i.lastSurfacedAt ? days >= ROTATION_STALE_DAYS : days > ROTATION_NEW_GRACE_DAYS;
+  });
+  return owed
+    .sort((a, b) => {
+      // Longest-waiting first — never-shown items wait since capture.
+      const aSince = a.lastSurfacedAt ?? a.createdAt;
+      const bSince = b.lastSurfacedAt ?? b.createdAt;
+      if (aSince !== bSince) return aSince.localeCompare(bSince);
+      return b.effectivePriority - a.effectivePriority;
+    })
+    .slice(0, ROTATION_MAX_PICKS);
 }
 
 // Where a recurring rhythm stands relative to the user-local today: its turn
@@ -861,9 +924,9 @@ ORGANIZING PRINCIPLE: a bubble is a reason to act as one unit — build from wha
 
 MEMBERSHIP: an item joins a bubble through one of two bonds. The EPISODE bond (situations): the item is part of the same real-world story — the event itself, its sub-events, the prep it demands, the facts needed while it's happening. Test: if the situation were cancelled, this item would vanish or stop mattering. The DOING bond (packages): the item would be completed in the same burst as the others — one sitting, one tool, one trip. Shared topic, shared people, or a shared date are none of these: they're resemblance, not connection. The tell that a member doesn't belong: the sentence needs a link the items don't themselves establish to make it fit. Items may appear in more than one bubble only when genuinely central to both; prefer one home.
 
-MAP SHAPE: a good day is usually 4-7 cards; ten mostly-single-item cards is a list wearing bubbles, and the map's value is gone. Bundling and dropping both get you there, and both are judgment calls. Bundle when the DOING bond genuinely holds — never fabricate a package to hit a count; a forced bundle is worse than a longer list. Drop freely: quiet undated items don't need to appear every day (seen= shows what's had recent airtime — let them take turns across days). Break-it-down invitations each ask the user for real activation energy, so weigh how many one day can carry. The map is the day's shape, not the inventory; browse holds everything.
+MAP SHAPE: a good day is usually 4-7 cards; ten mostly-single-item cards is a list wearing bubbles, and the map's value is gone. Bundling and dropping both get you there, and both are judgment calls. Bundle when the DOING bond genuinely holds — never fabricate a package to hit a count; a forced bundle is worse than a longer list. Drop freely: quiet undated items don't need to appear every day (seen= shows what's had recent airtime — let them take turns across days), but turns must actually come round: most days one or two quiet/dot slots go to the least-recently-shown background items (dateless DOs, someday wishes, keep-warm KNOWs). The map is a memory aid, not only the week's schedule; an item that stays new for weeks has been ignored, not curated. Break-it-down invitations each ask the user for real activation energy, so weigh how many one day can carry. The map is the day's shape, not the inventory; browse holds everything.
 
-TIER is the scarce resource, not inclusion. Nothing hard-caps the count — a truly important thing gets its slot even when small — but the target is a composed day (see MAP SHAPE), not coverage. Four tiers, judged fresh each day as relative salience TODAY: "loud" — what the user should meet first (most days have one or two, even when nothing is objectively on fire); "mid" — matters today, met after the loud things; "quiet" — worth seeing, takes its turn; "dot" — barely-there, a glance. Order the bubbles array loudest-first; within a tier, your order is the ranking. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A package's tier comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the tier of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
+TIER is the scarce resource, not inclusion. Nothing hard-caps the count — a truly important thing gets its slot even when small — but the target is a composed day (see MAP SHAPE), not coverage. Four tiers, judged fresh each day as relative salience TODAY: "loud" — what the user should meet first (most days have one or two, even when nothing is objectively on fire); "mid" — matters today, met after the loud things; "quiet" — worth seeing, takes its turn; "dot" — barely-there, a glance. Order the bubbles array loudest-first; within a tier, your order is the ranking. Blend four factors, qualitatively: urgency (deadline proximity — but dampened for optional items), importance (the given priority value), effort/lead-time (big tasks need runway: "repaint the fence" outranks "feed the goldfish" at equal due date — and the converse: a quick task dated days out needs no runway, so let it wait for its day rather than spend today's slot on it), and forgettability (easily-slipped things surface harder). Don't let a flat due-date sort bury a big important thing. A package's tier comes from the pile, not the pieces: several small things aging together can outrank any one of them. Deadline proximity raises the tier of whatever bubble an item is in; it never decides membership — two things due the same day are not thereby related (though they may still share a package if they'd be done in the same sitting).
 
 ${ITEM_FORMAT}
 
@@ -908,7 +971,9 @@ THE GOAL: put items in one bubble when they genuinely go together — they'd be 
 
 ${ITEM_FORMAT}
 
-TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, slipping=, recaptured=) matters MORE for it, not less — old is how forgotten looks. And big-effort items need lead time: give them attention well before their moment, not once it's urgent. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
+TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. Three corrections to the obvious reading of the signals: an item that has sat unacted (age=, slipping=, recaptured=) matters MORE for it, not less — old is how forgotten looks. Big-effort items need lead time: give them attention well before their moment, not once it's urgent. And the reverse: a quick item dated a few days out needs NO runway — surfacing it early spends a slot on noise, so let it wait for its day (or the day before) unless something else makes it matter now. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
+
+TURNS: the map is a memory aid, not only the week's schedule. Curating quiet undated items means giving them actual turns, not dropping them every day: most days, hand one or two of the quiet/dot slots to background items — dateless DOs, someday wishes, keep-warm KNOWs — favouring the least-recently-shown (seen=, new). An item that stays new for weeks was never curated, only ignored.
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
