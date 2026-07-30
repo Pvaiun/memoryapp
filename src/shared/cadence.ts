@@ -218,9 +218,55 @@ export function momentPassed(
   return false;
 }
 
+// A recurring event's eventAt is the anchor of its grid, not a standing date:
+// once an occurrence's day has gone, everything that reads eventAt raw — the
+// Brain's happens= token, the map's happening-now check, every date badge —
+// must see the NEXT occurrence, or a bi-weekly appointment reads "overdue"
+// forever off its own first date. Rolls the anchor to the next slot at or
+// after `from`, shifting a multi-day end by the same delta so the span's
+// shape survives. The grid itself is unchanged — the new anchor is on it.
+export function rollEventAnchor(
+  item: { cadence: Cadence; eventAt: string; eventEnd: string | null },
+  from: Date,
+): { eventAt: string; eventEnd: string | null } {
+  const next = nextOccurrence(item.cadence, item.eventAt, from);
+  const delta = next.getTime() - new Date(item.eventAt).getTime();
+  return {
+    eventAt: next.toISOString(),
+    eventEnd: item.eventEnd ? new Date(new Date(item.eventEnd).getTime() + delta).toISOString() : null,
+  };
+}
+
+// A RECURRING event's occurrence today, once its moment (plus the same grace
+// hour) has gone, is as spent as a one-shot: the 2pm appointment at 5pm no
+// longer wants anything, and its card settles the same way — the occasion
+// resolves neutrally, the rhythm re-arms for the next slot. Day-precision
+// occurrences stay live all their day (they lapse at the 5am rollover, like
+// day-precision one-shots); occurrences on other days are not today's to
+// spend. Derived only — no status is written; the item stays active.
+export function occurrencePassedForNow(
+  item: {
+    cadence: Cadence | null;
+    eventAt: string | null;
+    eventEnd: string | null;
+    datePrecision?: DatePrecision;
+  },
+  now: number,
+  tzOffsetMinutes?: number,
+): boolean {
+  if (!item.cadence || !item.eventAt) return false;
+  if (item.datePrecision === 'day') return false;
+  const tz = tzOffsetMinutes ?? -new Date(now).getTimezoneOffset();
+  const dayStart = new Date(sleepDayOf(now, tz) * DAY_MS + (EARLY_MORNING_CUTOFF_MINUTES - tz) * 60_000);
+  const occ = nextOccurrence(item.cadence, item.eventAt, dayStart);
+  if (sleepDayOf(occ.getTime(), tz) !== sleepDayOf(now, tz)) return false;
+  const span = item.eventEnd ? new Date(item.eventEnd).getTime() - new Date(item.eventAt).getTime() : 0;
+  return occ.getTime() + Math.max(0, span) + EVENT_PASSED_GRACE_MS < now;
+}
+
 // Resolved = nothing left to want from the item right now: checked off for
 // the occasion, closed out of its lifecycle (dismissed / passed / missed),
-// or an event that already happened.
+// an event that already happened, or a recurring occurrence spent today.
 export function isResolvedForNow(
   item: {
     status: string;
@@ -233,7 +279,12 @@ export function isResolvedForNow(
   now: number,
   tzOffsetMinutes?: number,
 ): boolean {
-  return isDoneForNow(item) || isClosedStatus(item.status) || eventPassed(item, now, tzOffsetMinutes);
+  return (
+    isDoneForNow(item) ||
+    isClosedStatus(item.status) ||
+    eventPassed(item, now, tzOffsetMinutes) ||
+    occurrencePassedForNow(item, now, tzOffsetMinutes)
+  );
 }
 
 // Captured-today relevance (Now screen, §9.1): does this item carry TODAY's
