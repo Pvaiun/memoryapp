@@ -95,7 +95,11 @@ export function resolveSentence(
 export type CardConstruction = 'woven' | 'batch' | 'nudge';
 
 export function deriveConstruction(items: ItemView[], firstStep: string | null): CardConstruction {
-  if (items.length >= 4) {
+  // Three same-type members already read as a list — the observed failure was
+  // a three-DO routine card rendered as one run-on woven clause chain. At
+  // three the 0.75 dominance bar means all three must share a type; mixed
+  // threes stay woven.
+  if (items.length >= 3) {
     const counts = new Map<string, number>();
     for (const it of items) counts.set(it.type, (counts.get(it.type) ?? 0) + 1);
     const dominant = Math.max(...counts.values());
