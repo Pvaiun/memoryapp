@@ -1,6 +1,6 @@
 import type { AffectTag, Cadence, DatePrecision, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
-import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, nextOccurrence, occurrencesBetween } from '../shared/cadence';
+import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, nextOccurrence, occurrencesBetween, rollEventAnchor } from '../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES, resolveDatePhrase, sleepDayOf } from '../shared/dates';
 import type { Env } from './env';
 import { embed, FALLBACK_DIMS } from './embeddings';
@@ -255,6 +255,36 @@ function sleepDayStart(now: Date, tzOffsetMinutes: number, offsetDays = 0): Date
 
 function nextSleepDayStart(now: Date, tzOffsetMinutes: number): Date {
   return sleepDayStart(now, tzOffsetMinutes, 1);
+}
+
+// The recurring-HAPPEN counterpart of rollRecurringDeadlines: eventAt is the
+// grid's anchor, but everything that displays or reasons about the event —
+// the Brain's happens= token, happening-now checks, date badges — reads it
+// raw. Once an occurrence's day has ended, roll the anchor to the next slot
+// so a bi-weekly appointment stops reading "overdue"/"now" off its own first
+// date. On-grid, so calendar/push occurrence walks are unchanged. Recurring
+// events still never pass or miss — occurrences lapse neutrally (§ lifecycle)
+// — this only keeps the anchor pointing at the occurrence that's actually
+// next. 'event_rolled' is clock maintenance and never reaches the profile.
+export async function rollRecurringEvents(db: D1Database, now: Date, tzOffsetMinutes: number): Promise<void> {
+  const items = await listItems(db, { statuses: ['active'], types: ['HAPPEN'] });
+  const today = sleepDayOf(now.getTime(), tzOffsetMinutes);
+  const from = sleepDayStart(now, tzOffsetMinutes);
+  for (const item of items) {
+    if (!item.cadence || !item.eventAt) continue;
+    const last = new Date(item.eventEnd ?? item.eventAt).getTime();
+    if (sleepDayOf(last, tzOffsetMinutes) >= today) continue;
+    const rolled = rollEventAnchor({ cadence: item.cadence, eventAt: item.eventAt, eventEnd: item.eventEnd }, from);
+    await updateItemFields(db, item.id, { event_at: rolled.eventAt, event_end: rolled.eventEnd });
+    await logEvent(db, 'system', 'event_rolled', {
+      itemId: item.id,
+      payload: {
+        before: { eventAt: item.eventAt, eventEnd: item.eventEnd },
+        after: { eventAt: rolled.eventAt, eventEnd: rolled.eventEnd },
+        title: item.title,
+      },
+    });
+  }
 }
 
 // A cadenced DO's deadline is the rhythm's next due. When an occurrence's day

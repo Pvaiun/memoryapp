@@ -379,6 +379,26 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).not.toContain('age=');
   });
 
+  it('a recurring event with a rolled anchor reads forward, never overdue', () => {
+    // happens= reads eventAt raw, so the daily anchor roll (rollRecurringEvents)
+    // is what keeps a bi-weekly appointment from emitting "happens=Nd-overdue"
+    // off its own spent first occurrence. With the anchor pointing at the next
+    // slot, the token looks ahead.
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        title: 'Physio',
+        eventAt: '2026-07-30T14:00:00.000Z',
+        cadence: { freq: 'weekly', interval: 2, byWeekday: [4] },
+        flavour: 'Event',
+      } as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=+10d');
+    expect(line).not.toContain('overdue');
+  });
+
   it('the Pragmata case carries its deviations compactly', () => {
     const line = brainItemLine(
       {

@@ -218,6 +218,25 @@ export function momentPassed(
   return false;
 }
 
+// A recurring event's eventAt is the anchor of its grid, not a standing date:
+// once an occurrence's day has gone, everything that reads eventAt raw — the
+// Brain's happens= token, the map's happening-now check, every date badge —
+// must see the NEXT occurrence, or a bi-weekly appointment reads "overdue"
+// forever off its own first date. Rolls the anchor to the next slot at or
+// after `from`, shifting a multi-day end by the same delta so the span's
+// shape survives. The grid itself is unchanged — the new anchor is on it.
+export function rollEventAnchor(
+  item: { cadence: Cadence; eventAt: string; eventEnd: string | null },
+  from: Date,
+): { eventAt: string; eventEnd: string | null } {
+  const next = nextOccurrence(item.cadence, item.eventAt, from);
+  const delta = next.getTime() - new Date(item.eventAt).getTime();
+  return {
+    eventAt: next.toISOString(),
+    eventEnd: item.eventEnd ? new Date(new Date(item.eventEnd).getTime() + delta).toISOString() : null,
+  };
+}
+
 // Resolved = nothing left to want from the item right now: checked off for
 // the occasion, closed out of its lifecycle (dismissed / passed / missed),
 // or an event that already happened.
