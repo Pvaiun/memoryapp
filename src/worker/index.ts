@@ -67,29 +67,33 @@ app.get('/api/map', async (c) => {
 // force=true is the user-initiated "Organize now" re-run (bulk-import days).
 // noHistory=true is the workshop variant: the Brain composes without
 // yesterday's groupings (librarian and profile still see full history).
-// promptVariant pins a specific Brain prompt for this run (workshop buttons);
-// omitted, the stored preference decides (the morning-prompt toggle).
+// promptVariant pins a specific Brain prompt/pipeline for this run (workshop
+// buttons); omitted, the stored preference decides (the morning-prompt toggle).
 app.post('/api/map/rebuild', async (c) => {
   const { day, tzOffsetMinutes, force, noHistory, promptVariant } = await c.req.json<{
     day: string;
     tzOffsetMinutes?: number;
     force?: boolean;
     noHistory?: boolean;
-    promptVariant?: 'full' | 'minimal';
+    promptVariant?: 'full' | 'minimal' | 'staged';
   }>();
   if (!day) return c.json({ error: 'day required' }, 400);
   if (typeof tzOffsetMinutes === 'number') {
     await setState(c.env.DB, 'tz_offset_minutes', String(tzOffsetMinutes));
   }
-  const variant = promptVariant === 'full' || promptVariant === 'minimal' ? promptVariant : undefined;
+  const variant =
+    promptVariant === 'full' || promptVariant === 'minimal' || promptVariant === 'staged' ? promptVariant : undefined;
   return c.json(await rebuildMap(c.env, day, !!force, !!noHistory, variant));
 });
 
-// Which Brain prompt the morning rebuild uses — the workshop shootout's
-// longitudinal arm. Stored server-side so first-open-of-day picks it up.
+// Which Brain prompt/pipeline the morning rebuild uses — the workshop
+// shootout's longitudinal arm. Stored server-side so first-open-of-day picks
+// it up. 'staged' is the split-mandate pipeline (placement → curation →
+// render); 'minimal'/'full' are the legacy single-call prompts.
 app.post('/api/settings/brain-prompt', async (c) => {
   const { variant } = await c.req.json<{ variant: string }>();
-  if (variant !== 'full' && variant !== 'minimal') return c.json({ error: 'variant must be "full" or "minimal"' }, 400);
+  if (variant !== 'full' && variant !== 'minimal' && variant !== 'staged')
+    return c.json({ error: 'variant must be "full", "minimal", or "staged"' }, 400);
   await setState(c.env.DB, 'brain_prompt_variant', variant);
   return c.json({ ok: true, variant });
 });
@@ -125,7 +129,8 @@ app.post('/api/settings/brain-override', async (c) => {
 // what the override editor prefills and what Reset restores.
 app.get('/api/settings/brain-prompt-text', async (c) => {
   const db = c.env.DB;
-  const variant = (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal';
+  const stored = await getState(db, 'brain_prompt_variant');
+  const variant = stored === 'full' ? 'full' : stored === 'staged' ? 'staged' : 'minimal';
   const addendum = (await getState(db, 'brain_prompt_addendum'))?.trim() || null;
   return c.json({ variant, text: composeBrainSystem(variant, addendum) });
 });
@@ -279,6 +284,7 @@ app.get('/api/status', async (c) => {
     db.prepare('SELECT COUNT(*) as n FROM events').first<{ n: number }>(),
     db.prepare('SELECT COUNT(*) as n FROM push_subscriptions').first<{ n: number }>(),
   ]);
+  const storedVariant = await getState(db, 'brain_prompt_variant');
   return c.json({
     ok: true,
     items: items?.n ?? 0,
@@ -293,7 +299,7 @@ app.get('/api/status', async (c) => {
     brainModel: c.env.BRAIN_MODEL,
     mapDay: await getState(db, 'map_day'),
     mapBuiltAt: await getState(db, 'map_built_at'),
-    brainPrompt: (await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal',
+    brainPrompt: storedVariant === 'full' ? 'full' : storedVariant === 'staged' ? 'staged' : 'minimal',
     brainAddendum: (await getState(db, 'brain_prompt_addendum')) ?? '',
     brainOverrideEnabled: (await getState(db, 'brain_prompt_override_enabled')) === '1',
     brainOverride: (await getState(db, 'brain_prompt_override')) ?? '',

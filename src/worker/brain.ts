@@ -1,25 +1,20 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import {
-  cadenceGridGapMs,
-  completedWithinSleepDay,
-  describeAtTime,
-  describeCadence,
-  neglectedByDays,
-  nextAtTimeOccurrence,
-  nextOccurrence,
-} from '../shared/cadence';
+import { describeAtTime, describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
+import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey } from '../shared/dates';
 import {
-  EARLY_MORNING_CUTOFF_MINUTES,
-  refineWithSourceTime,
-  resolveDatePhrase,
-  sleepDayDiff,
-  sleepDayKey,
-  sleepDayOf,
-} from '../shared/dates';
+  cadenceStanding,
+  compareTier,
+  isBrainTier,
+  isTodayRelevant,
+  maxTier,
+  placeItems,
+  tierProminences,
+} from './placement';
+import type { BrainTier } from './placement';
 import { llmParse } from './capture';
 import { embed } from './embeddings';
 import { sweepPassedEvents } from './items';
@@ -197,23 +192,49 @@ export async function rebuildMap(
     .all<{ name: string }>();
   const nameVocabulary = nameRows.results.map((r) => r.name);
 
-  const variant = promptVariant ?? ((await getState(db, 'brain_prompt_variant')) === 'full' ? 'full' : 'minimal');
+  const stored = await getState(db, 'brain_prompt_variant');
+  const variant: BrainPromptVariant =
+    promptVariant ?? (stored === 'full' ? 'full' : stored === 'staged' ? 'staged' : 'minimal');
   const prompt = selectBrainSystem(
     variant,
     await getState(db, 'brain_prompt_addendum'),
     (await getState(db, 'brain_prompt_override_enabled')) === '1',
     await getState(db, 'brain_prompt_override'),
   );
+  // The workshop override outranks the pipeline choice — while it's checked,
+  // the saved text IS the Brain, exactly as the settings sheet promises. The
+  // staged pipeline runs only when no override is in force.
+  const useStaged = prompt.prompt === 'staged';
 
   const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
+  // The staged pipeline records its own richer payload (skeleton → plan →
+  // prose); the legacy single call records its one input. Whichever ran is
+  // what the snapshot must show.
+  let snapshotPayload: Record<string, unknown> = input.payload;
   let proposed: ProposedBubble[];
   let mode: 'llm' | 'fallback' = 'fallback';
   if (llmAvailable(env) && items.length) {
     try {
-      proposed = await llmBuildBubbles(env, input, prompt.system);
+      if (useStaged) {
+        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileText, now, tz, prompt.addendum);
+        proposed = staged.proposed;
+        snapshotPayload = staged.payload;
+      } else {
+        proposed = await llmBuildBubbles(env, input, prompt.system);
+      }
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
+      // A failed staged run must not leave the legacy-shaped input in the
+      // snapshot — that would claim the single-call Brain saw a payload it
+      // never received. Record what actually happened.
+      if (useStaged) {
+        snapshotPayload = {
+          pipeline: 'staged',
+          error: err instanceof Error ? err.message : String(err),
+          note: 'staged pipeline failed; deterministic fallback map built',
+        };
+      }
       proposed = fallbackBubbles(items, now, tz);
     }
   } else {
@@ -230,7 +251,13 @@ export async function rebuildMap(
     for (const id of b.itemIds) {
       const it = itemById.get(id);
       if (!it || !isTodayRelevant(it, now, tz)) continue;
-      const insistent = it.optionality !== 'nice' || (!!it.deadline && (it.deadlineHardness ?? 'hard') === 'hard');
+      // A hard deadline makes an item insistent only when that deadline is
+      // itself today's business (due or overdue). An optional rhythm whose
+      // unrelated hard date sits next week must keep the quiet floor
+      // placement gave it — re-promoting it here would re-import the
+      // deadline-dominance the staged pipeline exists to end.
+      const dueNow = !!it.deadline && sleepDayDiff(new Date(it.deadline).getTime(), now.getTime(), tz) <= 0;
+      const insistent = it.optionality !== 'nice' || (dueNow && (it.deadlineHardness ?? 'hard') === 'hard');
       floor = Math.max(floor, insistent ? 0.5 : 0.28);
     }
     if (floor > b.prominence) b.prominence = floor;
@@ -320,7 +347,7 @@ export async function rebuildMap(
       prompt: prompt.prompt,
       addendum: prompt.addendum,
       override: prompt.override,
-      payload: input.payload,
+      payload: snapshotPayload,
     }),
   );
   // One consolidated event per rebuild (the bubbles table holds the details).
@@ -485,125 +512,12 @@ export async function addFirstStep(
   return { map: await getMap(env, bubble.day), capture };
 }
 
-// Reliable floor (§7 reliable-vs-advisory split): an item due today, overdue,
-// or happening today must reach the map no matter what the Brain decides.
-// Pure so it's unit-testable; tzOffsetMinutes defines the user's "today" —
-// the sleep-cycle day (5am → 5am, the app's one day system), so a deadline
-// at 1am still counts as the evening before it.
-export function isTodayRelevant(
-  i: {
-    status: string;
-    deadline: string | null;
-    eventAt: string | null;
-    eventEnd: string | null;
-    cadence?: Cadence | null;
-    createdAt?: string;
-    lastCompletedAt?: string | null;
-  },
-  now: Date,
-  tzOffsetMinutes: number,
-): boolean {
-  if (i.status !== 'active') return false;
-  const DAY = 86_400_000;
-  const dayStartUtc =
-    sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
-  const dayEndUtc = dayStartUtc + DAY;
-  // Compare by sleep DAY, not instant. A day-precision deadline due today is
-  // anchored at noon here, but nothing about this test may depend on where in
-  // the day the anchor sits — a strict instant comparison against dayEndUtc
-  // silently drops anything anchored at the boundary itself, and dropping a
-  // same-day item is this app's cardinal failure.
-  if (i.deadline && sleepDayOf(new Date(i.deadline).getTime(), tzOffsetMinutes) <= sleepDayOf(now.getTime(), tzOffsetMinutes))
-    return true; // due today or overdue
-  if (i.eventAt) {
-    const at = new Date(i.eventAt).getTime();
-    const end = i.eventEnd ? new Date(i.eventEnd).getTime() : at;
-    if (at < dayEndUtc && end >= dayStartUtc) return true; // spans some part of today
-  }
-  // Recurring rhythms: a cadence whose next occurrence lands today counts.
-  // Without this, a "daily at 7pm" DO has neither deadline nor eventAt and the
-  // floor silently excludes it — the exact hole that dropped a daily task.
-  if (cadenceOccurrenceToday(i, now, tzOffsetMinutes)) return true;
-  return false;
-}
+// The reliable floor, cadence standing, tier machinery, and the staged
+// pipeline's placement rules all live in placement.ts (pure, unit-tested);
+// re-exported here so existing importers keep one entry point.
+export { cadenceOccurrenceToday, cadenceStanding, isTodayRelevant, placeItems, tierProminences } from './placement';
+export type { BrainTier, CadenceStanding, Placement, PlacementResult } from './placement';
 
-// Where a recurring rhythm stands relative to the user-local today: its turn
-// falls today, its last turn passed unmet, or it next comes round in N days.
-// One axis, one derivation — the same-day floor, the happens=today token and
-// the next= token all read it, so the guarantee and the Brain's input can
-// never disagree.
-export type CadenceStanding =
-  | { kind: 'today'; at: Date }
-  | { kind: 'overdue'; at: Date; days: number }
-  | { kind: 'upcoming'; at: Date; days: number };
-
-type CadenceItem = {
-  cadence?: Cadence | null;
-  eventAt: string | null;
-  createdAt?: string;
-  lastCompletedAt?: string | null;
-};
-
-export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: number): CadenceStanding | null {
-  if (!i.cadence) return null;
-  const DAY = 86_400_000;
-  const dayStartUtc =
-    sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
-  const dayEndUtc = dayStartUtc + DAY;
-  const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
-  const occurrenceFrom = (from: Date): Date =>
-    i.cadence!.atTime
-      ? nextAtTimeOccurrence(i.cadence!, anchor, from, tzOffsetMinutes)
-      : nextOccurrence(i.cadence!, anchor, from);
-
-  // Same predicate that derives ItemView.doneToday — the checkbox and the
-  // Brain's release must agree on what "done for today" means (sleep-cycle
-  // day: a 9:30pm completion stays done through the small hours).
-  const releasedToday = completedWithinSleepDay(i.lastCompletedAt ?? null, now, tzOffsetMinutes);
-  if (!releasedToday) {
-    const occ = occurrenceFrom(new Date(dayStartUtc));
-    if (occ.getTime() < dayEndUtc) return { kind: 'today', at: occ };
-  }
-
-  // Nothing is being asked today, which reads two ways the item line used to
-  // render identically: the rhythm is kept and merely upcoming, or its last
-  // turn went by unmet. Walk the grid backwards one worst-case gap to tell
-  // them apart; a turn that predates the item was never asked, so the anchor
-  // floors the window.
-  const anchorMs = new Date(anchor).getTime();
-  const windowStart = Math.max(dayStartUtc - cadenceGridGapMs(i.cadence), anchorMs);
-  let previous: Date | null = null;
-  let cursor = new Date(windowStart);
-  for (let n = 0; n < 40 && cursor.getTime() < dayStartUtc; n++) {
-    const occ = occurrenceFrom(cursor);
-    if (occ.getTime() >= dayStartUtc) break;
-    previous = occ;
-    cursor = new Date(occ.getTime() + 60_000);
-  }
-  // A turn counts as met by a completion on its sleep day or any later one —
-  // never by instant, because last_completed_at is the moment of the TAP, not
-  // the occurrence. Comparing instants made "take out the recycling", ticked
-  // at 8pm on its own Tuesday, read as unmet against a 9:30pm turn and stay
-  // that way every day after. Same rule as doneToday, one turn further back.
-  const completedDay = i.lastCompletedAt
-    ? sleepDayOf(new Date(i.lastCompletedAt).getTime(), tzOffsetMinutes)
-    : null;
-  if (previous && (completedDay === null || completedDay < sleepDayOf(previous.getTime(), tzOffsetMinutes))) {
-    return { kind: 'overdue', at: previous, days: -sleepDayDiff(previous.getTime(), now.getTime(), tzOffsetMinutes) };
-  }
-  // Today's turn already done releases the rhythm until tomorrow, so the
-  // search for the next one starts past the end of today.
-  const next = occurrenceFrom(new Date(releasedToday ? dayEndUtc : dayStartUtc));
-  return { kind: 'upcoming', at: next, days: sleepDayDiff(next.getTime(), now.getTime(), tzOffsetMinutes) };
-}
-
-// The occurrence of a recurring rhythm that falls within the user-local today,
-// or null. An occurrence already completed within the local today doesn't
-// count — the rhythm releases until tomorrow.
-export function cadenceOccurrenceToday(i: CadenceItem, now: Date, tzOffsetMinutes: number): Date | null {
-  const standing = cadenceStanding(i, now, tzOffsetMinutes);
-  return standing?.kind === 'today' ? standing.at : null;
-}
 
 // The item exactly as the Brain's prompt receives it — one compact line,
 // shared between the live call and the debug snapshot so the snapshot never
@@ -787,36 +701,6 @@ interface ProposedBubble {
   itemIds: string[];
 }
 
-// Tier judgment from the Brain, numbers from code. Asked for a 0-1 number the
-// model emits an evenly spaced ladder (rank order, not salience); ordinal
-// judgment is what it does well, so the prompt asks for a tier and this maps
-// tiers into fixed bands. Bands sit ≥0.10 apart in p — past the descent
-// view's spacing floor — so a tier boundary always renders as a felt cliff,
-// while within-band gaps stay shelf-tight.
-export type BrainTier = 'loud' | 'mid' | 'quiet' | 'dot';
-const TIER_BANDS: Record<BrainTier, [top: number, bottom: number]> = {
-  loud: [0.95, 0.78],
-  mid: [0.68, 0.5],
-  quiet: [0.4, 0.28],
-  dot: [0.18, 0.08],
-};
-
-// Members of a tier spread evenly from the band top in output order; a lone
-// member sits at the top. Output order across tiers may interleave.
-export function tierProminences(tiers: BrainTier[]): number[] {
-  const counts = new Map<BrainTier, number>();
-  for (const t of tiers) counts.set(t, (counts.get(t) ?? 0) + 1);
-  const seen = new Map<BrainTier, number>();
-  return tiers.map((t) => {
-    const [top, bottom] = TIER_BANDS[t];
-    const n = counts.get(t)!;
-    const k = seen.get(t) ?? 0;
-    seen.set(t, k + 1);
-    const p = n === 1 ? top : top - ((top - bottom) * k) / (n - 1);
-    return Math.round(p * 100) / 100; // clean two-decimal p — no float dust in the data
-  });
-}
-
 // ---------- The top-tier Brain call (§9.2) ----------
 
 // The exact user-side payload the Brain is called with. Built once per
@@ -918,14 +802,21 @@ OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid
 
 NAMING: if a bubble covers the same ground as a name in recentNameVocabulary, reuse that name exactly — a renamed recurring situation reads as a brand-new one and reshuffles the user's map. Coin a short, concrete, human name only for a genuinely new situation.`;
 
-export type BrainPromptVariant = 'full' | 'minimal';
+// 'staged' is the split-mandate pipeline (placement → curation → render, see
+// the staged section below); 'full' and 'minimal' are the legacy single-call
+// prompts kept for comparison shootouts.
+export type BrainPromptVariant = 'full' | 'minimal' | 'staged';
 
 // The default system prompt composition: chosen variant plus the user's
 // addendum, appended verbatim — no framing or heading, which would mark it as
 // special and make the model over- or under-weight it. Single source of truth
 // shared by the live call and the settings endpoint that shows/prefills it.
+// 'staged' composes to the minimal text: the staged pipeline has its own two
+// prompts and never runs this one — the only reader that asks for it under
+// 'staged' is the override-prefill endpoint, where starting from minimal is
+// the sensible seed.
 export function composeBrainSystem(variant: BrainPromptVariant, addendum: string | null): string {
-  const base = variant === 'minimal' ? MINIMAL_SYSTEM : FULL_SYSTEM;
+  const base = variant === 'full' ? FULL_SYSTEM : MINIMAL_SYSTEM;
   return addendum?.trim() ? `${base}\n\n${addendum.trim()}` : base;
 }
 
@@ -950,6 +841,325 @@ export function selectBrainSystem(
   return { system: composeBrainSystem(variant, cleanAddendum), prompt: variant, addendum: cleanAddendum, override: null };
 }
 
+// ---------- the staged pipeline (placement → curation → render) ----------
+//
+// The single-call Brain asked one objective — "what's salient today?" — to
+// answer three different questions, and deadline proximity won all three:
+// quick tasks surfaced days early, undated items starved (the same few
+// stalled winners monopolised every discretionary slot), and rotation never
+// fired because "omit freely", judged fresh each morning with no memory,
+// resolves to always-omit. The staged pipeline gives each question to the
+// layer whose objective actually asks it:
+//
+//   layer 1 — placement.ts (code): what is REQUIRED today, at what floor.
+//   layer 2 — the curation call (top tier): what ELSE earns a place, and how
+//             everything groups. Never sees yesterday's map — anti-stickiness
+//             by construction; continuity lives in the name vocabulary below.
+//   layer 3 — the render call (cheap tier): names and card sentences, one
+//             call for the whole map so naming stays consistent.
+//
+// The burden of proof flips at layer 2: the skeleton is already placed, so
+// inclusion needs a stated reason ("due soon" is explicitly not one), and
+// a light skeleton means free slots — background surfacing anti-correlates
+// with busyness instead of always losing to it.
+
+export type FirstStepKind = 'breakdown' | 'name-a-when' | 'tiny-first-move';
+const FIRST_STEP_KINDS = ['breakdown', 'name-a-when', 'tiny-first-move'] as const;
+const BUBBLE_BONDS = ['episode', 'package', 'solo', 'horizon', 'rehearsal'] as const;
+type BubbleBond = (typeof BUBBLE_BONDS)[number];
+
+export interface CurationAdd {
+  id: string; // alias, e.g. "i7"
+  rationale: string;
+  tags: string[];
+  tier: BrainTier;
+}
+
+export interface CurationBubble {
+  members: string[]; // aliases
+  bond: BubbleBond;
+  tier: BrainTier;
+  rationale: string;
+  firstStep: FirstStepKind | null;
+}
+
+export interface CurationPlan {
+  adds: CurationAdd[];
+  bubbles: CurationBubble[];
+}
+
+// The hard cap on discretionary adds — the prompt asks for 0-4 and this
+// backstops it. A cap, not a target: an empty adds list is a valid day.
+export const MAX_CURATION_ADDS = 5;
+
+const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a user with ADHD. Each morning, deterministic code places the day's REQUIRED items — the mandatory list, each entry naming the rule that fired (due-today, overdue, event-today, rhythm-today, runway for big-effort things) and the floor tier code will enforce. You do the two things rules cannot: decide what ELSE earns a place on today's map, and compose everything — required and added — into bubbles: small groups that act as one unit. Reply with ONLY a JSON object.
+
+${ITEM_FORMAT}
+
+ADDS — the discretionary picks: 0-4 items from the items NOT on the mandatory list; most days 1-3. Airtime is the fairness axis: prefer what has NOT had recent airtime (new, or seen= long ago) over what has (seen=today, shown= many). Each add carries a rationale in your own words — why this item, why today; the card writer reads it — and tags from: "starved" (never or barely shown), "stalled" (shown many mornings, still unacted — needs a different ask, maybe a firstStep), "rides-along" (would be done in the same burst, trip, or sitting as a required item), "runway-pull" (big-effort item outside its lead window that needs starting anyway), "keep-warm" (a KNOW worth rehearsing — important or recaptured, and not recently seen; where-things-are reference facts almost never qualify), "horizon" (an event 2-7 days out worth one small glance — several may share one bubble), "momentum" (fits a burst rhythm the profile shows), "other" (none fit — the rationale says why). Each add also names a tier — the loudness it deserves if it ends up standing alone; when it joins a shared bubble, the bubble's own tier governs. The accounting block says how starved the pile is: how many items are eligible, how many have never been shown, and the oldest never-shown age — a big never-shown backlog is a reason to spend. When the mandatory set is light, spend more freely — a quiet day is exactly the day for a lingering goal, an old someday item, or a fact worth keeping warm. When it is heavy, hold back; "adds": [] is a fine answer. Inclusion needs a reason. "Due soon" alone is never one — code decides when dated items enter the map.
+
+BUBBLES — compose the day. Every mandatory item MUST appear in at least one bubble. Every add goes in whatever bubble its rationale implies — its own is fine. A non-mandatory item may appear as a member ONLY if it is declared in adds; undeclared members are dropped. Members join through a real bond: "episode" (same real-world story — an event, its sub-events, the prep it demands, the facts needed while it happens), "package" (same burst — one sitting, one tool, one trip, one errand loop), "solo" (stands alone), "horizon" (a collective glance at what's coming), "rehearsal" (facts kept warm — an offering, not an obligation). Shared topic, shared people, or a shared date alone is resemblance, not a bond — the tell that a member doesn't belong: the sentence would need a link the items don't themselves establish. Each bubble carries a rationale (why this grouping exists today, in your own words), a tier, and firstStep.
+
+TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
+
+firstStep: at most ONE bubble in the whole map, and only when one big or stalled thing needs a way in rather than volume: "breakdown" (no visible first action), "name-a-when" (they plainly want it and never start), "tiny-first-move" (the first move is obvious and small). A writer phrases the invitation; you only flag it. Everywhere else: null.
+
+The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
+
+OUTPUT: {"adds":[{"id":"iN","rationale":str,"tags":[str],"tier":"loud"|"mid"|"quiet"|"dot"}],"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"horizon"|"rehearsal","tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
+
+const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, and the curator's rationale — why the card exists today. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
+
+${ITEM_FORMAT}
+
+"sentence" IS the card — on the day view the user reads nothing else. One continuous utterance carrying the facts — what, when, who: a short sentence for a quiet card, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. The card's size on the map already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. The rationale and the behavioural signals on the lines are facts to carry, never mechanics to cite: felt= colour (that it's for someone, that it felt important), recaptured= (they keep coming back to it), slipping=, long age, an overdue rule — say what the signal shows, plainly. A date alone earns no colour: something merely happening today needs nothing beyond when. The userProfile is advisory colour for voice and emphasis only — never content. Present tense, tokens front-loaded, no filler, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly in the prose.
+
+THE CARD GRAMMAR (only these two marks):
+- **bold** the recognizable nouns — people, entities, dates, times. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". The phrase must read naturally inside the sentence. Every member that is an active DO must be a chip — completing from the card is the point, and a DO that requires opening the sheet to tick off is a broken card. A phrase naming a DO is a chip, never bold. Cards whose register is "rehearsal" are the exception: no chips — they read as an offering, never an obligation.
+
+"firstStep": only on the card whose input carries a firstStep flag, write a short, direct invitation in your own voice, shaped by the flag — "breakdown": ask for the first piece; "name-a-when": ask them to name a time; "tiny-first-move": ask for the smallest move. NEVER write the step's content yourself — the user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). Every other card: null.
+
+NAMING: if a card covers the same ground as a name in nameVocabulary, reuse that name EXACTLY — a renamed recurring situation reads as brand-new and reshuffles the user's map. Coin a short, concrete, plainly human name only for genuinely new ground. Preparation framing ("Before X") is earned only when the card actually contains prep tasks.
+
+OUTPUT: {"cards":[{"ref":int,"name":str,"sentence":str,"firstStep":str|null}]} — exactly one entry per input card, same ref, every card present.`;
+
+// All-KNOW membership is what makes a rehearsal card — the register is a
+// fact about content, derived here, never a category the model declares.
+// (The old pipeline asked the model to opt into a countable "rotation"
+// bubble; judged fresh daily with no memory, "omit freely" meant it never
+// fired. Now a kept-warm KNOW is just an add like any other, and the dashed
+// offered-not-owed register follows from what the card holds.)
+export function deriveBubbleKind(memberTypes: string[]): 'situation' | 'rotation' {
+  return memberTypes.length > 0 && memberTypes.every((t) => t === 'KNOW') ? 'rotation' : 'situation';
+}
+
+// Curation output → validated plan, pure. Everything here is a guarantee the
+// prompt merely requests: adds only from the eligible pile (a mandatory or
+// unknown id is not an add), the add cap, members only from mandatory ∪
+// declared adds, floors never undercut, one firstStep, every mandatory item
+// covered (uncovered ones get solo bubbles carrying their rule), every
+// declared add placed, loudest-first order.
+export function validateCurationPlan(
+  raw: { adds?: unknown; bubbles?: unknown } | null | undefined,
+  floors: Map<string, { floor: BrainTier; rule: string }>,
+  eligibleAliases: Set<string>,
+): CurationPlan {
+  const rawAdds = Array.isArray(raw?.adds) ? (raw!.adds as Record<string, unknown>[]) : [];
+  const seenAdd = new Set<string>();
+  const adds: CurationAdd[] = [];
+  for (const a of rawAdds) {
+    if (!a || typeof a !== 'object') continue;
+    const id = String(a.id ?? '').trim();
+    if (!eligibleAliases.has(id) || floors.has(id) || seenAdd.has(id)) continue;
+    if (adds.length >= MAX_CURATION_ADDS) break;
+    seenAdd.add(id);
+    adds.push({
+      id,
+      rationale: String(a.rationale ?? '').slice(0, 300),
+      tags: (Array.isArray(a.tags) ? a.tags : []).map((t) => String(t).slice(0, 40)).slice(0, 4),
+      tier: isBrainTier(a.tier) ? a.tier : 'quiet',
+    });
+  }
+
+  const allowed = new Set<string>([...floors.keys(), ...adds.map((a) => a.id)]);
+  const rawBubbles = Array.isArray(raw?.bubbles) ? (raw!.bubbles as Record<string, unknown>[]) : [];
+  const bubbles: CurationBubble[] = [];
+  let firstStepTaken = false;
+  for (const b of rawBubbles) {
+    if (!b || typeof b !== 'object') continue;
+    const seen = new Set<string>();
+    const members = (Array.isArray(b.members) ? b.members : [])
+      .map((m) => String(m).trim())
+      .filter((m) => {
+        if (!allowed.has(m) || seen.has(m)) return false;
+        seen.add(m);
+        return true;
+      });
+    if (!members.length) continue;
+    let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
+    for (const m of members) {
+      const f = floors.get(m);
+      if (f) tier = maxTier(tier, f.floor);
+    }
+    const bond = (BUBBLE_BONDS as readonly string[]).includes(String(b.bond))
+      ? (String(b.bond) as BubbleBond)
+      : members.length > 1
+        ? 'package'
+        : 'solo';
+    const wantsStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep));
+    const firstStep = wantsStep && !firstStepTaken ? (String(b.firstStep) as FirstStepKind) : null;
+    if (firstStep) firstStepTaken = true;
+    bubbles.push({ members, bond, tier, rationale: String(b.rationale ?? '').slice(0, 300), firstStep });
+  }
+
+  // Coverage nets, both directions: a mandatory item the plan ignored still
+  // reaches the map (its rule is its rationale), and a declared add never
+  // silently vanishes — the declaration was the reason, so it gets its bubble.
+  const covered = new Set(bubbles.flatMap((b) => b.members));
+  for (const [alias, f] of floors) {
+    if (covered.has(alias)) continue;
+    bubbles.push({ members: [alias], bond: 'solo', tier: f.floor, rationale: f.rule, firstStep: null });
+  }
+  for (const a of adds) {
+    if (covered.has(a.id)) continue;
+    bubbles.push({ members: [a.id], bond: 'solo', tier: a.tier, rationale: a.rationale, firstStep: null });
+  }
+
+  bubbles.sort((x, y) => compareTier(x.tier, y.tier)); // stable: within a tier, plan order is the ranking
+  return { adds, bubbles };
+}
+
+// One rebuild through the three layers. Throws only when the curation call
+// fails (rebuildMap falls back to the deterministic map, as ever); a render
+// failure degrades to mechanical sentences — the composition survives, the
+// prose is plain for a day.
+async function stagedBuildBubbles(
+  env: Env,
+  items: ItemView[],
+  day: string,
+  nameVocabulary: string[],
+  profileText: string | null,
+  now: Date,
+  tz: number,
+  addendum: string | null = null,
+): Promise<{ proposed: ProposedBubble[]; payload: Record<string, unknown> }> {
+  const { lines, idByAlias } = aliasItems(items, now, tz);
+  const aliasById = new Map([...idByAlias].map(([alias, id]) => [id, alias]));
+  // Keyed via aliasById, never by re-deriving `i${idx+1}` — one authority for
+  // the alias scheme (aliasItems), so the two can't silently desync.
+  const lineByAlias = new Map(items.map((it, idx) => [aliasById.get(it.id)!, lines[idx]]));
+  const viewById = new Map(items.map((i) => [i.id, i]));
+
+  const { mandatory, eligible } = placeItems(items, now, tz);
+  const floors = new Map(mandatory.map((m) => [aliasById.get(m.item.id)!, { floor: m.floor, rule: m.rule }]));
+  const eligibleAliases = new Set(eligible.map((i) => aliasById.get(i.id)!));
+
+  // The minimal accounting the airtime objective needs — aggregates only,
+  // never yesterday's compositions (composition feedback is the stickiness
+  // channel this pipeline deliberately does not have).
+  const neverShown = eligible.filter((i) => !i.lastSurfacedAt);
+  const accounting = {
+    eligibleCount: eligible.length,
+    neverShownCount: neverShown.length,
+    oldestNeverShownDays: neverShown.length
+      ? Math.max(...neverShown.map((i) => sleepDayDiff(now.getTime(), new Date(i.createdAt).getTime(), tz)))
+      : 0,
+  };
+
+  const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+    new Date(`${day}T12:00:00Z`).getUTCDay()
+  ];
+  const curationInput = {
+    today: day,
+    weekday,
+    items: lines,
+    mandatory: [...floors.entries()].map(([id, f]) => ({ id, rule: f.rule, floor: f.floor })),
+    accounting,
+    userProfile: profileText,
+  };
+
+  // The user's addendum lands on the curation call — curation is the
+  // judgment the tuning knob exists to tune. Same composition rule as the
+  // legacy prompts: appended verbatim, no framing (§ composeBrainSystem).
+  const curationSystem = addendum?.trim() ? `${CURATION_SYSTEM}\n\n${addendum.trim()}` : CURATION_SYSTEM;
+  const rawPlan = await anthropicJson<{ adds?: unknown; bubbles?: unknown }>(
+    env,
+    env.BRAIN_MODEL,
+    curationSystem,
+    JSON.stringify(curationInput),
+    4096,
+  );
+  const plan = validateCurationPlan(rawPlan, floors, eligibleAliases);
+  const addByAlias = new Map(plan.adds.map((a) => [a.id, a]));
+
+  const kinds = plan.bubbles.map((b) =>
+    deriveBubbleKind(b.members.map((m) => viewById.get(idByAlias.get(m) ?? '')?.type ?? '')),
+  );
+  const renderInput = {
+    today: day,
+    weekday,
+    cards: plan.bubbles.map((b, idx) => ({
+      ref: idx,
+      tier: b.tier,
+      bond: b.bond,
+      register: kinds[idx] === 'rotation' ? 'rehearsal' : 'standard',
+      why: b.rationale,
+      members: b.members.map((m) => ({
+        id: m,
+        line: lineByAlias.get(m) ?? m,
+        required: floors.get(m)?.rule ?? null,
+        added: addByAlias.get(m)?.rationale ?? null,
+      })),
+      firstStep: b.firstStep,
+    })),
+    nameVocabulary,
+    userProfile: profileText,
+  };
+
+  // Cheap tier: the judgment already happened upstream; this is constrained
+  // writing, and a mediocre sentence is a low-stakes failure.
+  let renderCards: { ref?: unknown; name?: unknown; sentence?: unknown; firstStep?: unknown }[] = [];
+  let renderError: string | null = null;
+  try {
+    const out = await anthropicJson<{ cards?: typeof renderCards }>(
+      env,
+      env.CAPTURE_MODEL,
+      RENDER_SYSTEM,
+      JSON.stringify(renderInput),
+      8192,
+    );
+    renderCards = Array.isArray(out.cards) ? out.cards : [];
+  } catch (err) {
+    renderError = err instanceof Error ? err.message : String(err);
+    console.error('Brain render call failed; composing mechanical sentences', err);
+  }
+  const cardByRef = new Map(renderCards.filter((c) => typeof c?.ref === 'number').map((c) => [c.ref as number, c]));
+
+  const prominences = tierProminences(plan.bubbles.map((b) => b.tier));
+  const proposed: ProposedBubble[] = plan.bubbles.map((b, idx) => {
+    const memberIds = b.members.map((m) => idByAlias.get(m)!).filter(Boolean);
+    const memberViews = memberIds.map((id) => viewById.get(id)!).filter(Boolean);
+    const kind = kinds[idx];
+    const card = cardByRef.get(idx);
+    const rawSentence =
+      typeof card?.sentence === 'string' && card.sentence.trim()
+        ? card.sentence
+        : composeSentence(memberViews, now, tz);
+    // Rehearsal cards carry no chips — enforced here (maxChips 0 degrades any
+    // stray chip to bold), not merely requested of the writer.
+    const sentence = resolveSentence(rawSentence, idByAlias, new Set(memberIds), kind === 'rotation' ? 0 : Infinity);
+    const name =
+      typeof card?.name === 'string' && card.name.trim()
+        ? card.name.trim()
+        : (memberViews[0]?.title ?? 'Today').slice(0, 60);
+    // The invitation exists only where the curator flagged it; an unflagged
+    // card's firstStep is discarded even if the writer volunteered one.
+    const firstStep =
+      b.firstStep && typeof card?.firstStep === 'string' && card.firstStep.trim() ? card.firstStep.trim() : null;
+    return { name, kind, prominence: prominences[idx], reason: '', sentence, firstStep, itemIds: memberIds };
+  });
+
+  // The debug snapshot's staged shape: skeleton → plan → prose, each stage
+  // diffable — the record of WHY the map is what it is.
+  const payload: Record<string, unknown> = {
+    pipeline: 'staged',
+    today: day,
+    weekday,
+    items: lines,
+    skeleton: curationInput.mandatory,
+    accounting,
+    userProfile: profileText,
+    plan,
+    planRaw: rawPlan,
+    renderInput,
+    renderCards,
+    renderError,
+    nameVocabulary,
+  };
+  return { proposed, payload };
+}
+
 async function llmBuildBubbles(env: Env, input: BrainInput, system: string): Promise<ProposedBubble[]> {
   const { idByAlias } = input;
   const user = JSON.stringify(input.payload);
@@ -965,8 +1175,7 @@ async function llmBuildBubbles(env: Env, input: BrainInput, system: string): Pro
   }
   const out = await anthropicJson<{ bubbles: RawBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
   const raw = (out.bubbles ?? []).filter((b) => b && b.name && Array.isArray(b.itemIds));
-  const isTier = (t: unknown): t is BrainTier => t === 'loud' || t === 'mid' || t === 'quiet' || t === 'dot';
-  const prominences = tierProminences(raw.map((b) => (isTier(b.tier) ? b.tier : 'quiet')));
+  const prominences = tierProminences(raw.map((b) => (isBrainTier(b.tier) ? b.tier : 'quiet')));
   return raw.map((b, idx) => {
     // Aliases back to real ids; unknown aliases drop (validated again upstream).
     const itemIds = (b.itemIds as unknown[]).map((a) => idByAlias.get(String(a).trim()) ?? '').filter(Boolean);

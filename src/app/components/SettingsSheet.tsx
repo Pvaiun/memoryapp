@@ -41,7 +41,7 @@ interface Status {
   brainModel: string;
   mapDay: string | null;
   mapBuiltAt: string | null;
-  brainPrompt: 'full' | 'minimal';
+  brainPrompt: 'full' | 'minimal' | 'staged';
   brainAddendum: string;
   brainOverrideEnabled: boolean;
   brainOverride: string;
@@ -73,7 +73,7 @@ export default function SettingsSheet({
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
-  const [brainPrompt, setBrainPrompt] = useState<'full' | 'minimal' | null>(null);
+  const [brainPrompt, setBrainPrompt] = useState<'full' | 'minimal' | 'staged' | null>(null);
 
   const [addendum, setAddendum] = useState('');
   const [savedAddendum, setSavedAddendum] = useState('');
@@ -138,9 +138,9 @@ export default function SettingsSheet({
   };
 
   // The morning-prompt toggle (workshop shootout, longitudinal arm): which
-  // Brain prompt tomorrow's first-open rebuild uses. Optimistic; reverts on
-  // failure. Workshop rebuild buttons override per run.
-  const pickPrompt = (v: 'full' | 'minimal') => {
+  // Brain prompt or pipeline tomorrow's first-open rebuild uses. Optimistic;
+  // reverts on failure. Workshop rebuild buttons override per run.
+  const pickPrompt = (v: 'full' | 'minimal' | 'staged') => {
     const prev = brainPrompt;
     setBrainPrompt(v);
     api.setBrainPrompt(v).catch(() => setBrainPrompt(prev));
@@ -201,9 +201,15 @@ export default function SettingsSheet({
               <button className={brainPrompt === 'full' ? 'on' : ''} onClick={() => pickPrompt('full')}>
                 Full
               </button>
+              <button className={brainPrompt === 'staged' ? 'on' : ''} onClick={() => pickPrompt('staged')}>
+                Staged
+              </button>
             </div>
             <small className="settings-hint">
-              Which prompt builds tomorrow's map — comparing them over days. Workshop rebuilds override per run.
+              Which Brain builds tomorrow's map — comparing them over days. Minimal and Full are the single-call
+              prompts; Staged is the split pipeline (code places the day's required items, a curator call picks
+              what else deserves airtime, a writer call names the cards). The prompt override below, while
+              checked, outranks all three.
             </small>
           </div>
 
@@ -224,7 +230,8 @@ export default function SettingsSheet({
               </button>
             </div>
             <small className="settings-hint">
-              Applies to every rebuild until cleared. The Brain snapshot records what was active.
+              Applies to every rebuild until cleared — appended to the single-call prompt, or to the curator
+              prompt under Staged. The Brain snapshot records what was active.
             </small>
           </div>
 
@@ -248,8 +255,9 @@ export default function SettingsSheet({
                   <button onClick={resetOverride}>Reset to default</button>
                 </div>
                 <small className="settings-hint">
-                  While checked, the saved text above IS the whole Brain prompt — the Minimal/Full toggle and the
-                  addendum are ignored. Unsaved edits and an empty box don't run: the normal flow stays in charge.
+                  While checked, the saved text above IS the whole Brain prompt, run as a single call — the
+                  prompt/pipeline choice (Staged included) and the addendum are ignored. Unsaved edits and an
+                  empty box don't run: the normal flow stays in charge.
                   Unchecking returns to the normal flow; the text stays saved but inert.
                 </small>
               </>
