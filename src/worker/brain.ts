@@ -871,7 +871,11 @@ export function selectBrainSystem(
 
 export type FirstStepKind = 'breakdown' | 'name-a-when' | 'tiny-first-move';
 const FIRST_STEP_KINDS = ['breakdown', 'name-a-when', 'tiny-first-move'] as const;
-const BUBBLE_BONDS = ['episode', 'package', 'solo', 'horizon', 'rehearsal'] as const;
+// 'horizon' was removed as a named bond after one observed morning: naming it
+// licensed gluing tomorrow's near-certain events to a party six days out. If
+// a genuine glance-at-the-week card wants to exist, it can emerge organically
+// through the ordinary bonds; unknown bond strings coerce below.
+const BUBBLE_BONDS = ['episode', 'package', 'solo', 'rehearsal'] as const;
 type BubbleBond = (typeof BUBBLE_BONDS)[number];
 
 export interface CurationAdd {
@@ -906,9 +910,9 @@ const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a
 
 ${ITEM_FORMAT}
 
-ADDS — the discretionary picks from the items NOT on the mandatory list. Budget by map shape (see BUBBLES), not by item count: an add that rides along inside a bubble the day already has costs almost nothing, and an add that opens its own bubble spends one of the day's few card slots. Most days 1-3 adds is right; a bigger spend is right exactly when the adds bundle — one errand loop absorbing three lingering errands is a better day than three new cards. Airtime is the fairness axis: prefer what has NOT had recent airtime (new, or seen= long ago) over what has (seen=today, shown= many). Each add carries a rationale in your own words — why this item, why today; the card writer reads it — and tags from: "starved" (never or barely shown), "stalled" (shown many mornings, still unacted — needs a different ask, maybe a firstStep), "rides-along" (would be done in the same burst, trip, or sitting as a required item), "runway-pull" (big-effort item outside its lead window that needs starting anyway), "keep-warm" (a KNOW worth rehearsing — important or recaptured, and not recently seen; where-things-are reference facts almost never qualify), "horizon" (an event 2-7 days out worth one small glance — several may share one bubble), "momentum" (fits a burst rhythm the profile shows), "other" (none fit — the rationale says why). Each add also names a tier — the loudness it deserves if it ends up standing alone; when it joins a shared bubble, the bubble's own tier governs. The accounting block says how starved the pile is: how many items are eligible, how many have never been shown, and the oldest never-shown age — a big never-shown backlog is a reason to spend. When the mandatory set is light, spend more freely — a quiet day is exactly the day for a lingering goal, an old someday item, or a fact worth keeping warm. When it is heavy, hold back; "adds": [] is a fine answer. Inclusion needs a reason. "Due soon" alone is never one — code decides when dated items enter the map.
+ADDS — the discretionary picks from the items NOT on the mandatory list. Budget by map shape (see BUBBLES), not by item count: an add that rides along inside a bubble the day already has costs almost nothing, and an add that opens its own bubble spends one of the day's few card slots. Most days 1-3 adds is right; a bigger spend is right exactly when the adds bundle — one errand loop absorbing three lingering errands is a better day than three new cards. Airtime is the fairness axis: prefer what has NOT had recent airtime (new, or seen= long ago) over what has (seen=today, shown= many). The accounting block names the starved backlog outright — the never-shown item ids and how long the oldest has waited; a nonempty backlog is a standing reason to spend there. Each add carries a rationale in your own words — why this item, why today; the card writer reads it — and it must be a real reason: "small enough to keep around" or "seen recently" is not one, and an add whose rationale doesn't survive "why this, today, instead of nothing?" should not be made. Tags: "starved" (never or barely shown), "stalled" (shown many mornings, still unacted — needs a different ask, maybe a firstStep), "rides-along" (would be done in the same burst, trip, or sitting as a required item), "runway-pull" (big-effort item outside its lead window that needs starting anyway), "keep-warm" (a KNOW worth rehearsing — important or recaptured, and not recently seen; where-things-are reference facts almost never qualify), "momentum" (fits a burst rhythm the profile shows), "other" (none fit — the rationale says why). Each add also names a tier — the loudness it deserves if it ends up standing alone; when it joins a shared bubble, the bubble's own tier governs. When the mandatory set is light, spend more freely — a quiet day is exactly the day for a lingering goal, an old someday item, or a fact worth keeping warm. When it is heavy, hold back; "adds": [] is a fine answer. Inclusion needs a reason. "Due soon" alone is never one — code decides when dated items enter the map.
 
-BUBBLES — compose the day. Every mandatory item MUST appear in at least one bubble. Every add goes in whatever bubble its rationale implies — its own is fine. Bundling is half your job: the mandatory list arrives flat, and composing it — required items with each other, adds woven in wherever a real bond holds — is what turns a list into a map. A good day is usually 4-7 bubbles; ten single-item bubbles is a list wearing bubbles, though never force a bond to hit a count. A non-mandatory item may appear as a member ONLY if it is declared in adds; undeclared members are dropped. Members join through a real bond: "episode" (same real-world story — an event, its sub-events, the prep it demands, the facts needed while it happens), "package" (same burst — one sitting, one tool, one trip, one errand loop), "solo" (stands alone), "horizon" (a collective glance at what's coming), "rehearsal" (facts kept warm — an offering, not an obligation). Shared topic, shared people, or a shared date alone is resemblance, not a bond — the tell that a member doesn't belong: the sentence would need a link the items don't themselves establish. Each bubble carries a rationale (why this grouping exists today, in your own words), a tier, and firstStep.
+BUBBLES — compose the day. Every mandatory item MUST appear in at least one bubble. Every add goes in whatever bubble its rationale implies — its own is fine. Bundling is half your job: the mandatory list arrives flat, and composing it — required items with each other, adds woven in wherever a real bond holds — is what turns a list into a map. A good day is usually 4-8 bubbles; ten single-item bubbles is a list wearing bubbles, though never force a bond to hit a count. A non-mandatory item may appear as a member ONLY if it is declared in adds; undeclared members are dropped. Members join through a real bond: "episode" (same real-world story — an event, its sub-events, the prep it demands, the facts needed while it happens), "package" (same burst — one sitting, one tool, one trip, one errand loop), "solo" (stands alone), "rehearsal" (facts kept warm — an offering, not an obligation). Shared topic, shared people, or a shared date alone is resemblance, not a bond — the tell that a member doesn't belong: the sentence would need a link the items don't themselves establish. A package must survive the one-burst test: same place, same tool, same sitting — two phone calls are one burst; a phone call and a store trip are not. Reliably-completed-around-the-same-hour is a statistic, not a bond: an interpersonal ritual is not a household chore, however adjacent their evenings. Never bundle an event happening today with events on later days (two events sharing the same future day — both tomorrow, say — may share a card). And never bend a bond to save a card slot: a weak add belongs nowhere rather than in the wrong bubble. Each bubble carries a rationale (why this grouping exists today, in your own words), a tier, and firstStep.
 
 TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
 
@@ -916,17 +920,31 @@ firstStep: at most ONE bubble in the whole map, and only when one big or stalled
 
 The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
 
-OUTPUT: {"adds":[{"id":"iN","rationale":str,"tags":[str],"tier":"loud"|"mid"|"quiet"|"dot"}],"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"horizon"|"rehearsal","tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
+OUTPUT: {"adds":[{"id":"iN","rationale":str,"tags":[str],"tier":"loud"|"mid"|"quiet"|"dot"}],"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"rehearsal","tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
 
-const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, and the curator's rationale — why the card exists today. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
+const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, and the curator's rationale (why) — the reason the card exists today. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
 
 ${ITEM_FORMAT}
 
-"sentence" IS the card — on the day view the user reads nothing else. One continuous utterance carrying the facts — what, when, who: a short sentence for a quiet card, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. The card's size on the map already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. The rationale and the behavioural signals on the lines are facts to carry, never mechanics to cite: felt= colour (that it's for someone, that it felt important), recaptured= (they keep coming back to it), slipping=, long age, an overdue rule — say what the signal shows, plainly. A date alone earns no colour: something merely happening today needs nothing beyond when. The userProfile is advisory colour for voice and emphasis only — never content. Present tense, tokens front-loaded, no filler, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly in the prose.
+"sentence" IS the card — on the day view the user reads nothing else, and the card's NAME is NOT displayed there (names live in browse and search only). Every sentence must stand completely alone: never lean on the name for framing, never assume the user sees it. One continuous utterance carrying the facts — what, when, who: short for a quiet card, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding.
+
+THE FACTS, PRECISELY:
+- Chronological: mention members in the order they happen today.
+- Every timed member gets its time — never a time for one and not another on the same card.
+- Days are named, not gestured at: "tomorrow (Friday) at 6pm", "next Wednesday at 7pm" — never "lands tomorrow", never "soon", never "the following Wednesday".
+- The card's size already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly.
+
+TONE IS DATA, NOT DECORATION. The curator's rationale and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes. A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
 
 THE CARD GRAMMAR (only these two marks):
 - **bold** the recognizable nouns — people, entities, dates, times. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
-- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". The phrase must read naturally inside the sentence. Every member that is an active DO must be a chip — completing from the card is the point, and a DO that requires opening the sheet to tick off is a broken card. A phrase naming a DO is a chip, never bold. Cards whose register is "rehearsal" are the exception: no chips — they read as an offering, never an obligation.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". EVERY member that is an active DO MUST appear as a chip woven naturally into the prose — no exceptions, whatever the bond: a missing chip is a broken card (the app appends an orphaned chip at the end, which reads as a glitch). A phrase naming a DO is a chip, never bold. The single exception: cards whose register is "rehearsal" carry no chips — they read as an offering, never an obligation.
+
+CONSTRUCTION follows the card's shape:
+- Mixed members, few DOs → weave facts and chips into one utterance.
+- 3+ same-type siblings (a batch) → speak of the batch collectively, list-like and rhythmic — each chip inline where it reads naturally — never one run-on clause chain.
+- One big or stalled thing carrying a firstStep flag → a bare, honest sentence built from its history (how long it has waited, how many mornings, what the user's own signals say it means), plus the invitation.
+- Register "rehearsal" → one warm line, an offering: the fact and why it is near, no ask.
 
 "firstStep": only on the card whose input carries a firstStep flag, write a short, direct invitation in your own voice, shaped by the flag — "breakdown": ask for the first piece; "name-a-when": ask them to name a time; "tiny-first-move": ask for the smallest move. NEVER write the step's content yourself — the user's typed answer becomes a real item on the card (dates and times in it are understood, so "Thursday evening" works). Every other card: null.
 
@@ -1045,13 +1063,15 @@ async function stagedBuildBubbles(
   const floors = new Map(mandatory.map((m) => [aliasById.get(m.item.id)!, { floor: m.floor, rule: m.rule }]));
   const eligibleAliases = new Set(eligible.map((i) => aliasById.get(i.id)!));
 
-  // The minimal accounting the airtime objective needs — aggregates only,
-  // never yesterday's compositions (composition feedback is the stickiness
-  // channel this pipeline deliberately does not have).
+  // The minimal accounting the airtime objective needs — item-level
+  // attribution but never yesterday's compositions (composition feedback is
+  // the stickiness channel this pipeline deliberately does not have). The
+  // backlog is named id by id: a bare count proved inert — the curator won't
+  // scan 30 lines hunting for "new", but it will look up a listed alias.
   const neverShown = eligible.filter((i) => !i.lastSurfacedAt);
   const accounting = {
     eligibleCount: eligible.length,
-    neverShownCount: neverShown.length,
+    neverShown: neverShown.map((i) => aliasById.get(i.id)!),
     oldestNeverShownDays: neverShown.length
       ? Math.max(...neverShown.map((i) => sleepDayDiff(now.getTime(), new Date(i.createdAt).getTime(), tz)))
       : 0,
@@ -1107,14 +1127,17 @@ async function stagedBuildBubbles(
     userProfile: profileText,
   };
 
-  // Cheap tier: the judgment already happened upstream; this is constrained
-  // writing, and a mediocre sentence is a low-stakes failure.
+  // Top tier, same as curation. The first observed staged morning corrected
+  // an assumption: the sentence IS the product surface, and the cheap tier
+  // produced flat tone, missed chips, and platitudes where the legacy
+  // top-tier single call never did. Curation's output is small, so two
+  // top-tier calls still land near the old single call's cost.
   let renderCards: { ref?: unknown; name?: unknown; sentence?: unknown; firstStep?: unknown }[] = [];
   let renderError: string | null = null;
   try {
     const out = await anthropicJson<{ cards?: typeof renderCards }>(
       env,
-      env.CAPTURE_MODEL,
+      env.BRAIN_MODEL,
       RENDER_SYSTEM,
       JSON.stringify(renderInput),
       8192,

@@ -150,6 +150,14 @@ describe('deriveConstruction — mechanical, from cluster shape', () => {
     expect(deriveConstruction([item({}), item({}), item({}), item({})], null)).toBe('batch');
   });
 
+  it('3 same-type siblings are a batch too (the run-on routine card)', () => {
+    expect(deriveConstruction([item({}), item({}), item({})], null)).toBe('batch');
+  });
+
+  it('a mixed three is woven — the dominance bar needs all three alike', () => {
+    expect(deriveConstruction([item({}), item({ type: 'KNOW' }), item({})], null)).toBe('woven');
+  });
+
   it('a mixed four is woven, not a batch', () => {
     expect(deriveConstruction([item({}), item({ type: 'KNOW' }), item({ type: 'HAPPEN' }), item({})], null)).toBe(
       'woven',
