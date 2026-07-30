@@ -1,7 +1,7 @@
 import type { AffectTag, Cadence, DatePrecision, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
-import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, occurrencesBetween } from '../shared/cadence';
-import { resolveDatePhrase, sleepDayOf } from '../shared/dates';
+import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, nextOccurrence, occurrencesBetween } from '../shared/cadence';
+import { EARLY_MORNING_CUTOFF_MINUTES, resolveDatePhrase, sleepDayOf } from '../shared/dates';
 import type { Env } from './env';
 import { embed, FALLBACK_DIMS } from './embeddings';
 import {
@@ -42,6 +42,15 @@ export async function completeItem(env: Env, id: string, opts: { terminal?: bool
   }
   const ts = nowIso();
   const status = item.cadence && !opts.terminal ? 'active' : 'completed';
+  // A cadenced DO's deadline is the rhythm's next due, not a standing
+  // tripwire: completing this occurrence rolls it to the next slot on its own
+  // grid (anchored at the old deadline, so bi-weekly Thursday stays bi-weekly
+  // Thursday), starting from the NEXT sleep day so today's slot can't be
+  // returned to itself.
+  const rolledDeadline =
+    item.cadence && !opts.terminal && item.deadline
+      ? nextOccurrence(item.cadence, item.deadline, nextSleepDayStart(new Date(), tz)).toISOString()
+      : undefined;
   // Streak (§7.2): consecutive completions within cadence rhythm; simple bump/reset.
   const withinRhythm =
     !item.cadence || !item.lastCompletedAt
@@ -59,6 +68,7 @@ export async function completeItem(env: Env, id: string, opts: { terminal?: bool
           last_completed_at: ts,
           completion_count: item.completionCount + 1,
           streak: withinRhythm ? item.streak + 1 : 1,
+          ...(rolledDeadline ? { deadline: rolledDeadline } : {}),
         }),
     // Completing clears accumulated recapture boost (§9.3).
     priority_boost: 0,
@@ -68,8 +78,8 @@ export async function completeItem(env: Env, id: string, opts: { terminal?: bool
   await logEvent(db, 'user', 'completed', {
     itemId: id,
     payload: {
-      before: { status: item.status, lastCompletedAt: item.lastCompletedAt, streak: item.streak },
-      after: { status },
+      before: { status: item.status, lastCompletedAt: item.lastCompletedAt, streak: item.streak, deadline: item.deadline },
+      after: { status, ...(rolledDeadline ? { deadline: rolledDeadline } : {}) },
       // counted:false → this event closed the status without marking a new
       // occurrence; uncomplete must not decrement the completion count.
       ...(opts.terminal ? { terminal: true, counted: !doneToday } : {}),
@@ -89,6 +99,7 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
   // behaviour.
   let prevCompletedAt: string | null = null;
   let prevStreak: number | null = null;
+  let prevDeadline: string | null | undefined; // undefined = snapshot predates deadline rolling
   let counted = true;
   if (item.lastCompletedAt) {
     const ev = await db
@@ -98,11 +109,15 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
     if (ev) {
       try {
         const p = JSON.parse(ev.payload) as {
-          before?: { lastCompletedAt?: string | null; streak?: number };
+          before?: { lastCompletedAt?: string | null; streak?: number; deadline?: string | null };
+          after?: { deadline?: string };
           counted?: boolean;
         };
         prevCompletedAt = p.before?.lastCompletedAt ?? null;
         if (typeof p.before?.streak === 'number') prevStreak = p.before.streak;
+        // Un-roll the deadline only if this completion rolled it (after has
+        // one) — otherwise a later system roll would be clobbered.
+        if (p.after?.deadline !== undefined && p.before?.deadline !== undefined) prevDeadline = p.before.deadline;
         counted = p.counted !== false;
       } catch {
         // Unparseable legacy payload — clear, as before.
@@ -118,6 +133,7 @@ export async function uncompleteItem(env: Env, id: string): Promise<ItemView | n
           completion_count: Math.max(0, item.completionCount - 1),
           streak: prevStreak ?? Math.max(0, item.streak - 1),
           last_completed_at: prevCompletedAt,
+          ...(prevDeadline !== undefined ? { deadline: prevDeadline } : {}),
         }
       : {}),
   });
@@ -227,6 +243,43 @@ export async function sweepPassedEvents(db: D1Database, now: Date, tzOffsetMinut
         payload: { before: { status: 'active' }, after: { status: 'passed' }, title: item.title },
       });
     }
+  }
+}
+
+// Start of the sleep-cycle day `offsetDays` from now's, as a UTC instant —
+// the same frame every day computation in the worker uses.
+function sleepDayStart(now: Date, tzOffsetMinutes: number, offsetDays = 0): Date {
+  const day = sleepDayOf(now.getTime(), tzOffsetMinutes) + offsetDays;
+  return new Date(day * 86_400_000 + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000);
+}
+
+function nextSleepDayStart(now: Date, tzOffsetMinutes: number): Date {
+  return sleepDayStart(now, tzOffsetMinutes, 1);
+}
+
+// A cadenced DO's deadline is the rhythm's next due. When an occurrence's day
+// ends unticked, the deadline rolls to the next slot on its own grid instead
+// of sitting red forever — §7.2: a missed occurrence RESURFACES the item (the
+// neglect/"slipped" path, anchored on lastCompletedAt, still carries the
+// pressure); it does not fail it, and a permanent "overdue" from a stale date
+// is exactly that failure. System-asserted clock maintenance, like
+// sweepPassedEvents — 'deadline_rolled' never reaches the profile.
+export async function rollRecurringDeadlines(db: D1Database, now: Date, tzOffsetMinutes: number): Promise<void> {
+  const items = await listItems(db, { statuses: ['active'], types: ['DO'] });
+  const today = sleepDayOf(now.getTime(), tzOffsetMinutes);
+  const from = sleepDayStart(now, tzOffsetMinutes);
+  for (const item of items) {
+    if (!item.cadence || !item.deadline) continue;
+    if (sleepDayOf(new Date(item.deadline).getTime(), tzOffsetMinutes) >= today) continue;
+    // Anchor at the old deadline so the grid holds (bi-weekly Thursday stays
+    // bi-weekly Thursday); from today's start, so an on-grid today lands as
+    // "due today" rather than skipping ahead.
+    const next = nextOccurrence(item.cadence, item.deadline, from).toISOString();
+    await updateItemFields(db, item.id, { deadline: next });
+    await logEvent(db, 'system', 'deadline_rolled', {
+      itemId: item.id,
+      payload: { before: { deadline: item.deadline }, after: { deadline: next }, title: item.title },
+    });
   }
 }
 
