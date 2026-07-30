@@ -12,7 +12,7 @@ const floors = new Map<string, { floor: BrainTier; rule: string }>([
   ['i1', { floor: 'mid', rule: 'due-today' }],
   ['i2', { floor: 'quiet', rule: 'rhythm-today' }],
 ]);
-const eligible = new Set(['i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9']);
+const eligible = new Set(['i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12', 'i13']);
 
 const bubble = (over: Record<string, unknown>) => ({
   members: [],
@@ -42,10 +42,15 @@ describe('validateCurationPlan — adds', () => {
     expect(plan.adds[0].tags).toEqual(['starved']);
   });
 
-  it('caps adds at MAX_CURATION_ADDS', () => {
+  it('caps adds at MAX_CURATION_ADDS (the runaway backstop)', () => {
     const plan = validateCurationPlan(
       {
-        adds: ['i3', 'i4', 'i5', 'i6', 'i7', 'i8'].map((id) => ({ id, rationale: 'r', tags: [], tier: 'dot' })),
+        adds: ['i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12', 'i13'].map((id) => ({
+          id,
+          rationale: 'r',
+          tags: [],
+          tier: 'dot',
+        })),
         bubbles: [bubble({ members: ['i1', 'i2'], bond: 'package' })],
       },
       floors,
