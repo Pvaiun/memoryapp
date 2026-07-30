@@ -17,7 +17,7 @@ import {
 import type { BrainTier } from './placement';
 import { llmParse } from './capture';
 import { embed } from './embeddings';
-import { sweepPassedEvents } from './items';
+import { rollRecurringDeadlines, rollRecurringEvents, sweepPassedEvents } from './items';
 import {
   getItem,
   getState,
@@ -152,10 +152,16 @@ export async function rebuildMap(
   const tz = await getTzOffset(db);
   // One-shot events whose moment fell in a previous sleep-day close as
   // 'passed' here — the daily crystallization of the map's derived greying.
+  // Cadenced DOs whose deadline-day ended roll to the next grid slot the same
+  // way: the rhythm carries the due date; neglect carries the pressure. A
+  // recurring HAPPEN's anchor rolls too, so happens= tokens and date badges
+  // point at the occurrence that's actually next, never a spent one.
   try {
     await sweepPassedEvents(db, now, tz);
+    await rollRecurringDeadlines(db, now, tz);
+    await rollRecurringEvents(db, now, tz);
   } catch (err) {
-    console.error('passed-event sweep failed', err);
+    console.error('lifecycle sweep failed', err);
   }
   const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now, tz));
 

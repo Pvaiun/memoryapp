@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
-import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextLatenessBoundary, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence } from './cadence';
+import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextLatenessBoundary, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence, rollEventAnchor } from './cadence';
 import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
@@ -227,6 +227,56 @@ describe('passed events read as done (Now screen)', () => {
         now,
       ),
     ).toBe(false);
+  });
+  it("occurrencePassedForNow: a recurring occurrence spent TODAY settles like a one-shot", () => {
+    // Bi-weekly Wednesday 2pm; today (Jul 22) is on-grid. now = 6pm UTC.
+    const appt = {
+      cadence: { freq: 'weekly', interval: 2, byWeekday: [3] } as Cadence,
+      eventAt: '2026-07-22T14:00:00.000Z',
+      eventEnd: null,
+      datePrecision: 'time' as const,
+    };
+    const base = { status: 'active', doneToday: false };
+    // 6pm: the 2pm occurrence + grace has gone — resolved for now.
+    expect(isResolvedForNow({ ...base, ...appt }, now, 0)).toBe(true);
+    // 2:30pm: inside the grace hour — still live.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-22T14:30:00Z').getTime(), 0)).toBe(false);
+    // Morning of: not yet.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-22T10:00:00Z').getTime(), 0)).toBe(false);
+    // Off-grid day (tomorrow): nothing of today's to spend.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-23T18:00:00Z').getTime(), 0)).toBe(false);
+    // Day-precision recurrences stay live all their day.
+    expect(
+      isResolvedForNow({ ...base, ...appt, datePrecision: 'day' as const }, now, 0),
+    ).toBe(false);
+  });
+
+  it('rollEventAnchor: a spent occurrence rolls to the next slot on the same grid', () => {
+    // Bi-weekly Wednesday 2pm, anchor Jul 8; from Jul 21 the next slot is
+    // Jul 22 — same weekday, same time. This is what stops a bi-weekly
+    // appointment reading "overdue" off its own first date.
+    const rolled = rollEventAnchor(
+      {
+        cadence: { freq: 'weekly', interval: 2, byWeekday: [3] },
+        eventAt: '2026-07-08T14:00:00.000Z',
+        eventEnd: null,
+      },
+      new Date('2026-07-21T05:00:00Z'),
+    );
+    expect(rolled.eventAt).toBe('2026-07-22T14:00:00.000Z');
+    expect(rolled.eventEnd).toBeNull();
+  });
+  it('rollEventAnchor: a multi-day span keeps its shape', () => {
+    const rolled = rollEventAnchor(
+      {
+        cadence: { freq: 'monthly', interval: 1, byMonthDay: 8 },
+        eventAt: '2026-07-08T09:00:00.000Z',
+        eventEnd: '2026-07-10T17:00:00.000Z',
+      },
+      new Date('2026-07-21T05:00:00Z'),
+    );
+    expect(rolled.eventAt).toBe('2026-08-08T09:00:00.000Z');
+    expect(rolled.eventEnd).toBe('2026-08-10T17:00:00.000Z');
   });
   it('isResolvedForNow: checked off OR closed OR already happened', () => {
     const base = { status: 'active', cadence: null, doneToday: false, eventAt: null, eventEnd: null };
