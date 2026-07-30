@@ -228,6 +228,29 @@ describe('passed events read as done (Now screen)', () => {
       ),
     ).toBe(false);
   });
+  it("occurrencePassedForNow: a recurring occurrence spent TODAY settles like a one-shot", () => {
+    // Bi-weekly Wednesday 2pm; today (Jul 22) is on-grid. now = 6pm UTC.
+    const appt = {
+      cadence: { freq: 'weekly', interval: 2, byWeekday: [3] } as Cadence,
+      eventAt: '2026-07-22T14:00:00.000Z',
+      eventEnd: null,
+      datePrecision: 'time' as const,
+    };
+    const base = { status: 'active', doneToday: false };
+    // 6pm: the 2pm occurrence + grace has gone — resolved for now.
+    expect(isResolvedForNow({ ...base, ...appt }, now, 0)).toBe(true);
+    // 2:30pm: inside the grace hour — still live.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-22T14:30:00Z').getTime(), 0)).toBe(false);
+    // Morning of: not yet.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-22T10:00:00Z').getTime(), 0)).toBe(false);
+    // Off-grid day (tomorrow): nothing of today's to spend.
+    expect(isResolvedForNow({ ...base, ...appt }, new Date('2026-07-23T18:00:00Z').getTime(), 0)).toBe(false);
+    // Day-precision recurrences stay live all their day.
+    expect(
+      isResolvedForNow({ ...base, ...appt, datePrecision: 'day' as const }, now, 0),
+    ).toBe(false);
+  });
+
   it('rollEventAnchor: a spent occurrence rolls to the next slot on the same grid', () => {
     // Bi-weekly Wednesday 2pm, anchor Jul 8; from Jul 21 the next slot is
     // Jul 22 — same weekday, same time. This is what stops a bi-weekly
