@@ -1,6 +1,10 @@
 import type { CaptureResponse, Flavour, ItemView, MapPayload } from '../shared/types';
 import { dayKey, EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 
+// Mirrors the worker's BrainPromptVariant: the two legacy single-call prompts
+// plus the staged pipeline (placement → curation → render).
+export type BrainVariant = 'full' | 'minimal' | 'staged';
+
 // The app's "day" rolls over at the 5am sleep-cycle cutoff, not midnight —
 // opening at 12:30am is still last night, so the Brain doesn't rebuild the map
 // out from under a late session (same boundary the date parser uses).
@@ -68,13 +72,13 @@ export const api = {
   getMap: () => req<MapPayload>(`/api/map?day=${localDay()}`),
 
   // promptVariant omitted → the server-stored morning-prompt preference.
-  rebuildMap: (force = false, noHistory = false, promptVariant?: 'full' | 'minimal') =>
+  rebuildMap: (force = false, noHistory = false, promptVariant?: BrainVariant) =>
     req<MapPayload>('/api/map/rebuild', {
       method: 'POST',
       body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force, noHistory, promptVariant }),
     }),
 
-  setBrainPrompt: (variant: 'full' | 'minimal') =>
+  setBrainPrompt: (variant: BrainVariant) =>
     req<{ ok: boolean; variant: string }>('/api/settings/brain-prompt', {
       method: 'POST',
       body: JSON.stringify({ variant }),
@@ -93,7 +97,7 @@ export const api = {
       body: JSON.stringify(fields),
     }),
 
-  brainPromptText: () => req<{ variant: 'full' | 'minimal'; text: string }>('/api/settings/brain-prompt-text'),
+  brainPromptText: () => req<{ variant: BrainVariant; text: string }>('/api/settings/brain-prompt-text'),
 
   addFirstStep: (bubbleId: string, title: string) =>
     req<{ map: MapPayload; capture: CaptureResponse }>(`/api/bubbles/${bubbleId}/first-step`, {
