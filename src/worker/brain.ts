@@ -916,7 +916,7 @@ BUBBLES — compose the day. Every mandatory item MUST appear in at least one bu
 
 TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
 
-firstStep: at most ONE bubble in the whole map, and only when one big or stalled thing needs a way in rather than volume: "breakdown" (no visible first action), "name-a-when" (they plainly want it and never start), "tiny-first-move" (the first move is obvious and small). A writer phrases the invitation; you only flag it. Everywhere else: null.
+firstStep: at most TWO bubbles in the whole map — most days one or none — and only when a big or stalled thing needs a way in rather than volume: "breakdown" (no visible first action), "name-a-when" (they plainly want it and never start), "tiny-first-move" (the first move is obvious and small). A writer phrases the invitation; you only flag it. Everywhere else: null.
 
 The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
 
@@ -926,7 +926,7 @@ const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a us
 
 ${ITEM_FORMAT}
 
-"sentence" IS the card — on the day view the user reads nothing else, and the card's NAME is NOT displayed there (names live in browse and search only). Every sentence must stand completely alone: never lean on the name for framing, never assume the user sees it. One continuous utterance carrying the facts — what, when, who: short for a quiet card, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding.
+"sentence" IS the card — on the day view the user reads nothing else, and the card's NAME is NOT displayed there (names live in browse and search only). Every sentence must stand completely alone: never lean on the name for framing, never assume the user sees it. One continuous utterance carrying the facts — what, when, who: short for a quiet card, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. A card can be as short as its chip: when a card carries nothing beyond one task and maybe a time, the chip and the time ARE the sentence — "[Reach out to John](i6)." is a finished card, and decoration on a bare card is the failure, not the brevity.
 
 THE FACTS, PRECISELY:
 - Chronological: mention members in the order they happen today.
@@ -934,11 +934,11 @@ THE FACTS, PRECISELY:
 - Days are named, not gestured at: "tomorrow (Friday) at 6pm", "next Wednesday at 7pm" — never "lands tomorrow", never "soon", never "the following Wednesday".
 - The card's size already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly.
 
-TONE IS DATA, NOT DECORATION. The curator's rationale and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes. A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
+TONE IS DATA, NOT DECORATION. The curator's rationale and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes (hardness means the date won't move — never verbalize the flag itself: "and it's hard" reads as difficulty, not immovability). A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
 
 THE CARD GRAMMAR (only these two marks):
 - **bold** the recognizable nouns — people, entities, dates, times. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
-- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". EVERY member that is an active DO MUST appear as a chip woven naturally into the prose — no exceptions, whatever the bond: a missing chip is a broken card (the app appends an orphaned chip at the end, which reads as a glitch). A phrase naming a DO is a chip, never bold. The single exception: cards whose register is "rehearsal" carry no chips — they read as an offering, never an obligation.
+- [phrase](iN) makes that phrase a tappable checkbox chip completing DO item iN in place, e.g. "the [task name](i3)". EVERY member that is an active DO MUST appear as a chip woven naturally into the prose — no exceptions, whatever the bond: a missing chip is a broken card (the app appends an orphaned chip at the end, which reads as a glitch). A phrase naming a DO is a chip, never bold, and the chip phrase names the TASK, never its date — "[type out the will](i12) by **5pm**", not "[due today at 5pm](i12)" (the label doubles as a checkbox elsewhere in the app). A gentle card still chips its DO: softness lives in the words, and the chip is how the user acts on even the gentlest offer. The single exception: cards whose register is "rehearsal" carry no chips — they read as an offering, never an obligation.
 
 CONSTRUCTION follows the card's shape:
 - Mixed members, few DOs → weave facts and chips into one utterance.
@@ -993,7 +993,12 @@ export function validateCurationPlan(
   const allowed = new Set<string>([...floors.keys(), ...adds.map((a) => a.id)]);
   const rawBubbles = Array.isArray(raw?.bubbles) ? (raw!.bubbles as Record<string, unknown>[]) : [];
   const bubbles: CurationBubble[] = [];
-  let firstStepTaken = false;
+  // Two invitations per map, matching the prompt. The cap was one, and the
+  // first observed enforcement silently stripped the curator's runner-up ask
+  // — a card whose whole rationale was "needs a fresh, plainer ask" reached
+  // the writer with its ask removed, and the prose went limp. Model order
+  // decides which flags survive; the curator leads with what matters most.
+  let firstStepsTaken = 0;
   for (const b of rawBubbles) {
     if (!b || typeof b !== 'object') continue;
     const seen = new Set<string>();
@@ -1016,8 +1021,8 @@ export function validateCurationPlan(
         ? 'package'
         : 'solo';
     const wantsStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep));
-    const firstStep = wantsStep && !firstStepTaken ? (String(b.firstStep) as FirstStepKind) : null;
-    if (firstStep) firstStepTaken = true;
+    const firstStep = wantsStep && firstStepsTaken < 2 ? (String(b.firstStep) as FirstStepKind) : null;
+    if (firstStep) firstStepsTaken += 1;
     bubbles.push({ members, bond, tier, rationale: String(b.rationale ?? '').slice(0, 300), firstStep });
   }
 
