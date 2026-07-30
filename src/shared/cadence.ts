@@ -237,9 +237,36 @@ export function rollEventAnchor(
   };
 }
 
+// A RECURRING event's occurrence today, once its moment (plus the same grace
+// hour) has gone, is as spent as a one-shot: the 2pm appointment at 5pm no
+// longer wants anything, and its card settles the same way — the occasion
+// resolves neutrally, the rhythm re-arms for the next slot. Day-precision
+// occurrences stay live all their day (they lapse at the 5am rollover, like
+// day-precision one-shots); occurrences on other days are not today's to
+// spend. Derived only — no status is written; the item stays active.
+export function occurrencePassedForNow(
+  item: {
+    cadence: Cadence | null;
+    eventAt: string | null;
+    eventEnd: string | null;
+    datePrecision?: DatePrecision;
+  },
+  now: number,
+  tzOffsetMinutes?: number,
+): boolean {
+  if (!item.cadence || !item.eventAt) return false;
+  if (item.datePrecision === 'day') return false;
+  const tz = tzOffsetMinutes ?? -new Date(now).getTimezoneOffset();
+  const dayStart = new Date(sleepDayOf(now, tz) * DAY_MS + (EARLY_MORNING_CUTOFF_MINUTES - tz) * 60_000);
+  const occ = nextOccurrence(item.cadence, item.eventAt, dayStart);
+  if (sleepDayOf(occ.getTime(), tz) !== sleepDayOf(now, tz)) return false;
+  const span = item.eventEnd ? new Date(item.eventEnd).getTime() - new Date(item.eventAt).getTime() : 0;
+  return occ.getTime() + Math.max(0, span) + EVENT_PASSED_GRACE_MS < now;
+}
+
 // Resolved = nothing left to want from the item right now: checked off for
 // the occasion, closed out of its lifecycle (dismissed / passed / missed),
-// or an event that already happened.
+// an event that already happened, or a recurring occurrence spent today.
 export function isResolvedForNow(
   item: {
     status: string;
@@ -252,7 +279,12 @@ export function isResolvedForNow(
   now: number,
   tzOffsetMinutes?: number,
 ): boolean {
-  return isDoneForNow(item) || isClosedStatus(item.status) || eventPassed(item, now, tzOffsetMinutes);
+  return (
+    isDoneForNow(item) ||
+    isClosedStatus(item.status) ||
+    eventPassed(item, now, tzOffsetMinutes) ||
+    occurrencePassedForNow(item, now, tzOffsetMinutes)
+  );
 }
 
 // Captured-today relevance (Now screen, §9.1): does this item carry TODAY's
