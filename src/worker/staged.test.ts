@@ -110,7 +110,7 @@ describe('validateCurationPlan — bubbles', () => {
     expect(plan.bubbles.map((b) => b.bond)).toEqual(['package', 'solo']);
   });
 
-  it('keeps only the first firstStep flag and discards invalid values', () => {
+  it('caps firstStep flags at two per map, in plan order, and discards invalid values', () => {
     const plan = validateCurationPlan(
       {
         adds: [],
@@ -118,12 +118,13 @@ describe('validateCurationPlan — bubbles', () => {
           bubble({ members: ['i1', 'i2'], firstStep: 'write-it-for-me' }),
           bubble({ members: ['i2'], firstStep: 'breakdown' }),
           bubble({ members: ['i2'], firstStep: 'name-a-when' }),
+          bubble({ members: ['i2'], firstStep: 'tiny-first-move' }),
         ],
       },
       floors,
       eligible,
     );
-    expect(plan.bubbles.map((b) => b.firstStep)).toEqual([null, 'breakdown', null]);
+    expect(plan.bubbles.map((b) => b.firstStep)).toEqual([null, 'breakdown', 'name-a-when', null]);
   });
 });
 
