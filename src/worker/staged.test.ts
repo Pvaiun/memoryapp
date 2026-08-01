@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { deriveBubbleKind, MAX_CURATION_ADDS, selectBrainSystem, validateCurationPlan } from './brain';
+import { brainItemLine, deriveBubbleKind, MAX_CURATION_ADDS, selectBrainSystem, validateCurationPlan } from './brain';
 import type { BrainTier } from './placement';
+import type { ItemView } from '../shared/types';
 
 // Staged pipeline, layer 2: validateCurationPlan turns the curator's raw JSON
 // into guarantees. The prompt merely *requests* these; every one is enforced
@@ -81,7 +82,7 @@ describe('validateCurationPlan — bubbles', () => {
 
   it('drops a bubble whose members all filter away', () => {
     const plan = validateCurationPlan(
-      { adds: [], bubbles: [bubble({ members: ['i9'] }), bubble({ members: ['i1', 'i2'] })] },
+      { adds: [], bubbles: [bubble({ members: ['i9'] }), bubble({ members: ['i1', 'i2'], bond: 'package' })] },
       floors,
       eligible,
     );
@@ -91,7 +92,7 @@ describe('validateCurationPlan — bubbles', () => {
 
   it("raises a bubble's tier to its loudest member's floor — floors are floors", () => {
     const plan = validateCurationPlan(
-      { adds: [], bubbles: [bubble({ members: ['i1', 'i2'], tier: 'dot' })] },
+      { adds: [], bubbles: [bubble({ members: ['i1', 'i2'], bond: 'package', tier: 'dot' })] },
       floors,
       eligible,
     );
@@ -110,12 +111,27 @@ describe('validateCurationPlan — bubbles', () => {
     expect(plan.bubbles.map((b) => b.bond)).toEqual(['package', 'solo']);
   });
 
+  it('splits a multi-member "solo" bubble into actual solos — the claim is honored literally', () => {
+    // Observed dodge: two unrelated daily rhythms lumped as one bubble under
+    // the solo label, skipping the bond tests entirely.
+    const plan = validateCurationPlan(
+      { adds: [], bubbles: [bubble({ members: ['i1', 'i2'], bond: 'solo', tier: 'dot', rationale: 'beat' })] },
+      floors,
+      eligible,
+    );
+    expect(plan.bubbles).toHaveLength(2);
+    expect(plan.bubbles.map((b) => b.members)).toEqual([['i1'], ['i2']]);
+    // Each split member is floored individually: i1 to mid, i2 to quiet.
+    expect(plan.bubbles.map((b) => b.tier)).toEqual(['mid', 'quiet']);
+    expect(plan.bubbles.every((b) => b.bond === 'solo' && b.rationale === 'beat')).toBe(true);
+  });
+
   it('caps firstStep flags at two per map, in plan order, and discards invalid values', () => {
     const plan = validateCurationPlan(
       {
         adds: [],
         bubbles: [
-          bubble({ members: ['i1', 'i2'], firstStep: 'write-it-for-me' }),
+          bubble({ members: ['i1', 'i2'], bond: 'package', firstStep: 'write-it-for-me' }),
           bubble({ members: ['i2'], firstStep: 'breakdown' }),
           bubble({ members: ['i2'], firstStep: 'name-a-when' }),
           bubble({ members: ['i2'], firstStep: 'tiny-first-move' }),
@@ -213,5 +229,59 @@ describe('deriveBubbleKind — the rehearsal register is derived, never declared
   });
   it('empty membership defaults to situation', () => {
     expect(deriveBubbleKind([])).toBe('situation');
+  });
+});
+
+describe('brainItemLine — the unscheduled token (grounding input)', () => {
+  // Minimal fixture in the worker.test.ts style: only the fields the line
+  // renderer reads, cast — the point under test is one token's presence.
+  const view = (over: Partial<ItemView>): ItemView =>
+    ({
+      id: 'x',
+      type: 'DO',
+      title: 'Thing',
+      status: 'active',
+      deadline: null,
+      deadlineHardness: null,
+      datePrecision: 'time',
+      cadence: null,
+      eventAt: null,
+      eventEnd: null,
+      optionality: 'must',
+      effort: 'medium',
+      createdAt: '2026-07-30T12:00:00Z',
+      lastCompletedAt: null,
+      lastSurfacedAt: null,
+      surfacedCount: 0,
+      rawTexts: [{ ts: '2026-07-30T12:00:00Z', text: 'Thing' }],
+      boostUpdatedAt: null,
+      affects: [],
+      themes: [],
+      effectivePriority: 0.5,
+      neglected: false,
+      ...over,
+    }) as unknown as ItemView;
+  const now = new Date('2026-07-31T12:00:00Z');
+
+  it('a date-less HAPPEN says unscheduled outright — absence proved too easy to read as "today"', () => {
+    const line = brainItemLine(view({ type: 'HAPPEN', title: 'Dim sum with mom' }), now, 0);
+    expect(line).toContain('unscheduled');
+  });
+
+  it('a dated HAPPEN and an undated DO carry no unscheduled token', () => {
+    expect(brainItemLine(view({ type: 'HAPPEN', eventAt: '2026-07-31T18:00:00Z' }), now, 0)).not.toContain(
+      'unscheduled',
+    );
+    expect(brainItemLine(view({}), now, 0)).not.toContain('unscheduled');
+  });
+
+  it('a recurring HAPPEN reads its standing, never unscheduled', () => {
+    const line = brainItemLine(
+      view({ type: 'HAPPEN', cadence: { freq: 'daily', interval: 1, atTime: '10:00' }, createdAt: '2026-07-25T10:00:00Z' }),
+      now,
+      0,
+    );
+    expect(line).not.toContain('unscheduled');
+    expect(line).toContain('every=');
   });
 });

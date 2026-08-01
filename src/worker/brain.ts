@@ -578,6 +578,12 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     } else if (standing) {
       parts.push(`next=+${standing.days}d`);
     }
+  } else if (i.type === 'HAPPEN') {
+    // A date-less HAPPEN is an event nobody has scheduled yet. Absence alone
+    // proved too easy to gloss: the Brain read a fresh undated event as
+    // "probably today" and asserted it as fact on a card. The unknown is
+    // stated outright so it cannot be mistaken for a blank to fill.
+    parts.push('unscheduled');
   }
   if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
   if (i.neglected && i.cadence)
@@ -743,7 +749,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), with a clock time in parens only when the user named one — due=+2d(3pm, hard) has a time, due=+2d(hard) and happens=+2d name the day with no time attached; deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), with a clock time in parens only when the user named one — due=+2d(3pm, hard) has a time, due=+2d(hard) and happens=+2d name the day with no time attached; deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; unscheduled marks a HAPPEN with no date at all — the event exists but no one has said when: it is not today's event, not this week's, not anything's, until the user schedules it; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
@@ -910,6 +916,8 @@ const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a
 
 ${ITEM_FORMAT}
 
+GROUNDING: everything you assert must come from the item lines — absence is information, never a blank to fill. An "unscheduled" event has no date: it is not today's event, and it cannot anchor an opportunity — an opportunity's anchor must be dated today by the DATA (a mandatory item, or tokens that say today). An unscheduled event may still earn a place as a thing to SCHEDULE — flag name-a-when and let the user supply the date — never as a thing that is happening.
+
 ADDS — what else earns a place today, chosen from the items NOT on the mandatory list. Three forces can put an item on a map: anticipation (its date is approaching), opportunity (today makes acting on it unusually cheap), and attention (it needs to be seen again). Anticipation is not yours: code runs the calendar and will surface every dated item when its day arrives, so an add justified by an approaching date — in any wording: due soon, coming up, a heads-up, worth knowing about, before the weekend — is code's job done worse, and does not enter. Your two reasons:
 - OPPORTUNITY: today's map already contains a context this item genuinely joins — verified with the same tests as BUBBLES, tagged "opportunity".
 - ATTENTION: airtime. The accounting block names the never-shown backlog outright (its ids and the oldest age); prefer what has NOT had recent airtime over what was seen today. Tags: "starved" (never or barely shown), "stalled" (shown many mornings, still unacted — earns a place only with a CHANGED ask, never a repeat), "keep-warm" (a KNOW worth rehearsing — important or recaptured, not recently seen; where-things-are reference facts almost never qualify), "momentum" (fits a burst rhythm the profile shows).
@@ -941,6 +949,7 @@ THE FACTS, PRECISELY:
 - Chronological: mention members in the order they happen today.
 - Every timed member gets its time — never a time for one and not another on the same card.
 - Days are named, not gestured at: "tomorrow (Friday) at 6pm", "next Wednesday at 7pm" — never "lands tomorrow", never "soon", never "the following Wednesday".
+- Only dates that exist: never write a day, time, or occurrence the member lines don't carry. A line marked "unscheduled" has no date — the card may invite scheduling; it must never imply the event is happening today.
 - The card's size already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly.
 
 TONE IS DATA, NOT DECORATION. The curator's rationale and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes (hardness means the date won't move — never verbalize the flag itself: "and it's hard" reads as difficulty, not immovability). A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
@@ -1019,20 +1028,34 @@ export function validateCurationPlan(
         return true;
       });
     if (!members.length) continue;
-    let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
-    for (const m of members) {
-      const f = floors.get(m);
-      if (f) tier = maxTier(tier, f.floor);
-    }
     const bond = (BUBBLE_BONDS as readonly string[]).includes(String(b.bond))
       ? (String(b.bond) as BubbleBond)
       : members.length > 1
         ? 'package'
         : 'solo';
+    const rationale = String(b.rationale ?? '').slice(0, 300);
     const wantsStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep));
     const firstStep = wantsStep && firstStepsTaken < 2 ? (String(b.firstStep) as FirstStepKind) : null;
     if (firstStep) firstStepsTaken += 1;
-    bubbles.push({ members, bond, tier, rationale: String(b.rationale ?? '').slice(0, 300), firstStep });
+    // A "solo" bond holding several members contradicts its own claim — the
+    // observed case lumped two unrelated daily rhythms as one "standing
+    // beat" under the solo label, dodging the bond tests entirely. The claim
+    // is honored literally: each member stands alone, floored individually.
+    if (bond === 'solo' && members.length > 1) {
+      for (const [idx, m] of members.entries()) {
+        let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
+        const f = floors.get(m);
+        if (f) tier = maxTier(tier, f.floor);
+        bubbles.push({ members: [m], bond: 'solo', tier, rationale, firstStep: idx === 0 ? firstStep : null });
+      }
+      continue;
+    }
+    let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
+    for (const m of members) {
+      const f = floors.get(m);
+      if (f) tier = maxTier(tier, f.floor);
+    }
+    bubbles.push({ members, bond, tier, rationale, firstStep });
   }
 
   // Coverage nets, both directions: a mandatory item the plan ignored still
