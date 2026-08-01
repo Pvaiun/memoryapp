@@ -1,4 +1,4 @@
-import { nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
+import { completedForOccurrence, completedWithinSleepDay, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
 import { sleepDayOf } from '../shared/dates';
 import type { DatePrecision, Effort } from '../shared/types';
 import type { Env } from './env';
@@ -79,6 +79,27 @@ export function computeDueAlerts(
   for (const item of items) {
     if (item.status !== 'active') continue;
 
+    // Has the user already dealt with the thing this alert would be about?
+    //
+    // A one-shot answers by status — completing it leaves 'active', so it
+    // never reaches here. A RECURRING DO never reaches status='completed':
+    // cadence is a rhythm, not a one-shot, so its only record of being ticked
+    // is last_completed_at. Reading nothing but status is what kept the daily
+    // 8pm ping arriving after the 6pm tick, night after night.
+    //
+    // Two ways an alert can be moot, and both are needed:
+    //   • its own occurrence is met — a completion on that occurrence's sleep
+    //     day or later (completedForOccurrence);
+    //   • the rhythm was released earlier today — completing a recurring DO
+    //     rolls its deadline to the next slot, and a long runway (a 'large'
+    //     item reaches 5 days back) would otherwise ping about TOMORROW's
+    //     occurrence within minutes of ticking today's off.
+    // Neither retires the item: the rhythm re-arms when the sleep day rolls,
+    // and the next occurrence pings on its own terms.
+    const settled = (occurrenceMs: number) =>
+      completedForOccurrence(item.lastCompletedAt, occurrenceMs, tzOffsetMinutes) ||
+      (!!item.cadence && completedWithinSleepDay(item.lastCompletedAt ?? null, now, tzOffsetMinutes));
+
     // All-day items due TODAY and still open, gathered for the evening sweep.
     // Nothing punctual fires for them; the runway path below skips them too.
     //
@@ -92,7 +113,7 @@ export function computeDueAlerts(
       item.datePrecision === 'day' &&
       item.deadline &&
       sleepDayOf(new Date(item.deadline).getTime(), tzOffsetMinutes) === today &&
-      sleepDayOf(new Date(item.lastCompletedAt ?? 0).getTime(), tzOffsetMinutes) !== today
+      !settled(new Date(item.deadline).getTime())
     ) {
       openAllDay.push(item.title);
     }
@@ -123,7 +144,7 @@ export function computeDueAlerts(
     if (item.type === 'DO' && item.deadline && item.deadlineHardness === 'hard' && item.datePrecision !== 'day') {
       const runwayMs = RUNWAY_MINUTES[item.effort] * 60_000;
       const dueMs = new Date(item.deadline).getTime();
-      if (nowMs >= dueMs - runwayMs && nowMs < dueMs) {
+      if (nowMs >= dueMs - runwayMs && nowMs < dueMs && !settled(dueMs)) {
         const hoursLeft = Math.max(1, Math.round((dueMs - nowMs) / 3_600_000));
         alerts.push({
           itemId: item.id,
@@ -144,7 +165,7 @@ export function computeDueAlerts(
     if (item.type === 'DO' && !item.deadline && item.cadence?.atTime) {
       const occurrence = nextAtTimeOccurrence(item.cadence, item.createdAt, new Date(nowMs - 10 * 60_000), tzOffsetMinutes);
       const occMs = occurrence.getTime();
-      if (nowMs >= occMs && nowMs < occMs + 10 * 60_000) {
+      if (nowMs >= occMs && nowMs < occMs + 10 * 60_000 && !settled(occMs)) {
         alerts.push({
           itemId: item.id,
           occurrenceKey: occurrence.toISOString(),

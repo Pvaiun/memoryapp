@@ -75,6 +75,25 @@ export function completedWithinSleepDay(
   return sleepDayOf(new Date(lastCompletedAt).getTime(), tzOffsetMinutes) === sleepDayOf(now.getTime(), tzOffsetMinutes);
 }
 
+// Has a particular OCCURRENCE been ticked off? last_completed_at is the moment
+// of the TAP, not the occurrence it settles, so a turn counts as met by a
+// completion on its sleep day or any later one — never by instant. Comparing
+// instants made "take out the recycling", ticked at 8pm on its own Tuesday,
+// read as unmet against its 9:30pm turn and stay that way every day after.
+//
+// One definition, shared by the map's cadence standing and the push scan, so
+// the thing the user sees ticked and the thing that pings can never disagree.
+export function completedForOccurrence(
+  lastCompletedAt: string | null | undefined,
+  occurrenceMs: number,
+  tzOffsetMinutes: number,
+): boolean {
+  if (!lastCompletedAt) return false;
+  return (
+    sleepDayOf(new Date(lastCompletedAt).getTime(), tzOffsetMinutes) >= sleepDayOf(occurrenceMs, tzOffsetMinutes)
+  );
+}
+
 // The user-facing "checked" state of a DO. One-shots check by status; a
 // recurring DO never reaches status='completed', so it checks by doneToday —
 // done for this occurrence, released when the sleep-cycle day rolls (5am).
