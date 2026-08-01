@@ -155,6 +155,58 @@ describe('Layer-1 punctual push (§11.4)', () => {
     // 20:02 UTC the same Thursday is only 16:02 local — nothing due yet.
     expect(computeDueAlerts(items, new Date('2026-07-23T20:02:00Z'), -240)).toHaveLength(0);
   });
+
+  it('a recurring DO ticked off earlier today does not ping at its turn', () => {
+    // The regression: a recurring DO never reaches status='completed', so the
+    // status filter above let "take the meds, daily at 8pm" ping at 8pm even
+    // though it was ticked at 6pm — the app nagging about a done thing.
+    const daily = { ...baseItem, cadence: { freq: 'daily' as const, interval: 1, atTime: '20:00' } };
+    // Thu 20:02 local (UTC-4) — the turn.
+    const now = new Date('2026-07-24T00:02:00Z');
+    expect(computeDueAlerts([daily], now, -240)).toHaveLength(1);
+    // Ticked at 6pm local the same day.
+    expect(computeDueAlerts([{ ...daily, lastCompletedAt: '2026-07-23T22:00:00Z' }], now, -240)).toHaveLength(0);
+    // Ticked after the turn, inside the 10min window — still nothing more to say.
+    expect(computeDueAlerts([{ ...daily, lastCompletedAt: '2026-07-24T00:01:00Z' }], now, -240)).toHaveLength(0);
+  });
+
+  it('…and re-arms for the next occurrence — the rhythm is not retired', () => {
+    const daily = {
+      ...baseItem,
+      cadence: { freq: 'daily' as const, interval: 1, atTime: '20:00' },
+      lastCompletedAt: '2026-07-23T22:00:00Z', // Thu 6pm local
+    };
+    // Friday's turn pings normally: yesterday's tick settles yesterday only.
+    expect(computeDueAlerts([daily], new Date('2026-07-25T00:02:00Z'), -240)).toHaveLength(1);
+  });
+
+  it('a completion in the small hours settles the turn it belongs to, not the next one', () => {
+    // Sleep-cycle day (5am boundary): ticking a 9:30pm chore at 12:30am is
+    // still THAT day's tick, and must not silence the following evening.
+    const daily = { ...baseItem, cadence: { freq: 'daily' as const, interval: 1, atTime: '21:30' } };
+    const ticked = { ...daily, lastCompletedAt: '2026-07-24T04:30:00Z' }; // Fri 12:30am local = Thu's sleep day
+    // Thursday's 9:30pm turn is settled by it (a tap after its occurrence).
+    expect(computeDueAlerts([ticked], new Date('2026-07-24T01:32:00Z'), -240)).toHaveLength(0);
+    // Friday's 9:30pm turn is a fresh one.
+    expect(computeDueAlerts([ticked], new Date('2026-07-25T01:32:00Z'), -240)).toHaveLength(1);
+  });
+
+  it('a recurring runway does not ping about tomorrow the moment today is ticked', () => {
+    // Completing a recurring DO rolls its deadline to the next slot, and a
+    // 'large' runway reaches 5 days back — so without the release the tick
+    // itself produced "Due in 1 days — needs runway".
+    const rolled = {
+      ...baseItem,
+      cadence: { freq: 'daily' as const, interval: 1 },
+      deadline: '2026-07-25T18:00:00Z', // rolled forward to tomorrow
+      deadlineHardness: 'hard',
+      effort: 'large' as const,
+      lastCompletedAt: '2026-07-24T17:00:00Z', // today's tick
+    };
+    expect(computeDueAlerts([rolled], new Date('2026-07-24T17:05:00Z'))).toHaveLength(0);
+    // Tomorrow, with today's occurrence live again, it speaks.
+    expect(computeDueAlerts([rolled], new Date('2026-07-25T12:00:00Z'))).toHaveLength(1);
+  });
 });
 
 describe('isTodayRelevant — the same-day safety net (§9.2 floor)', () => {
