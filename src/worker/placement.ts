@@ -1,6 +1,7 @@
 import type { Cadence, ItemView } from '../shared/types';
 import {
   cadenceGridGapMs,
+  completedForOccurrence,
   completedWithinSleepDay,
   nextAtTimeOccurrence,
   nextOccurrence,
@@ -186,15 +187,9 @@ export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: numb
     previous = occ;
     cursor = new Date(occ.getTime() + 60_000);
   }
-  // A turn counts as met by a completion on its sleep day or any later one —
-  // never by instant, because last_completed_at is the moment of the TAP, not
-  // the occurrence. Comparing instants made "take out the recycling", ticked
-  // at 8pm on its own Tuesday, read as unmet against a 9:30pm turn and stay
-  // that way every day after. Same rule as doneToday, one turn further back.
-  const completedDay = i.lastCompletedAt
-    ? sleepDayOf(new Date(i.lastCompletedAt).getTime(), tzOffsetMinutes)
-    : null;
-  if (previous && (completedDay === null || completedDay < sleepDayOf(previous.getTime(), tzOffsetMinutes))) {
+  // Same rule as doneToday, one turn further back: a turn is met by a
+  // completion on its sleep day or any later one (completedForOccurrence).
+  if (previous && !completedForOccurrence(i.lastCompletedAt, previous.getTime(), tzOffsetMinutes)) {
     return { kind: 'overdue', at: previous, days: -sleepDayDiff(previous.getTime(), now.getTime(), tzOffsetMinutes) };
   }
   // Today's turn already done releases the rhythm until tomorrow, so the
