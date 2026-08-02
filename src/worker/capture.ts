@@ -120,25 +120,33 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
       tz,
     );
 
+    // An event is its date. The heuristic parser already refuses to type a
+    // dateless capture as HAPPEN; the LLM path must agree: a HAPPEN whose
+    // when neither resolved nor recurs demotes to DO — the intention to do
+    // or arrange it, with a full lifecycle — never a dateless event, which
+    // has none (can't pass, can't complete, invisible to placement, and an
+    // open invitation for the Brain to invent the missing date). A recurring
+    // HAPPEN keeps its type: the cadence IS its when.
+    const type = p.type === 'HAPPEN' && !eventAt && !p.cadence ? 'DO' : p.type;
     // The parser already knows whether the phrase named a time; until now that
     // fact was dropped at the door and three surfaces re-guessed it from the
     // stored noon anchor. Keep it. Whichever date this item type carries is
     // the one that decides — an undated item's precision is inert.
-    const resolved = p.type === 'HAPPEN' ? eventAt : deadline;
+    const resolved = type === 'HAPPEN' ? eventAt : deadline;
     const itemEmbedding = await embed(env, p.title);
     const id = await insertItem(db, {
-      type: p.type,
+      type,
       title: p.title,
       rawText: { ts: nowIso(), text: parsed.items.length > 1 ? p.title : req.text },
-      deadline: p.type === 'DO' ? deadline?.iso ?? null : null,
-      deadlineHardness: p.type === 'DO' && deadline ? p.deadlineHardness ?? 'hard' : null,
+      deadline: type === 'DO' ? deadline?.iso ?? null : null,
+      deadlineHardness: type === 'DO' && deadline ? p.deadlineHardness ?? 'hard' : null,
       datePrecision: resolved && !resolved.hasTime ? 'day' : 'time',
-      cadence: p.type === 'KNOW' ? null : p.cadence,
+      cadence: type === 'KNOW' ? null : p.cadence,
       optionality: p.optionality,
       effort: p.effort,
-      pingNatured: p.type === 'DO' ? p.pingNatured : false,
-      eventAt: p.type === 'HAPPEN' ? eventAt?.iso ?? null : null,
-      eventEnd: p.type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
+      pingNatured: type === 'DO' ? p.pingNatured : false,
+      eventAt: type === 'HAPPEN' ? eventAt?.iso ?? null : null,
+      eventEnd: type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
       alertLeadMinutes: p.alertLeadMinutes,
       showOnCalendar: p.calendarWorthy,
       priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
@@ -246,7 +254,7 @@ export async function llmParse(
 BACKEND TYPES (never shown to the user):
 - DO: something the user does; has a done-state. Tasks, goals, reminders.
 - KNOW: a fact the user knows; never "done". ("Sarah is allergic to nuts")
-- HAPPEN: occurs at a time, then is past. Appointments, visits, events.
+- HAPPEN: occurs at a known time, then is past. Appointments, visits, events.
 
 SEGMENTATION — the unit is an INTENTION, not a verb. The large majority of captures are ONE item; return multiple only when the text contains clearly separate concerns the user would file and complete independently.
 - One plan stays one item even when it contains several verbs: "wake up early and play Pragmata tomorrow, no excuses" is ONE item (one intention for tomorrow), "buy milk, eggs, bread" is ONE errand, "email Sam and ask about the invoice" is ONE action.
@@ -264,7 +272,7 @@ FOR EACH ITEM emit:
 - "optionality": "must" | "nice" — must-do vs nice-to-do, inferred from phrasing ("maybe", "if I get to it" → "nice"). Orthogonal to priority.
 - "effort": "quick" | "medium" | "large" — coarse magnitude ("do taxes" is large, "call grandma" is quick).
 - "pingNatured": true ONLY when the user is asking to be nudged at a moment ("remind me to…", "don't let me forget to…") — the wish for a ping must be in their phrasing. A task is not ping-natured just because it is small or scheduled: "take out garbage every Thursday at 9:30" is a task with a schedule, "finish the report by Friday" is a deliverable — both false. Only for DO.
-- "eventAtPhrase": for HAPPEN, the date/time phrase (same rules as deadlinePhrase; a range like "July 20 to July 25" captures a multi-day event), else null.
+- "eventAtPhrase": for HAPPEN, the mandatory date/time phrase (same rules as deadlinePhrase; a range like "July 20 to July 25" captures a multi-day event), else null.
 - "alertLeadMinutes": only if the user explicitly asked when to be alerted ("remind me the night before" → 720), else null.
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
 - "themes": 1-3 theme names. You are the librarian of an EMERGENT taxonomy: strongly prefer reusing an existing theme; coin a new short name (1-2 words, e.g. "Home", "Health", "Sarah") only when nothing fits. Multi-theme is encouraged when genuinely apt.
