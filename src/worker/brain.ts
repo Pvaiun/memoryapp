@@ -878,50 +878,45 @@ const FIRST_STEP_KINDS = ['breakdown', 'name-a-when', 'tiny-first-move'] as cons
 const BUBBLE_BONDS = ['episode', 'package', 'solo', 'rehearsal'] as const;
 type BubbleBond = (typeof BUBBLE_BONDS)[number];
 
-export interface CurationAdd {
-  id: string; // alias, e.g. "i7"
-  rationale: string;
-  tags: string[];
-  tier: BrainTier;
-}
-
 export interface CurationBubble {
   members: string[]; // aliases
   bond: BubbleBond;
+  // The bond test's answer, written down (episode → occurrence, package →
+  // sitting). Elicitation, not enforcement: no code judges these strings —
+  // their value is that a claim forced into a named field is a claim the
+  // model has to actually make, and one the snapshot lets a human audit at
+  // a glance. A person, a theme, or "the relationship" sitting in an
+  // occurrence field indicts itself.
+  occurrence: string | null;
+  sitting: string | null;
+  // Annotation for the record (why the discretionary members earn today —
+  // starved, stalled, opportunity...), never a gate.
+  tags: string[];
   tier: BrainTier;
   rationale: string;
   firstStep: FirstStepKind | null;
 }
 
 export interface CurationPlan {
-  adds: CurationAdd[];
   bubbles: CurationBubble[];
 }
-
-// Runaway backstop, deliberately far above the prompt's guidance. The real
-// contract on adds is the declaration requirement — every non-mandatory item
-// on the map carries a stated rationale — and the budget the prompt teaches
-// is card slots (map shape), not item count: a ride-along absorbed into an
-// existing bubble is nearly free, so a good bundling day may legitimately
-// add more items than a scattered one.
-export const MAX_CURATION_ADDS = 8;
 
 const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a user with ADHD. Each morning, deterministic code places the day's REQUIRED items — the mandatory list, each entry naming the rule that fired (due-today, overdue, event-today, rhythm-today, runway for big-effort things) and the floor tier code will enforce. You do the two things rules cannot: decide what ELSE earns a place on today's map, and compose everything — required and added — into bubbles: small groups that act as one unit. Reply with ONLY a JSON object.
 
 ${ITEM_FORMAT}
 
-ADDS — what else earns a place today, chosen from the items NOT on the mandatory list. Three forces can put an item on a map: anticipation (its date is approaching), opportunity (today makes acting on it unusually cheap), and attention (it needs to be seen again). Anticipation is not yours: code runs the calendar and will surface every dated item when its day arrives, so an add justified by an approaching date — in any wording: due soon, coming up, a heads-up, worth knowing about, before the weekend — is code's job done worse, and does not enter. Your two reasons:
-- OPPORTUNITY: today's map already contains a context this item genuinely joins — verified with the same tests as BUBBLES, tagged "opportunity".
-- ATTENTION: airtime. The accounting block names the never-shown backlog outright (its ids and the oldest age); prefer what has NOT had recent airtime over what was seen today. Tags: "starved" (never or barely shown), "stalled" (shown many mornings, still unacted — earns a place only with a CHANGED ask, never a repeat), "keep-warm" (a KNOW worth rehearsing — important or recaptured, not recently seen; where-things-are reference facts almost never qualify), "momentum" (fits a burst rhythm the profile shows).
-Two escape hatches, used rarely and argued plainly: "runway-pull" (the lead-time rules underestimate this item — pulling it early overrides code, so the rationale must say why the runway is genuinely insufficient) and "other" (no tag fits — the rationale says why it still belongs). Each add carries a rationale in your own words — why this item, why today; the card writer reads it — and it must survive "why this, today, instead of nothing?". Each add also names a tier — the loudness it deserves if it ends up standing alone; a shared bubble's tier is the bubble's own. Budget by map shape (see BUBBLES), not by item count. When the mandatory set is light, spend more freely — a quiet day is exactly the day for a lingering goal, an old someday item, or a fact worth keeping warm. When it is heavy, hold back; "adds": [] is a fine answer.
+ADDS — what else earns a place today. There is no separate ledger: placing a non-mandatory item in a bubble IS the add, and that bubble's rationale must carry why the item is there — it must survive "why this, today, instead of nothing?". Three forces can put an item on a map: anticipation (its date is approaching), opportunity (today makes acting on it unusually cheap), and attention (it needs to be seen again). Anticipation is not yours: code runs the calendar and will surface every dated item when its day arrives, so an inclusion justified by an approaching date — in any wording: due soon, coming up, a heads-up, worth knowing about, before the weekend — is code's job done worse, and does not enter. Your two reasons:
+- OPPORTUNITY: today's map already contains a context this item genuinely joins — the bubble it lands in is the claim, and that bubble's bond test is the verification.
+- ATTENTION: airtime. The accounting block names the never-shown backlog outright (its ids and the oldest age); prefer what has NOT had recent airtime over what was seen today. A stalled item (shown many mornings, still unacted) earns a place only with a CHANGED ask, never a repeat. A KNOW worth rehearsing (important or recaptured, not recently seen) is a keep-warm; where-things-are reference facts almost never qualify.
+"tags" (optional, per bubble): annotate why its non-mandatory members earn today — "opportunity", "starved", "stalled", "keep-warm", "momentum" (fits a burst rhythm the profile shows), "runway-pull" (the lead-time rules underestimate a big item — an explicit override, argued in the rationale), "other". Annotation for the record, never a gate. Budget by map shape (see BUBBLES), not by item count. When the mandatory set is light, spend more freely — a quiet day is exactly the day for a lingering goal, an old someday item, or a fact worth keeping warm. When it is heavy, hold back; a map with no discretionary members at all is a fine answer.
 
-BUBBLES — compose the day. Every mandatory item MUST appear in at least one bubble. Every add goes where its reason points — its own bubble is fine. A non-mandatory item may appear as a member ONLY if it is declared in adds; undeclared members are dropped. Bundling is half your job: the mandatory list arrives flat, and composing it is what turns a list into a map. A good day is usually 4-8 bubbles; ten single-item bubbles is a list wearing bubbles — though a real bond is rarer than it looks, and a forced one is worse than a longer list.
+BUBBLES — compose the day. Every mandatory item MUST appear in at least one bubble. Every add goes where its reason points — its own bubble is fine. Bundling is half your job: the mandatory list arrives flat, and composing it is what turns a list into a map. A good day is usually 4-8 bubbles; ten single-item bubbles is a list wearing bubbles — though a real bond is rarer than it looks, and a forced one is worse than a longer list.
 
 A bubble is a claim: these members act as one unit. Only two kinds of claim are ever true, and each has a test to run BEFORE grouping:
-- EPISODE: the members belong to one OCCURRENCE — an event, a visit, a trip, a moment a deadline creates — and what that occurrence itself demands: its prep, its sub-events, the facts needed while it happens. The test: name the occurrence, then cancel it in your head. If every other member goes moot, the bond is real. If what you named is a person, a theme, a feeling, or a span of time, it is not an occurrence, and there is no episode.
-- PACKAGE: completing one member leaves the user already positioned to complete the next. The test: picture them finishing one member and ask what stands between them and the next. If the answer is nothing — same spot, same instrument, same company, same stretch of the day — the bond is real. If anything must change first — a place, a tool, who is present, or waiting for another day — it is not.
+- EPISODE: the members belong to one OCCURRENCE — an event, a visit, a trip, a moment a deadline creates — and what that occurrence itself demands: its prep, its sub-events, the facts needed while it happens. The test: name the occurrence, then cancel it in your head. If every other member goes moot, the bond is real. If what you named is a person, a theme, a feeling, or a span of time, it is not an occurrence, and there is no episode. Write it down: every episode bubble carries "occurrence" — the occurrence you named, in a few words.
+- PACKAGE: completing one member leaves the user already positioned to complete the next. The test: picture them finishing one member and ask what stands between them and the next. If the answer is nothing — same spot, same instrument, same company, same stretch of the day — the bond is real. If anything must change first — a place, a tool, who is present, or waiting for another day — it is not. Write it down: every package bubble carries "sitting" — the single burst you pictured, in a few words ("one phone sitting", "the Chinatown trip").
 Resemblance is the counterfeit of both bonds, and it wears every attribute: same topic, same person, same theme tag, same date, same hour, same effort, same mood, same track record of getting done together. Shared attributes are how items LOOK; bonds are facts about the DOING, and only the tests establish them. The tell of a fake bond: the card's sentence would need a link the items don't themselves establish. Never bend a test to save a card slot — a weak add belongs nowhere rather than in the wrong bubble.
-The other two bonds: "solo" (stands alone — common, and fine) and "rehearsal" (facts kept warm — an offering, not an obligation). Each bubble carries a rationale (why this grouping exists today, in your own words), a tier, and firstStep.
+The other two bonds: "solo" (stands alone — common, and fine) and "rehearsal" (facts kept warm — an offering, not an obligation). Each bubble carries a rationale (why this grouping exists today, in your own words — for a non-mandatory member, this is also why IT is here), its occurrence or sitting per its bond, optional tags, a tier, and firstStep.
 
 TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
 
@@ -929,9 +924,9 @@ firstStep: at most TWO bubbles in the whole map — most days one or none — an
 
 The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
 
-OUTPUT: {"adds":[{"id":"iN","rationale":str,"tags":[str],"tier":"loud"|"mid"|"quiet"|"dot"}],"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"rehearsal","tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
+OUTPUT: {"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"rehearsal","occurrence":str (episode only),"sitting":str (package only),"tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"tags":[str] (optional),"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
 
-const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, and the curator's rationale (why) — the reason the card exists today. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
+const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, the curator's rationale (why) — the reason the card exists today — and, for episodes and packages, the occurrence or sitting it is built on: the real-world frame your sentence should inhabit. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
 
 ${ITEM_FORMAT}
 
@@ -971,42 +966,24 @@ export function deriveBubbleKind(memberTypes: string[]): 'situation' | 'rotation
   return memberTypes.length > 0 && memberTypes.every((t) => t === 'KNOW') ? 'rotation' : 'situation';
 }
 
-// Curation output → validated plan, pure. Everything here is a guarantee the
-// prompt merely requests: adds only from the eligible pile (a mandatory or
-// unknown id is not an add), the add cap, members only from mandatory ∪
-// declared adds, floors never undercut, one firstStep, every mandatory item
-// covered (uncovered ones get solo bubbles carrying their rule), every
-// declared add placed, loudest-first order.
+// Curation output → validated plan, pure. Code enforces only what the spec
+// owns: known aliases, floors never undercut, the two-invitation cap, every
+// mandatory item covered (an ignored one gets a solo bubble carrying its
+// rule), loudest-first order. Membership IS the add declaration — the old
+// separate adds array was double-entry bookkeeping the model had to keep in
+// sync with the bubbles, and it predictably didn't: a correct lesson+class
+// package once lost a member to a forgotten declaration, silently. One
+// ledger, one truth; the bubble's rationale carries the why.
 export function validateCurationPlan(
-  raw: { adds?: unknown; bubbles?: unknown } | null | undefined,
+  raw: { bubbles?: unknown } | null | undefined,
   floors: Map<string, { floor: BrainTier; rule: string }>,
   eligibleAliases: Set<string>,
 ): CurationPlan {
-  const rawAdds = Array.isArray(raw?.adds) ? (raw!.adds as Record<string, unknown>[]) : [];
-  const seenAdd = new Set<string>();
-  const adds: CurationAdd[] = [];
-  for (const a of rawAdds) {
-    if (!a || typeof a !== 'object') continue;
-    const id = String(a.id ?? '').trim();
-    if (!eligibleAliases.has(id) || floors.has(id) || seenAdd.has(id)) continue;
-    if (adds.length >= MAX_CURATION_ADDS) break;
-    seenAdd.add(id);
-    adds.push({
-      id,
-      rationale: String(a.rationale ?? '').slice(0, 300),
-      tags: (Array.isArray(a.tags) ? a.tags : []).map((t) => String(t).slice(0, 40)).slice(0, 4),
-      tier: isBrainTier(a.tier) ? a.tier : 'quiet',
-    });
-  }
-
-  const allowed = new Set<string>([...floors.keys(), ...adds.map((a) => a.id)]);
+  const allowed = new Set<string>([...floors.keys(), ...eligibleAliases]);
   const rawBubbles = Array.isArray(raw?.bubbles) ? (raw!.bubbles as Record<string, unknown>[]) : [];
   const bubbles: CurationBubble[] = [];
-  // Two invitations per map, matching the prompt. The cap was one, and the
-  // first observed enforcement silently stripped the curator's runner-up ask
-  // — a card whose whole rationale was "needs a fresh, plainer ask" reached
-  // the writer with its ask removed, and the prose went limp. Model order
-  // decides which flags survive; the curator leads with what matters most.
+  // Two invitations per map, matching the prompt; model order decides which
+  // flags survive — the curator leads with what matters most.
   let firstStepsTaken = 0;
   for (const b of rawBubbles) {
     if (!b || typeof b !== 'object') continue;
@@ -1019,37 +996,53 @@ export function validateCurationPlan(
         return true;
       });
     if (!members.length) continue;
-    let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
-    for (const m of members) {
-      const f = floors.get(m);
-      if (f) tier = maxTier(tier, f.floor);
-    }
     const bond = (BUBBLE_BONDS as readonly string[]).includes(String(b.bond))
       ? (String(b.bond) as BubbleBond)
       : members.length > 1
         ? 'package'
         : 'solo';
+    // The elicited test answers ride only on the bond they belong to — an
+    // occurrence on a package (or vice versa) is a confused claim, not data.
+    const occurrence =
+      bond === 'episode' && typeof b.occurrence === 'string' && b.occurrence.trim()
+        ? b.occurrence.trim().slice(0, 120)
+        : null;
+    const sitting =
+      bond === 'package' && typeof b.sitting === 'string' && b.sitting.trim()
+        ? b.sitting.trim().slice(0, 120)
+        : null;
+    const tags = (Array.isArray(b.tags) ? b.tags : []).map((t) => String(t).slice(0, 40)).slice(0, 4);
+    const rationale = String(b.rationale ?? '').slice(0, 300);
     const wantsStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep));
     const firstStep = wantsStep && firstStepsTaken < 2 ? (String(b.firstStep) as FirstStepKind) : null;
     if (firstStep) firstStepsTaken += 1;
-    bubbles.push({ members, bond, tier, rationale: String(b.rationale ?? '').slice(0, 300), firstStep });
+    let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
+    for (const m of members) {
+      const f = floors.get(m);
+      if (f) tier = maxTier(tier, f.floor);
+    }
+    bubbles.push({ members, bond, occurrence, sitting, tags, tier, rationale, firstStep });
   }
 
-  // Coverage nets, both directions: a mandatory item the plan ignored still
-  // reaches the map (its rule is its rationale), and a declared add never
-  // silently vanishes — the declaration was the reason, so it gets its bubble.
+  // The one coverage net left (a spec guarantee, not taste): a mandatory item
+  // the plan ignored still reaches the map, its rule as its rationale.
   const covered = new Set(bubbles.flatMap((b) => b.members));
   for (const [alias, f] of floors) {
     if (covered.has(alias)) continue;
-    bubbles.push({ members: [alias], bond: 'solo', tier: f.floor, rationale: f.rule, firstStep: null });
-  }
-  for (const a of adds) {
-    if (covered.has(a.id)) continue;
-    bubbles.push({ members: [a.id], bond: 'solo', tier: a.tier, rationale: a.rationale, firstStep: null });
+    bubbles.push({
+      members: [alias],
+      bond: 'solo',
+      occurrence: null,
+      sitting: null,
+      tags: [],
+      tier: f.floor,
+      rationale: f.rule,
+      firstStep: null,
+    });
   }
 
   bubbles.sort((x, y) => compareTier(x.tier, y.tier)); // stable: within a tier, plan order is the ranking
-  return { adds, bubbles };
+  return { bubbles };
 }
 
 // One rebuild through the three layers. Throws only when the curation call
@@ -1107,7 +1100,7 @@ async function stagedBuildBubbles(
   // judgment the tuning knob exists to tune. Same composition rule as the
   // legacy prompts: appended verbatim, no framing (§ composeBrainSystem).
   const curationSystem = addendum?.trim() ? `${CURATION_SYSTEM}\n\n${addendum.trim()}` : CURATION_SYSTEM;
-  const rawPlan = await anthropicJson<{ adds?: unknown; bubbles?: unknown }>(
+  const rawPlan = await anthropicJson<{ bubbles?: unknown }>(
     env,
     env.BRAIN_MODEL,
     curationSystem,
@@ -1115,7 +1108,6 @@ async function stagedBuildBubbles(
     4096,
   );
   const plan = validateCurationPlan(rawPlan, floors, eligibleAliases);
-  const addByAlias = new Map(plan.adds.map((a) => [a.id, a]));
 
   const kinds = plan.bubbles.map((b) =>
     deriveBubbleKind(b.members.map((m) => viewById.get(idByAlias.get(m) ?? '')?.type ?? '')),
@@ -1129,11 +1121,14 @@ async function stagedBuildBubbles(
       bond: b.bond,
       register: kinds[idx] === 'rotation' ? 'rehearsal' : 'standard',
       why: b.rationale,
+      // The curator's elicited bond claim rides along — the writer frames the
+      // card around the occurrence or sitting the plan actually named.
+      ...(b.occurrence ? { occurrence: b.occurrence } : {}),
+      ...(b.sitting ? { sitting: b.sitting } : {}),
       members: b.members.map((m) => ({
         id: m,
         line: lineByAlias.get(m) ?? m,
         required: floors.get(m)?.rule ?? null,
-        added: addByAlias.get(m)?.rationale ?? null,
       })),
       firstStep: b.firstStep,
     })),
