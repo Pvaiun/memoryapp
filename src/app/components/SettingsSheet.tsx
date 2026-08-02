@@ -42,6 +42,7 @@ interface Status {
   mapDay: string | null;
   mapBuiltAt: string | null;
   brainPrompt: 'full' | 'minimal' | 'staged';
+  brainUseProfile: boolean;
   brainAddendum: string;
   brainOverrideEnabled: boolean;
   brainOverride: string;
@@ -74,6 +75,7 @@ export default function SettingsSheet({
 }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [brainPrompt, setBrainPrompt] = useState<'full' | 'minimal' | 'staged' | null>(null);
+  const [useProfile, setUseProfile] = useState(true);
 
   const [addendum, setAddendum] = useState('');
   const [savedAddendum, setSavedAddendum] = useState('');
@@ -86,6 +88,7 @@ export default function SettingsSheet({
       const st = s as unknown as Status;
       setStatus(st);
       setBrainPrompt(st.brainPrompt ?? 'minimal');
+      setUseProfile(st.brainUseProfile ?? true);
       setAddendum(st.brainAddendum ?? '');
       setSavedAddendum(st.brainAddendum ?? '');
       setOverrideOn(!!st.brainOverrideEnabled);
@@ -144,6 +147,14 @@ export default function SettingsSheet({
     const prev = brainPrompt;
     setBrainPrompt(v);
     api.setBrainPrompt(v).catch(() => setBrainPrompt(prev));
+  };
+
+  // Whether the behavioural profile is fed to the Brain. Optimistic; reverts
+  // on failure — same pattern as the prompt toggle.
+  const toggleUseProfile = (on: boolean) => {
+    const prev = useProfile;
+    setUseProfile(on);
+    api.setBrainUseProfile(on).catch(() => setUseProfile(prev));
   };
 
   return (
@@ -210,6 +221,18 @@ export default function SettingsSheet({
               prompts; Staged is the split pipeline (code places the day's required items, a curator call picks
               what else deserves airtime, a writer call names the cards). The prompt override below, while
               checked, outranks all three.
+            </small>
+          </div>
+
+          <div className="field">
+            <label className="checkbox-label">
+              Use profile
+              <input type="checkbox" checked={useProfile} onChange={(e) => toggleUseProfile(e.target.checked)} />
+            </label>
+            <small className="settings-hint">
+              Feed the daily behavioural profile to the Brain. Off, the map is built from item signals alone —
+              the profile is still computed every morning and recorded in the snapshot as withheld, so you can
+              compare what it would have added.
             </small>
           </div>
 

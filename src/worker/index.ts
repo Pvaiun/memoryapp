@@ -98,6 +98,18 @@ app.post('/api/settings/brain-prompt', async (c) => {
   return c.json({ ok: true, variant });
 });
 
+// Whether the daily behavioural profile is fed to the Brain. Off, the map is
+// built from item signals alone; the profile is still recomputed each morning
+// and recorded in the snapshot as withheld, so the two are comparable. The
+// experiment this exists for: observed runs showed profile speculation
+// laundered into bonds and invented activities.
+app.post('/api/settings/brain-use-profile', async (c) => {
+  const { enabled } = await c.req.json<{ enabled: boolean }>();
+  if (typeof enabled !== 'boolean') return c.json({ error: 'enabled must be a boolean' }, 400);
+  await setState(c.env.DB, 'brain_use_profile', enabled ? '1' : '0');
+  return c.json({ ok: true, enabled });
+});
+
 // User-authored text appended verbatim to whichever Brain prompt runs — the
 // self-serve workshop layer (tone experiments and the like). Empty clears it.
 app.post('/api/settings/brain-addendum', async (c) => {
@@ -300,6 +312,7 @@ app.get('/api/status', async (c) => {
     mapDay: await getState(db, 'map_day'),
     mapBuiltAt: await getState(db, 'map_built_at'),
     brainPrompt: storedVariant === 'full' ? 'full' : storedVariant === 'staged' ? 'staged' : 'minimal',
+    brainUseProfile: (await getState(db, 'brain_use_profile')) !== '0',
     brainAddendum: (await getState(db, 'brain_prompt_addendum')) ?? '',
     brainOverrideEnabled: (await getState(db, 'brain_prompt_override_enabled')) === '1',
     brainOverride: (await getState(db, 'brain_prompt_override')) ?? '',

@@ -143,6 +143,14 @@ export async function rebuildMap(
     console.error('profile recompute failed', err);
     profileText = await getState(db, 'profile_text');
   }
+  // The use-profile toggle (settings): the profile is the one Brain input
+  // that is interpretation rather than fact, and observed runs showed its
+  // speculation laundered into bonds and invented activities. Off, the Brain
+  // builds from item signals alone; the recompute above still runs so the
+  // snapshot can show what the profile WOULD have said (recorded as
+  // withheld, never as seen — the snapshot must not lie about the call).
+  const useProfile = (await getState(db, 'brain_use_profile')) !== '0';
+  const profileForBrain = useProfile ? profileText : null;
   try {
     await librarianPass(env);
   } catch (err) {
@@ -212,7 +220,7 @@ export async function rebuildMap(
   // staged pipeline runs only when no override is in force.
   const useStaged = prompt.prompt === 'staged';
 
-  const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
+  const input = brainInput(day, items, previous, nameVocabulary, profileForBrain, now, tz);
   // The staged pipeline records its own richer payload (skeleton → plan →
   // prose); the legacy single call records its one input. Whichever ran is
   // what the snapshot must show.
@@ -222,7 +230,7 @@ export async function rebuildMap(
   if (llmAvailable(env) && items.length) {
     try {
       if (useStaged) {
-        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileText, now, tz, prompt.addendum);
+        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileForBrain, now, tz, prompt.addendum);
         proposed = staged.proposed;
         snapshotPayload = staged.payload;
       } else {
@@ -245,6 +253,9 @@ export async function rebuildMap(
     }
   } else {
     proposed = fallbackBubbles(items, now, tz);
+  }
+  if (!useProfile && profileText) {
+    snapshotPayload = { ...snapshotPayload, profileWithheld: profileText };
   }
 
   // Code-side prominence floors mirroring the prompt's tier floors — the

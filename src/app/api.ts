@@ -84,6 +84,12 @@ export const api = {
       body: JSON.stringify({ variant }),
     }),
 
+  setBrainUseProfile: (enabled: boolean) =>
+    req<{ ok: boolean; enabled: boolean }>('/api/settings/brain-use-profile', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+
   setBrainAddendum: (text: string) =>
     req<{ ok: boolean }>('/api/settings/brain-addendum', {
       method: 'POST',
