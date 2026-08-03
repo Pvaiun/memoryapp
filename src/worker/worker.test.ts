@@ -734,7 +734,7 @@ describe('compactEventLines — churn compression for the profile builder', () =
     expect(lines[1]).toContain('(x3)');
   });
 
-  it('collapses identical rapid re-captures', () => {
+  it('collapses identical rapid re-captures silently — a stutter leaves no counter', () => {
     const lines = compactEventLines(
       [
         ev('2026-07-20T03:00:00Z', 'user', 'captured', null, { text: 'make my will' }),
@@ -743,7 +743,30 @@ describe('compactEventLines — churn compression for the profile builder', () =
       titles,
     );
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('(x2)');
+    expect(lines[0]).not.toContain('(x');
+  });
+
+  it('re-expression across days keeps every captured line — repetition reaches the profile as words', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-17T03:00:00Z', 'user', 'captured', null, { text: 'anchovy medallions' }),
+        ev('2026-07-20T14:00:00Z', 'user', 'captured', null, { text: 'anchovy medallions' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+  });
+
+  it('recapture merge events never emit — per-item salience is the Brain channel, not the profile', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T14:00:00Z', 'user', 'captured', null, { captureId: 'c1', text: 'anchovy medallions' }),
+        ev('2026-07-20T14:00:05Z', 'ai', 'recaptured', 'a', { appendedText: 'anchovy medallions', captureId: 'c1' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('captured');
   });
 
   it('the profile builder sees in-world events only — no app-admin mechanics', () => {

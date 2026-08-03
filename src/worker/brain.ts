@@ -938,7 +938,7 @@ The remaining bond: "solo" (stands alone — common, and fine). A KNOW worth kee
 
 TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
 
-firstStep: at most TWO bubbles in the whole map — most days one or none — and only when a big or stalled thing needs a way in rather than volume: "breakdown" (no visible first action), "name-a-when" (they plainly want it and never start), "tiny-first-move" (the first move is obvious and small). A writer phrases the invitation; you only flag it. Everywhere else: null.
+firstStep: only when a big or stalled thing needs a way in rather than volume — each invitation asks the user for real activation energy, so most days carry one or two, rarely more: "breakdown" (no visible first action), "name-a-when" (they plainly want it and never start), "tiny-first-move" (the first move is obvious and small). A writer phrases the invitation; you only flag it. Everywhere else: null.
 
 The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
 
@@ -1001,9 +1001,6 @@ export function validateCurationPlan(
   const allowed = new Set<string>([...floors.keys(), ...eligibleAliases]);
   const rawBubbles = Array.isArray(raw?.bubbles) ? (raw!.bubbles as Record<string, unknown>[]) : [];
   const bubbles: CurationBubble[] = [];
-  // Two invitations per map, matching the prompt; model order decides which
-  // flags survive — the curator leads with what matters most.
-  let firstStepsTaken = 0;
   for (const b of rawBubbles) {
     if (!b || typeof b !== 'object') continue;
     const seen = new Set<string>();
@@ -1032,9 +1029,14 @@ export function validateCurationPlan(
         : null;
     const tags = (Array.isArray(b.tags) ? b.tags : []).map((t) => String(t).slice(0, 40)).slice(0, 4);
     const rationale = String(b.rationale ?? '').slice(0, 300);
-    const wantsStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep));
-    const firstStep = wantsStep && firstStepsTaken < 2 ? (String(b.firstStep) as FirstStepKind) : null;
-    if (firstStep) firstStepsTaken += 1;
+    // No cap: how many invitations a day can carry is the curator's judgment
+    // (the prompt frames the cost). A code cap silently nulled the third flag
+    // while its rationale still carried the intent — and the writer then
+    // smuggled the invitation into the card as content it authored itself,
+    // the one thing an invitation exists to avoid.
+    const firstStep = (FIRST_STEP_KINDS as readonly string[]).includes(String(b.firstStep))
+      ? (String(b.firstStep) as FirstStepKind)
+      : null;
     let tier: BrainTier = isBrainTier(b.tier) ? b.tier : 'quiet';
     for (const m of members) {
       const f = floors.get(m);
@@ -1475,7 +1477,7 @@ export function compactEventLines(
 
   const lines: string[] = [];
   const bursts = new Map<string, { idx: number; ts: number; count: number }>();
-  const lastCapture = { text: '', ts: 0, idx: -1, count: 1 };
+  const lastCapture = { text: '', ts: 0 };
 
   for (let evIdx = 0; evIdx < events.length; evIdx++) {
     const e = events[evIdx];
@@ -1486,16 +1488,27 @@ export function compactEventLines(
 
     if (e.type === 'captured' && typeof p.text === 'string') {
       const norm = p.text.trim().toLowerCase();
-      if (norm === lastCapture.text && t - lastCapture.ts < 10 * 60_000 && lastCapture.idx >= 0) {
-        lastCapture.count += 1;
+      // Identical text within ten minutes is a submission stutter — collapsed
+      // silently, no counter. (The old (xN) marker needed a prompt sentence
+      // excusing it, and the model profiled the marker anyway. Genuine
+      // re-expression across days was never collapsed: each re-say keeps its
+      // own captured line, so repetition reaches the profile as words.)
+      if (norm === lastCapture.text && t - lastCapture.ts < 10 * 60_000) {
         lastCapture.ts = t;
-        lines[lastCapture.idx] = lines[lastCapture.idx].replace(/( \(x\d+\))?$/, ` (x${lastCapture.count})`);
         continue;
       }
-      Object.assign(lastCapture, { text: norm, ts: t, idx: lines.length, count: 1 });
+      Object.assign(lastCapture, { text: norm, ts: t });
       lines.push(fmt(e.ts, e.actor, e.type, p.text.slice(0, 80)));
       continue;
     }
+
+    // Recapture merges are app bookkeeping about an utterance the log already
+    // carries as its own captured line. Per-item salience is the Brain's
+    // channel (recaptured= on the item lines, plus the priority boost) — the
+    // profile editorializing repetition markers is how "doesn't signal
+    // urgency" got invented, backwards. Fetched only to link captures to
+    // items for the deletion cancellation above; never emitted.
+    if (e.type === 'recaptured') continue;
 
     if ((e.type === 'edited' || e.type === 're_themed') && e.item_id) {
       let detail = title;
@@ -1517,9 +1530,7 @@ export function compactEventLines(
     }
 
     let detail = title;
-    if (e.type === 'recaptured' && typeof p.appendedText === 'string')
-      detail = `${title} +"${(p.appendedText as string).slice(0, 60)}"`;
-    else if (e.type === 'theme_merged' || e.type === 'theme_renamed')
+    if (e.type === 'theme_merged' || e.type === 'theme_renamed')
       detail = `${String(p.from ?? '')}→${String(p.into ?? p.to ?? '')}`;
     else if (e.type === 'map_rebuilt') detail = '';
     lines.push(fmt(e.ts, e.actor, e.type, detail));
@@ -1537,7 +1548,11 @@ export function compactEventLines(
 // elapsed on an event) asserts nothing about the user and stays out entirely;
 // 'rejected' (delete) is app hygiene on the same tier as save — it is fetched
 // ONLY so compactEventLines can cancel the deleted item's 'created' line, and
-// neither half is ever emitted as a line the profile can read.
+// neither half is ever emitted as a line the profile can read. 'recaptured'
+// is fetched only to link captures to items for that same cancellation and
+// is likewise never emitted: the re-said words reach the profile as their
+// own captured lines, and per-item salience (recaptured=, the boost) is the
+// Brain's channel, not the profile's.
 export const PROFILE_EVENT_TYPES = [
   'captured',
   'created',
@@ -1578,7 +1593,7 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
 
 TENDENCIES, NOT STORIES. The Brain already reads every item's own history — age, recaptures, feelings — on the item lines it receives separately; a retold item story adds nothing there and goes stale here. Your only unique value is the shape ACROSS items, which no single item shows: when in the day things actually get done; whether the user clears several lingering things in one burst or steadily one at a time; which kinds of things move promptly and which sit; what tends to precede movement on something long-stalled (a first step named, a smaller ask); which kinds of things get deliberately let go. Name no items and no people: a tendency stated through examples is detail the reader must generalize away — state the tendency itself ("admin sits for days, then clears in one burst", never which admin).
 
-Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. A "(xN)" on a capture line is rapid duplicate entry collapsed away — repetition, not emphasis. Where the log is silent, the profile is silent.
+Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. Where the log is silent, the profile is silent.
 
 Be plain and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 
