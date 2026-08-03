@@ -127,7 +127,11 @@ describe('validateCurationPlan — the guarantees', () => {
     expect(plan.bubbles[0].bond).toBe('solo');
   });
 
-  it('caps firstStep flags at two per map, in plan order, and discards invalid values', () => {
+  it('discards invalid firstStep values; every valid flag survives — no cap', () => {
+    // The old two-per-map cap silently nulled the third flag while its
+    // rationale still carried the intent, and the writer then authored the
+    // step's content itself. How many invitations a day carries is the
+    // curator's judgment; code no longer overrides it.
     const plan = validateCurationPlan(
       {
         bubbles: [
@@ -140,7 +144,7 @@ describe('validateCurationPlan — the guarantees', () => {
       floors,
       eligible,
     );
-    expect(plan.bubbles.map((b) => b.firstStep)).toEqual([null, 'breakdown', 'name-a-when', null]);
+    expect(plan.bubbles.map((b) => b.firstStep)).toEqual([null, 'breakdown', 'name-a-when', 'tiny-first-move']);
   });
 
   it('an ignored mandatory item gets a solo bubble at its floor, its rule as rationale', () => {
