@@ -250,7 +250,7 @@ export interface Placement {
 
 export interface PlacementResult {
   mandatory: Placement[];
-  eligible: ItemView[]; // active items placement does not require today — layer 2's pile
+  eligible: ItemView[]; // active items placement neither requires nor withholds — layer 2's pile
 }
 
 // The one rule table. For each active item, the strongest firing rule wins
@@ -335,6 +335,17 @@ export function placeItem(i: ItemView, now: Date, tzOffsetMinutes: number): { fl
 // Split the active set into the required skeleton and the curation pile.
 // Invariant (tested): everything isTodayRelevant lands in mandatory — the
 // skeleton is a strict superset of the old reliable floor.
+//
+// A rhythm placement does not require today is necessarily upcoming (a turn
+// falling today or gone unmet both fire rules above), and an upcoming rhythm
+// is WITHHELD — in neither list, invisible to the curator. Neither of the
+// curator's two reasons can ever hold for one: opportunity can't — the
+// completion machinery cannot bank a future turn, so a chip on it is a lie
+// by construction (ticked tonight, un-done by morning) — and attention
+// can't — a rhythm gets its airtime every time its turn comes round. Code
+// runs the calendar for rhythms in both directions: required on their day,
+// invisible before it. (The observed failure: tomorrow's recycling and
+// litter boxes pulled onto tonight's routine card as "get a jump on it".)
 export function placeItems(items: ItemView[], now: Date, tzOffsetMinutes: number): PlacementResult {
   const mandatory: Placement[] = [];
   const eligible: ItemView[] = [];
@@ -342,7 +353,7 @@ export function placeItems(items: ItemView[], now: Date, tzOffsetMinutes: number
     if (item.status !== 'active') continue;
     const placed = placeItem(item, now, tzOffsetMinutes);
     if (placed) mandatory.push({ item, floor: placed.floor, rule: placed.rule });
-    else eligible.push(item);
+    else if (!item.cadence) eligible.push(item);
   }
   return { mandatory, eligible };
 }

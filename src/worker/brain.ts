@@ -1067,14 +1067,20 @@ async function stagedBuildBubbles(
   tz: number,
   addendum: string | null = null,
 ): Promise<{ proposed: ProposedBubble[]; payload: Record<string, unknown> }> {
-  const { lines, idByAlias } = aliasItems(items, now, tz);
+  // Placement first: the day's working set is what layer 1 requires plus the
+  // pile it leaves eligible. Withheld items (future-turn rhythms) exit HERE —
+  // their lines never reach the curator, so there is no temptation to police
+  // away downstream; the pile is shaped at the input, not at the output.
+  const { mandatory, eligible } = placeItems(items, now, tz);
+  const inPlay = new Set([...mandatory.map((m) => m.item.id), ...eligible.map((i) => i.id)]);
+  const working = items.filter((i) => inPlay.has(i.id));
+
+  const { lines, idByAlias } = aliasItems(working, now, tz);
   const aliasById = new Map([...idByAlias].map(([alias, id]) => [id, alias]));
   // Keyed via aliasById, never by re-deriving `i${idx+1}` — one authority for
   // the alias scheme (aliasItems), so the two can't silently desync.
-  const lineByAlias = new Map(items.map((it, idx) => [aliasById.get(it.id)!, lines[idx]]));
-  const viewById = new Map(items.map((i) => [i.id, i]));
-
-  const { mandatory, eligible } = placeItems(items, now, tz);
+  const lineByAlias = new Map(working.map((it, idx) => [aliasById.get(it.id)!, lines[idx]]));
+  const viewById = new Map(working.map((i) => [i.id, i]));
   const floors = new Map(mandatory.map((m) => [aliasById.get(m.item.id)!, { floor: m.floor, rule: m.rule }]));
   const eligibleAliases = new Set(eligible.map((i) => aliasById.get(i.id)!));
 

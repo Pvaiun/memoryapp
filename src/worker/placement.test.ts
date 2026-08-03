@@ -370,6 +370,44 @@ describe('placeItems — the skeleton/pile split and the reliable-floor invarian
     expect(eligible.map((i) => i.id)).toEqual(['b']);
   });
 
+  it('an upcoming rhythm is withheld — in neither list (the get-a-jump-on-recycling case)', () => {
+    // Weekly Saturdays, last turn met: next turn is days away. The curator
+    // must never see it — a chip on a future turn can't bank the completion.
+    const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6] };
+    const kept = item({
+      id: 'r',
+      cadence: weekly,
+      createdAt: '2026-07-01T21:30:00Z',
+      lastCompletedAt: '2026-07-18T22:00:00Z',
+    });
+    const { mandatory, eligible } = placeItems([kept], NOW, 0);
+    expect(mandatory).toHaveLength(0);
+    expect(eligible).toHaveLength(0);
+  });
+
+  it("a rhythm completed today is released AND withheld — done means gone until its next turn", () => {
+    const daily = { freq: 'daily' as const, interval: 1, atTime: '20:00' };
+    const done = item({
+      id: 'd',
+      cadence: daily,
+      createdAt: '2026-07-15T20:00:00Z',
+      lastCompletedAt: '2026-07-22T06:00:00Z',
+    });
+    const { mandatory, eligible } = placeItems([done], NOW, 0);
+    expect(mandatory).toHaveLength(0);
+    expect(eligible).toHaveLength(0);
+  });
+
+  it('rhythms whose turn is today or unmet still land in mandatory, never withheld', () => {
+    const daily = { freq: 'daily' as const, interval: 1, atTime: '20:00' };
+    const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6] };
+    const dueToday = item({ id: 't', cadence: daily, createdAt: '2026-07-15T20:00:00Z' });
+    const slipped = item({ id: 's', cadence: weekly, createdAt: '2026-07-01T21:30:00Z' });
+    const { mandatory, eligible } = placeItems([dueToday, slipped], NOW, 0);
+    expect(mandatory.map((m) => m.item.id).sort()).toEqual(['s', 't']);
+    expect(eligible).toHaveLength(0);
+  });
+
   it('everything isTodayRelevant is mandatory — placement strictly contains the old floor', () => {
     const grabBag = [
       item({ deadline: '2026-07-22T18:00:00Z', deadlineHardness: 'hard' }),
