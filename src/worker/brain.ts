@@ -875,7 +875,14 @@ const FIRST_STEP_KINDS = ['breakdown', 'name-a-when', 'tiny-first-move'] as cons
 // licensed gluing tomorrow's near-certain events to a party six days out. If
 // a genuine glance-at-the-week card wants to exist, it can emerge organically
 // through the ordinary bonds; unknown bond strings coerce below.
-const BUBBLE_BONDS = ['episode', 'package', 'solo', 'rehearsal'] as const;
+// 'rehearsal' was removed the same way: offering it licensed declaring a DO
+// "kept warm", which handed the writer a bond contradicting its own derived
+// register (deriveBubbleKind says all-KNOW, and it is the authority for chips)
+// — the card came back chip-less and the chip guarantee patched in an orphan.
+// The bond duplicated a judgment code already derives from membership; a
+// kept-warm KNOW is just an add, and its card goes rehearsal-register on its
+// own.
+const BUBBLE_BONDS = ['episode', 'package', 'solo'] as const;
 type BubbleBond = (typeof BUBBLE_BONDS)[number];
 
 export interface CurationBubble {
@@ -901,7 +908,7 @@ export interface CurationPlan {
   bubbles: CurationBubble[];
 }
 
-const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a user with ADHD. Each morning, deterministic code places the day's REQUIRED items — the mandatory list, each entry naming the rule that fired (due-today, overdue, event-today, rhythm-today, runway for big-effort things) and the floor tier code will enforce. You do the two things rules cannot: decide what ELSE earns a place on today's map, and compose everything — required and added — into bubbles: small groups that act as one unit. Reply with ONLY a JSON object.
+const CURATION_SYSTEM = `You are the curator of "Memory", a memory-aid app for a user with ADHD. Each morning, deterministic code places the day's REQUIRED items — the mandatory list, each entry naming the rule that fired (due-today, overdue, event-today, rhythm-today, runway for big-effort things, first-sight for a never-shown upcoming event) and the floor tier code will enforce. You do the two things rules cannot: decide what ELSE earns a place on today's map, and compose everything — required and added — into bubbles: small groups that act as one unit. Reply with ONLY a JSON object.
 
 ${ITEM_FORMAT}
 
@@ -916,7 +923,7 @@ A bubble is a claim: these members act as one unit. Only two kinds of claim are 
 - EPISODE: the members belong to one OCCURRENCE — an event, a visit, a trip, a moment a deadline creates — and what that occurrence itself demands: its prep, its sub-events, the facts needed while it happens. The test: name the occurrence, then cancel it in your head. If every other member goes moot, the bond is real. If what you named is a person, a theme, a feeling, or a span of time, it is not an occurrence, and there is no episode. Write it down: every episode bubble carries "occurrence" — the occurrence you named, in a few words.
 - PACKAGE: completing one member leaves the user already positioned to complete the next. The test: picture them finishing one member and ask what stands between them and the next. If the answer is nothing — same spot, same instrument, same company, same stretch of the day — the bond is real. If anything must change first — a place, a tool, who is present, or waiting for another day — it is not. Write it down: every package bubble carries "sitting" — the single burst you pictured, in a few words ("one phone sitting", "the Chinatown trip").
 Resemblance is the counterfeit of both bonds, and it wears every attribute: same topic, same person, same theme tag, same date, same hour, same effort, same mood, same track record of getting done together. Shared attributes are how items LOOK; bonds are facts about the DOING, and only the tests establish them. The tell of a fake bond: the card's sentence would need a link the items don't themselves establish. Never bend a test to save a card slot — a weak add belongs nowhere rather than in the wrong bubble.
-The other two bonds: "solo" (stands alone — common, and fine) and "rehearsal" (facts kept warm — an offering, not an obligation). Each bubble carries a rationale (why this grouping exists today, in your own words — for a non-mandatory member, this is also why IT is here), its occurrence or sitting per its bond, optional tags, a tier, and firstStep.
+The remaining bond: "solo" (stands alone — common, and fine). A KNOW worth keeping warm is an add like any other — a bubble of only KNOWs renders as a gentle offering on its own. Each bubble carries a rationale (why this grouping exists today, in your own words — for a non-mandatory member, this is also why IT is here), its occurrence or sitting per its bond, optional tags, a tier, and firstStep.
 
 TIER: "loud" | "mid" | "quiet" | "dot" — how much of today's attention the bubble deserves; order the array loudest first (within a tier, your order is the ranking). Never place a bubble below any member's floor. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, shown=, recaptured=) matters MORE for it, not less — old is how forgotten looks; and a package's tier comes from the pile, not the pieces — several small things aging together can outrank any one of them.
 
@@ -924,9 +931,9 @@ firstStep: at most TWO bubbles in the whole map — most days one or none — an
 
 The user profile is advisory colour — it may shape which adds fit the day and how things group; it never removes a mandatory item.
 
-OUTPUT: {"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo"|"rehearsal","occurrence":str (episode only),"sitting":str (package only),"tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"tags":[str] (optional),"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
+OUTPUT: {"bubbles":[{"members":["iN"],"bond":"episode"|"package"|"solo","occurrence":str (episode only),"sitting":str (package only),"tier":"loud"|"mid"|"quiet"|"dot","rationale":str,"tags":[str] (optional),"firstStep":null|"breakdown"|"name-a-when"|"tiny-first-move"}]}`;
 
-const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, the curator's rationale (why) — the reason the card exists today — and, for episodes and packages, the occurrence or sitting it is built on: the real-world frame your sentence should inhabit. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
+const RENDER_SYSTEM = `You are the writer of "Memory", a memory-aid app for a user with ADHD. A curator has composed today's map; each card arrives with its members (full item lines), its bond, its tier, its register, the curator's rationale (why) and tags — the reason the card exists today — and, for episodes and packages, the occurrence or sitting it is built on: the real-world frame your sentence should inhabit. You write everything the user reads: each card's name and sentence. Reply with ONLY a JSON object.
 
 ${ITEM_FORMAT}
 
@@ -936,9 +943,10 @@ THE FACTS, PRECISELY:
 - Chronological: mention members in the order they happen today.
 - Every timed member gets its time — never a time for one and not another on the same card.
 - Days are named, not gestured at: "tomorrow (Friday) at 6pm", "next Wednesday at 7pm" — never "lands tomorrow", never "soon", never "the following Wednesday".
+- An occurrence or sitting is only as real as its members' dates: when no member carries one, the outing is an idea, not a plan — write it as an invitation, never as something already happening.
 - The card's size already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Never state the number of items in a batch — the card renders the true count itself. When one thing should genuinely come first, say so plainly.
 
-TONE IS DATA, NOT DECORATION. The curator's rationale and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes (hardness means the date won't move — never verbalize the flag itself: "and it's hard" reads as difficulty, not immovability). A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
+TONE IS DATA, NOT DECORATION. The curator's rationale and tags and the behavioural signals on the lines are the card's reason to exist — carry them as plain facts about the user's own history, never as mechanics: felt=for-someone → say who it's for; felt=important + recaptured= → they keep coming back to this, say so; long age + shown= many → it keeps slipping, say so kindly, without scolding; a hard due or overdue rule → say the stakes (hardness means the date won't move — never verbalize the flag itself: "and it's hard" reads as difficulty, not immovability). A date alone earns no colour: something merely happening today needs nothing beyond when. FORBIDDEN: decorative filler and empty poetry — "the book sits close by, still meaning something whenever it's opened" is the named failure mode; every clause carries a fact or a signal, or it gets cut. Present tense, tokens front-loaded, never the card's own name inside its sentence, no meta-commentary ("this bubble groups…" is forbidden). The userProfile is advisory colour for voice and emphasis only — never content.
 
 THE CARD GRAMMAR (only these two marks):
 - **bold** the recognizable nouns — people, entities, dates, times. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
@@ -1122,7 +1130,11 @@ async function stagedBuildBubbles(
       register: kinds[idx] === 'rotation' ? 'rehearsal' : 'standard',
       why: b.rationale,
       // The curator's elicited bond claim rides along — the writer frames the
-      // card around the occurrence or sitting the plan actually named.
+      // card around the occurrence or sitting the plan actually named. Tags
+      // ride too: "opportunity" vs nothing is the difference between a
+      // proposed outing and a booked one, and withholding it from the one
+      // layer that writes prose produced a card stating a suggestion as fact.
+      ...(b.tags.length ? { tags: b.tags } : {}),
       ...(b.occurrence ? { occurrence: b.occurrence } : {}),
       ...(b.sitting ? { sitting: b.sitting } : {}),
       members: b.members.map((m) => ({

@@ -186,8 +186,48 @@ describe('placeItem — events', () => {
     expect(p).toEqual({ floor: 'quiet', rule: 'event-tomorrow' });
   });
 
-  it('a single-moment event two days out is curation territory, not skeleton', () => {
-    const p = placeItem(item({ type: 'HAPPEN', eventAt: '2026-07-24T18:00:00Z' }), NOW, 0);
+  it('a single-moment event two days out, once shown, is curation territory, not skeleton', () => {
+    const p = placeItem(
+      item({ type: 'HAPPEN', eventAt: '2026-07-24T18:00:00Z', lastSurfacedAt: '2026-07-20T12:00:00Z' }),
+      NOW,
+      0,
+    );
+    expect(p).toBeNull();
+  });
+
+  it('a never-shown upcoming event gets one first sight at dot (the Manulife case)', () => {
+    const p = placeItem(item({ type: 'HAPPEN', eventAt: '2026-07-25T14:00:00Z' }), NOW, 0);
+    expect(p).toEqual({ floor: 'dot', rule: 'first-sight' });
+  });
+
+  it('first sight retires once the event has been surfaced — it fires by construction only once', () => {
+    const p = placeItem(
+      item({ type: 'HAPPEN', eventAt: '2026-07-25T14:00:00Z', lastSurfacedAt: '2026-07-21T12:00:00Z' }),
+      NOW,
+      0,
+    );
+    expect(p).toBeNull();
+  });
+
+  it('first sight reaches a week out and no further — beyond that, curation territory', () => {
+    const inWindow = placeItem(item({ type: 'HAPPEN', eventAt: '2026-07-29T18:00:00Z' }), NOW, 0);
+    expect(inWindow).toEqual({ floor: 'dot', rule: 'first-sight' });
+    const beyond = placeItem(item({ type: 'HAPPEN', eventAt: '2026-07-30T18:00:00Z' }), NOW, 0);
+    expect(beyond).toBeNull();
+  });
+
+  it('first sight is events-only: a never-shown dated DO stays under the lead-time table', () => {
+    const p = placeItem(item({ effort: 'quick', deadline: '2026-07-25T18:00:00Z', deadlineHardness: 'hard' }), NOW, 0);
+    expect(p).toBeNull();
+  });
+
+  it('a recurring event never gets a first sight — its rhythm owns its appearances', () => {
+    const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6], atTime: '10:00' };
+    const p = placeItem(
+      item({ type: 'HAPPEN', eventAt: '2026-07-25T10:00:00Z', cadence: weekly, createdAt: '2026-07-20T09:00:00Z' }),
+      NOW,
+      0,
+    );
     expect(p).toBeNull();
   });
 
@@ -200,13 +240,24 @@ describe('placeItem — events', () => {
     expect(p).toEqual({ floor: 'quiet', rule: 'trip-in-3d' });
   });
 
-  it('a multi-day trip four days out is not yet required', () => {
-    const p = placeItem(
+  it('a multi-day trip four days out is past packing runway — only first sight if never shown', () => {
+    const never = placeItem(
       item({ type: 'HAPPEN', eventAt: '2026-07-26T12:00:00Z', eventEnd: '2026-07-28T12:00:00Z' }),
       NOW,
       0,
     );
-    expect(p).toBeNull();
+    expect(never).toEqual({ floor: 'dot', rule: 'first-sight' });
+    const shown = placeItem(
+      item({
+        type: 'HAPPEN',
+        eventAt: '2026-07-26T12:00:00Z',
+        eventEnd: '2026-07-28T12:00:00Z',
+        lastSurfacedAt: '2026-07-20T12:00:00Z',
+      }),
+      NOW,
+      0,
+    );
+    expect(shown).toBeNull();
   });
 
   it('an event spanning today (started yesterday) is event-today', () => {

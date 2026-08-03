@@ -226,6 +226,18 @@ export const DO_LEAD_DAYS: Record<'quick' | 'medium' | 'large', number> = {
 // never required.
 export const TRIP_LEAD_DAYS = 3;
 
+// First sight: the curation prompt promises the curator that "code runs the
+// calendar", and the curator stands down on anticipation because of it — but
+// the day-before rule alone makes that promise false for an event captured
+// days ahead and never surfaced since: it stayed invisible until its eve (a
+// meeting three days out that the user had never seen on any map). A
+// never-shown upcoming event gets one dot-floor appearance inside this
+// window; surfacing sets lastSurfacedAt, which retires the rule by
+// construction. Events only — dated DOs are the lead-time table's deliberate
+// territory, and re-entering it here would resurrect the "prompted me for a
+// two-minute task three days out" failure that table exists to end.
+export const FIRST_SIGHT_DAYS = 7;
+
 // Within a big-effort item's runway, the floor steps up as the date closes:
 // distant runway is a quiet keep-in-view, the final stretch sits mid.
 export const LARGE_MID_WITHIN_DAYS = 2;
@@ -295,6 +307,9 @@ export function placeItem(i: ItemView, now: Date, tzOffsetMinutes: number): { fl
         take(optional ? 'dot' : 'quiet', 'event-tomorrow');
       } else if (d >= 2 && d <= TRIP_LEAD_DAYS && spanDays >= 1) {
         take(optional ? 'dot' : 'quiet', `trip-in-${d}d`);
+      }
+      if (d >= 2 && d <= FIRST_SIGHT_DAYS && !i.lastSurfacedAt) {
+        take('dot', 'first-sight');
       }
       // Events further out — and past events awaiting the sweep — are never
       // required; the curator may still offer a horizon glance.
