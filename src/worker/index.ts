@@ -67,14 +67,17 @@ app.get('/api/map', async (c) => {
 // force=true is the user-initiated "Organize now" re-run (bulk-import days).
 // noHistory=true is the workshop variant: the Brain composes without
 // yesterday's groupings (librarian and profile still see full history).
+// noProfile=true withholds the user profile from the Brain's calls (it is
+// still recomputed) — the A/B lever for judging what the profile adds.
 // promptVariant pins a specific Brain prompt/pipeline for this run (workshop
 // buttons); omitted, the stored preference decides (the morning-prompt toggle).
 app.post('/api/map/rebuild', async (c) => {
-  const { day, tzOffsetMinutes, force, noHistory, promptVariant } = await c.req.json<{
+  const { day, tzOffsetMinutes, force, noHistory, noProfile, promptVariant } = await c.req.json<{
     day: string;
     tzOffsetMinutes?: number;
     force?: boolean;
     noHistory?: boolean;
+    noProfile?: boolean;
     promptVariant?: 'full' | 'minimal' | 'staged';
   }>();
   if (!day) return c.json({ error: 'day required' }, 400);
@@ -83,7 +86,7 @@ app.post('/api/map/rebuild', async (c) => {
   }
   const variant =
     promptVariant === 'full' || promptVariant === 'minimal' || promptVariant === 'staged' ? promptVariant : undefined;
-  return c.json(await rebuildMap(c.env, day, !!force, !!noHistory, variant));
+  return c.json(await rebuildMap(c.env, day, !!force, !!noHistory, variant, !!noProfile));
 });
 
 // Which Brain prompt/pipeline the morning rebuild uses — the workshop

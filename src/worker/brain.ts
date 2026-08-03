@@ -4,7 +4,7 @@ import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
-import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey } from '../shared/dates';
+import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey, sleepDayOf } from '../shared/dates';
 import {
   cadenceStanding,
   compareTier,
@@ -116,6 +116,10 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // trigger stays strictly first-open-of-day (§9.1).
 // noHistory: workshop mode — the Brain composes without yesterday's groupings;
 // everything else (librarian, profile, name vocabulary) runs as normal.
+// noProfile: workshop mode — the profile is still recomputed (daily
+// bookkeeping) but withheld from the Brain's calls, so the same morning can
+// be built with and without it and the two snapshots diffed: the empirical
+// answer to "what is the profile actually adding?".
 // promptVariant: which Brain prompt builds the map. Omitted (the morning
 // rebuild, the plain re-run) → the user's stored preference, default minimal;
 // explicit (the workshop buttons) → exactly what was asked. The snapshot
@@ -126,6 +130,7 @@ export async function rebuildMap(
   force = false,
   noHistory = false,
   promptVariant?: BrainPromptVariant,
+  noProfile = false,
 ): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
@@ -148,6 +153,9 @@ export async function rebuildMap(
   } catch (err) {
     console.error('librarian pass failed', err);
   }
+  // The withhold happens here, once, so every reader below — legacy input,
+  // staged pipeline, snapshot — agrees on what the Brain was (not) shown.
+  const profileForBuild = noProfile ? null : profileText;
 
   const tz = await getTzOffset(db);
   // One-shot events whose moment fell in a previous sleep-day close as
@@ -212,7 +220,7 @@ export async function rebuildMap(
   // staged pipeline runs only when no override is in force.
   const useStaged = prompt.prompt === 'staged';
 
-  const input = brainInput(day, items, previous, nameVocabulary, profileText, now, tz);
+  const input = brainInput(day, items, previous, nameVocabulary, profileForBuild, now, tz);
   // The staged pipeline records its own richer payload (skeleton → plan →
   // prose); the legacy single call records its one input. Whichever ran is
   // what the snapshot must show.
@@ -222,7 +230,7 @@ export async function rebuildMap(
   if (llmAvailable(env) && items.length) {
     try {
       if (useStaged) {
-        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileText, now, tz, prompt.addendum);
+        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileForBuild, now, tz, prompt.addendum);
         proposed = staged.proposed;
         snapshotPayload = staged.payload;
       } else {
@@ -348,6 +356,7 @@ export async function rebuildMap(
       builtAt: ts,
       mode,
       noHistory,
+      noProfile,
       // What actually ran: 'override' + its text, or the variant + whatever
       // addendum was appended. Never both — selectBrainSystem mirrors the gate.
       prompt: prompt.prompt,
@@ -648,6 +657,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
         builtAt: string;
         mode: string;
         noHistory: boolean;
+        noProfile?: boolean;
         prompt?: string;
         addendum?: string | null;
         override?: string | null;
@@ -680,6 +690,7 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
           day: last.day,
           mode: last.mode,
           noHistory: last.noHistory,
+          noProfile: last.noProfile ?? false,
           prompt: last.prompt ?? 'full',
           addendum: last.addendum ?? null,
           override: last.override ?? null,
@@ -1373,6 +1384,7 @@ function fallbackBubbles(items: ItemView[], now: Date, tzOffsetMinutes: number):
 export function compactEventLines(
   events: { ts: string; actor: string; type: string; item_id: string | null; payload: string }[],
   titleById: Map<string, string>,
+  tzOffsetMinutes = 0,
 ): string[] {
   const parse = (s: string): Record<string, unknown> => {
     try {
@@ -1398,11 +1410,53 @@ export function compactEventLines(
     if (r !== undefined && r - c < 30 * 60_000) draftIds.add(id);
   }
 
+  // Checkbox churn: a completion_reverted negates the completion it undoes —
+  // that is its entire meaning, at any distance — so the pair nets to nothing
+  // and neither line is emitted (a revert alone would show a walk-back with
+  // no visible claim; a completion alone would stand as a false done). Pairing
+  // is per-item, nearest-prior-first, so toggle storms reduce from the inside
+  // out and only the settled state survives; a revert whose completion
+  // predates the log window is suppressed alone. Exits differ: a dismissal is
+  // a DECISION, and reopening it on a later sleep-day is a genuinely new
+  // decision — both lines stand. Only a same-sleep-day reopen is a mis-tap,
+  // and that pair vanishes. Taps are bookkeeping, not behaviour; only settled
+  // outcomes reach the profile — no (xN) trace, because a fumble count is
+  // itself the churn narrative this collapse exists to remove.
+  const cancelled = new Set<number>();
+  const openCompletions = new Map<string, number[]>();
+  const openExits = new Map<string, { idx: number; ms: number }[]>();
+  events.forEach((e, idx) => {
+    if (!e.item_id) return;
+    if (e.type === 'completed') {
+      const stack = openCompletions.get(e.item_id) ?? [];
+      stack.push(idx);
+      openCompletions.set(e.item_id, stack);
+    } else if (e.type === 'completion_reverted') {
+      const prior = openCompletions.get(e.item_id)?.pop();
+      if (prior !== undefined) cancelled.add(prior);
+      cancelled.add(idx);
+    } else if (e.type === 'dismissed' || e.type === 'missed') {
+      const stack = openExits.get(e.item_id) ?? [];
+      stack.push({ idx, ms: new Date(e.ts).getTime() });
+      openExits.set(e.item_id, stack);
+    } else if (e.type === 'reopened') {
+      const prior = openExits.get(e.item_id)?.pop();
+      if (prior && sleepDayOf(prior.ms, tzOffsetMinutes) === sleepDayOf(new Date(e.ts).getTime(), tzOffsetMinutes)) {
+        cancelled.add(prior.idx);
+        cancelled.add(idx);
+      }
+      // A reopen of an exit older than the log window (or on a later day)
+      // stands on its own: bringing a let-go thing back is in-world signal.
+    }
+  });
+
   const lines: string[] = [];
   const bursts = new Map<string, { idx: number; ts: number; count: number }>();
   const lastCapture = { text: '', ts: 0, idx: -1, count: 1 };
 
-  for (const e of events) {
+  for (let evIdx = 0; evIdx < events.length; evIdx++) {
+    const e = events[evIdx];
+    if (cancelled.has(evIdx)) continue;
     const p = parse(e.payload);
     const title = (e.item_id ? titleById.get(e.item_id) : undefined) ?? (typeof p.title === 'string' ? p.title : '');
     const t = new Date(e.ts).getTime();
@@ -1506,18 +1560,17 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ id: string; title: string; type: string }>();
   const titleById = new Map(itemTitles.results.map((r) => [r.id, `${r.title} (${r.type})`]));
 
-  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (5-12 lines) about the USER'S LIFE PATTERNS, for one reader: the Brain, which builds the daily "what matters now" map.
+  const system = `You write the user-profile scratchpad for "Memory", a memory-aid app. From the 30-day event log (one line per event: "MM-DD HH:MM actor type — detail", times UTC), write a SHORT freeform-prose profile (4-8 lines) of the user's behavioural TENDENCIES, for one reader: the Brain, which builds the daily "what matters now" map.
 
-Describe the user IN THE WORLD, never the user operating the app: when they check in and get things done; which kinds of items get completed promptly and which linger untouched or keep slipping; what they're chronically late on; what activity spikes before real-world events; which pushes get acted on; what they keep coming back to (recaptures).
+TENDENCIES, NOT STORIES. The Brain already reads every item's own history — age, recaptures, feelings — on the item lines it receives separately; a retold item story adds nothing there and goes stale here. Your only unique value is the shape ACROSS items, which no single item shows: when in the day things actually get done; whether the user clears several lingering things in one burst or steadily one at a time; which kinds of things move promptly and which sit; what tends to precede movement on something long-stalled (a first step named, a smaller ask); which kinds of things get deliberately let go. Name no items and no people: a tendency stated through examples is detail the reader must generalize away — state the tendency itself ("admin sits for days, then clears in one burst", never which admin).
 
-The lifecycle exits mean exactly what they say: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision worth noticing, e.g. what kinds of plans get let go); "missed" — they didn't make it to an event (patterns of misses — time of day, kind of event — matter a lot). "reopened" reverts a mis-tapped exit. Deletions never appear in this log; beyond an explicit dismissal, wantedness is not yours to judge.
+Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line. Where the log is silent, the profile is silent.
 
-DO NOT profile app-administration mechanics: how they file, phrase, edit, or reorganize is out of scope — no reader of this profile acts on it, and describing it crowds out the life patterns that matter. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line.
+Be plain and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 
-Be concrete and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
-
-  // Deterministically compressed: one line per event, churn collapsed.
-  const lines = compactEventLines(events.results, titleById);
+  // Deterministically compressed: one line per event, churn collapsed — the
+  // model never sees a checkbox fumble or a same-day mis-tapped exit.
+  const lines = compactEventLines(events.results, titleById, await getTzOffset(db));
 
   const user = JSON.stringify({ today: day, events: lines });
 

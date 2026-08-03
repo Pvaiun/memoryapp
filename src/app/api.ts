@@ -72,10 +72,17 @@ export const api = {
   getMap: () => req<MapPayload>(`/api/map?day=${localDay()}`),
 
   // promptVariant omitted → the server-stored morning-prompt preference.
-  rebuildMap: (force = false, noHistory = false, promptVariant?: BrainVariant) =>
+  rebuildMap: (force = false, noHistory = false, promptVariant?: BrainVariant, noProfile = false) =>
     req<MapPayload>('/api/map/rebuild', {
       method: 'POST',
-      body: JSON.stringify({ day: localDay(), tzOffsetMinutes: tzOffsetMinutes(), force, noHistory, promptVariant }),
+      body: JSON.stringify({
+        day: localDay(),
+        tzOffsetMinutes: tzOffsetMinutes(),
+        force,
+        noHistory,
+        noProfile,
+        promptVariant,
+      }),
     }),
 
   setBrainPrompt: (variant: BrainVariant) =>

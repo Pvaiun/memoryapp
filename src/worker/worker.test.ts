@@ -788,6 +788,89 @@ describe('compactEventLines — churn compression for the profile builder', () =
     expect(lines[0]).toContain('Make my will');
     expect(lines[1]).toContain('missed');
   });
+
+  it('a completion and its revert net to nothing — at any distance', () => {
+    // Both halves must vanish together: the revert alone would show a
+    // walk-back with no visible claim; the completion alone, a false done.
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T09:00:00Z', 'user', 'completion_reverted', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a toggle storm settles to the final state only (the checkbox-fumbles case)', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:01:00Z', 'user', 'completion_reverted', 'a', {}),
+        ev('2026-07-20T22:02:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:03:00Z', 'user', 'completion_reverted', 'a', {}),
+        ev('2026-07-20T22:04:00Z', 'user', 'completed', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('completed');
+    expect(lines[0]).not.toContain('(x'); // no fumble-count trace — that IS the churn narrative
+  });
+
+  it("pairing is per-item: another item's events between the halves are untouched", () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:01:00Z', 'user', 'completed', 'b', {}),
+        ev('2026-07-20T22:02:00Z', 'user', 'completion_reverted', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Make my will');
+  });
+
+  it('a revert whose completion predates the log window is suppressed alone', () => {
+    const lines = compactEventLines([ev('2026-07-20T09:00:00Z', 'user', 'completion_reverted', 'a', {})], titles);
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a same-sleep-day dismiss→reopen is a mis-tap — the pair vanishes', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T21:00:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-20T21:05:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a reopen on a later sleep-day is a genuinely new decision — both lines stand', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T21:00:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-21T10:00:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('dismissed');
+    expect(lines[1]).toContain('reopened');
+  });
+
+  it("the 5am boundary defines the mis-tap day: a 1am reopen pairs with the evening's dismissal", () => {
+    // Crosses midnight but not the sleep-day boundary — same day, mis-tap.
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T23:30:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-21T01:00:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
 });
 
 describe('extractJson robustness', () => {

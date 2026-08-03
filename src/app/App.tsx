@@ -487,19 +487,23 @@ export default function App() {
   );
 
   // User-initiated re-run for bulk-import days: fold Captured Today into real
-  // bubbles now instead of waiting for tomorrow's first open. noHistory is the
-  // workshop variant — the Brain composes without yesterday's groupings. The
+  // bubbles now instead of waiting for tomorrow's first open. noHistory and
+  // noProfile are the workshop variants — compose without yesterday's
+  // groupings, or without the user profile (the profile-value A/B). The
   // prompt used is the stored morning-prompt preference (Settings toggle).
-  const organizeNow = useCallback(async (noHistory = false) => {
-    setBuildPhase('building');
-    try {
-      setMap(await api.rebuildMap(true, noHistory));
-    } catch (err) {
-      toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setBuildPhase('idle');
-    }
-  }, [toast]);
+  const organizeNow = useCallback(
+    async (opts: { noHistory?: boolean; noProfile?: boolean } = {}) => {
+      setBuildPhase('building');
+      try {
+        setMap(await api.rebuildMap(true, !!opts.noHistory, undefined, !!opts.noProfile));
+      } catch (err) {
+        toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
+      } finally {
+        setBuildPhase('idle');
+      }
+    },
+    [toast],
+  );
 
   // Brain workshop loop: copy the exact Brain input + current map as one small
   // JSON, ready to paste into a tuning conversation.
@@ -704,7 +708,8 @@ export default function App() {
           onSetNowView={setNowView}
           onEnablePush={enablePush}
           onRebuild={() => organizeNow()}
-          onRebuildNoHistory={() => organizeNow(true)}
+          onRebuildNoHistory={() => organizeNow({ noHistory: true })}
+          onRebuildNoProfile={() => organizeNow({ noProfile: true })}
           onExport={exportAll}
           onCopyBrainSnapshot={copyBrainSnapshot}
           onClose={() => setSettingsOpen(false)}
