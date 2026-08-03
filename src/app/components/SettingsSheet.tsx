@@ -56,6 +56,7 @@ export default function SettingsSheet({
   onEnablePush,
   onRebuild,
   onRebuildNoHistory,
+  onRebuildNoProfile,
   onExport,
   onCopyBrainSnapshot,
   onClose,
@@ -68,6 +69,7 @@ export default function SettingsSheet({
   onEnablePush: () => void;
   onRebuild: () => void;
   onRebuildNoHistory: () => void;
+  onRebuildNoProfile: () => void;
   onExport: () => void;
   onCopyBrainSnapshot: () => void;
   onClose: () => void;
@@ -325,6 +327,16 @@ export default function SettingsSheet({
             >
               Rebuild map now — no history
               <small>The Brain composes fresh, without yesterday's groupings — for workshopping</small>
+            </button>
+            <button
+              className="settings-btn"
+              onClick={() => {
+                onClose();
+                onRebuildNoProfile();
+              }}
+            >
+              Rebuild map now — no profile
+              <small>The Brain composes without the user profile — for judging what the profile adds</small>
             </button>
             {!pushOn && (
               <button

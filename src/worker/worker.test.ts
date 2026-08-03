@@ -707,19 +707,17 @@ describe('compactEventLines — churn compression for the profile builder', () =
     ['b', 'Make my will (DO)'],
   ]);
 
-  it('collapses a created→edited→rejected cycle into one draft_discarded line', () => {
+  it('a created→rejected cycle vanishes entirely — no draft_discarded trace', () => {
+    // The old design left one draft_discarded line and told the model to
+    // ignore it — a trace plus an instruction, the pattern that fails.
     const lines = compactEventLines(
       [
         ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata' }),
-        ev('2026-07-20T03:12:00Z', 'user', 'edited', 'a', { before: {}, after: { deadline: 'x' } }),
-        ev('2026-07-20T03:14:00Z', 'user', 'edited', 'a', { before: {}, after: { priority: 1 } }),
         ev('2026-07-20T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
       ],
       titles,
     );
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('draft_discarded');
-    expect(lines[0]).toContain('Play Pragmata');
+    expect(lines).toHaveLength(0);
   });
 
   it('collapses same-item edit bursts with a count, keeps kept items visible', () => {
@@ -761,9 +759,10 @@ describe('compactEventLines — churn compression for the profile builder', () =
     }
   });
 
-  it('deletions are hygiene, not signal — rejected lines never reach the profile', () => {
-    // Still fetched (they fuel the draft collapse) but a slow-burn delete is
-    // suppressed: the deliberate "let it go" signal is 'dismissed'.
+  it('deletion cancels the creation at any distance — a deleted item leaves no entry record', () => {
+    // Deletion is hygiene: the item's entry into the system is bookkeeping
+    // about a thing that no longer exists. The "let it go" signal is
+    // 'dismissed'; the user's words at capture survive separately.
     const lines = compactEventLines(
       [
         ev('2026-07-18T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
@@ -771,8 +770,58 @@ describe('compactEventLines — churn compression for the profile builder', () =
       ],
       titles,
     );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a completion that preceded a later delete stands — the doing was real', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'user', 'completed', 'b', {}),
+        ev('2026-07-20T09:00:00Z', 'user', 'rejected', 'b', { title: 'Make my will' }),
+      ],
+      titles,
+    );
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('created');
+    expect(lines[0]).toContain('completed');
+  });
+
+  it('a capture whose only outcome was deleted goes with it — the utterance was unvalidated', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:09:00Z', 'user', 'captured', null, { captureId: 'c1', text: 'play pragmata' }),
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata', captureId: 'c1' }),
+        ev('2026-07-21T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a capture with any surviving item keeps its line — one real outcome validates the utterance', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:09:00Z', 'user', 'captured', null, { captureId: 'c1', text: 'will and pragmata' }),
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata', captureId: 'c1' }),
+        ev('2026-07-20T03:10:30Z', 'ai', 'created', 'b', { title: 'Make my will', captureId: 'c1' }),
+        ev('2026-07-21T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('captured');
+    expect(lines[1]).toContain('Make my will');
+  });
+
+  it("a deleted item's whole trail vanishes — recaptures and pushes go with it", () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'system', 'push_sent', 'a', {}),
+        ev('2026-07-19T03:00:00Z', 'ai', 'recaptured', 'a', { appendedText: 'again', captureId: 'c2' }),
+        ev('2026-07-20T03:00:00Z', 'user', 'rejected', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
   });
 
   it('dismissed and missed pass through as plain lines', () => {
@@ -787,6 +836,89 @@ describe('compactEventLines — churn compression for the profile builder', () =
     expect(lines[0]).toContain('dismissed');
     expect(lines[0]).toContain('Make my will');
     expect(lines[1]).toContain('missed');
+  });
+
+  it('a completion and its revert net to nothing — at any distance', () => {
+    // Both halves must vanish together: the revert alone would show a
+    // walk-back with no visible claim; the completion alone, a false done.
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T09:00:00Z', 'user', 'completion_reverted', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a toggle storm settles to the final state only (the checkbox-fumbles case)', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:01:00Z', 'user', 'completion_reverted', 'a', {}),
+        ev('2026-07-20T22:02:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:03:00Z', 'user', 'completion_reverted', 'a', {}),
+        ev('2026-07-20T22:04:00Z', 'user', 'completed', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('completed');
+    expect(lines[0]).not.toContain('(x'); // no fumble-count trace — that IS the churn narrative
+  });
+
+  it("pairing is per-item: another item's events between the halves are untouched", () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T22:00:00Z', 'user', 'completed', 'a', {}),
+        ev('2026-07-20T22:01:00Z', 'user', 'completed', 'b', {}),
+        ev('2026-07-20T22:02:00Z', 'user', 'completion_reverted', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Make my will');
+  });
+
+  it('a revert whose completion predates the log window is suppressed alone', () => {
+    const lines = compactEventLines([ev('2026-07-20T09:00:00Z', 'user', 'completion_reverted', 'a', {})], titles);
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a same-sleep-day dismiss→reopen is a mis-tap — the pair vanishes', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T21:00:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-20T21:05:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a reopen on a later sleep-day is a genuinely new decision — both lines stand', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T21:00:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-21T10:00:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('dismissed');
+    expect(lines[1]).toContain('reopened');
+  });
+
+  it("the 5am boundary defines the mis-tap day: a 1am reopen pairs with the evening's dismissal", () => {
+    // Crosses midnight but not the sleep-day boundary — same day, mis-tap.
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T23:30:00Z', 'user', 'dismissed', 'b', {}),
+        ev('2026-07-21T01:00:00Z', 'user', 'reopened', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
   });
 });
 
