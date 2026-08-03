@@ -118,6 +118,15 @@ describe('validateCurationPlan — the guarantees', () => {
     expect(plan.bubbles.map((b) => b.bond)).toEqual(['package', 'solo']);
   });
 
+  it("'rehearsal' is no longer a bond — it coerces like any unknown string", () => {
+    // Removed after an observed morning: a curator declared a DO "rehearsal"
+    // and the writer, handed a bond contradicting its derived register,
+    // produced a chip-less card. Rehearsal-ness is derived from all-KNOW
+    // membership (deriveBubbleKind), never declared.
+    const plan = validateCurationPlan({ bubbles: [bubble({ members: ['i1'], bond: 'rehearsal' })] }, floors, eligible);
+    expect(plan.bubbles[0].bond).toBe('solo');
+  });
+
   it('caps firstStep flags at two per map, in plan order, and discards invalid values', () => {
     const plan = validateCurationPlan(
       {
