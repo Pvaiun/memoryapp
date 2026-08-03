@@ -1409,28 +1409,40 @@ export function compactEventLines(
   // outcomes reach the profile — no (xN) trace, because a fumble count is
   // itself the churn narrative this collapse exists to remove.
   // Deletion churn nets out the same way, with no trace at all: a rejected
-  // (delete) cancels the item's created line at any distance — deletion is
-  // hygiene, so the item's entry into the system is bookkeeping about a thing
-  // that no longer exists. (This used to leave a single draft_discarded line
-  // and tell the model to ignore it — a trace plus an instruction, the exact
-  // pattern that fails. The user's own words at capture survive regardless:
-  // captured lines aren't item-linked, and a completion that preceded a later
-  // delete stands — the doing was real; the cleanup wasn't.)
+  // (delete) erases the item's whole event trail at any distance — created,
+  // recaptures, exits, pushes — because deletion is hygiene, and every line
+  // about a thing that no longer exists is bookkeeping. The one exception is
+  // a completion that preceded the delete: the doing was real; the cleanup
+  // wasn't. A capture goes with its items: created/recaptured events carry
+  // their captureId, and a capture whose EVERY resulting item was deleted led
+  // nowhere — the utterance is unvalidated (a mis-say, a duplicate), and raw
+  // phrasing that led nowhere is exactly what conjecture feeds on. A capture
+  // with any surviving item keeps its line. (This used to leave a single
+  // draft_discarded line and tell the model to ignore it — a trace plus an
+  // instruction, the exact pattern that fails.)
   const cancelled = new Set<number>();
-  const openCreations = new Map<string, number>();
   const openCompletions = new Map<string, number[]>();
   const openExits = new Map<string, { idx: number; ms: number }[]>();
+  const trail = new Map<string, number[]>(); // item -> its non-completion event indices
+  const rejectedItems = new Set<string>();
+  const captureIdx = new Map<string, number>(); // captureId -> its captured line
+  const captureItems = new Map<string, Set<string>>(); // captureId -> items it fed
   events.forEach((e, idx) => {
+    const p = parse(e.payload);
+    if (e.type === 'captured' && typeof p.captureId === 'string') captureIdx.set(p.captureId, idx);
     if (!e.item_id) return;
-    if (e.type === 'created') {
-      openCreations.set(e.item_id, idx);
-    } else if (e.type === 'rejected') {
-      const prior = openCreations.get(e.item_id);
-      if (prior !== undefined) {
-        cancelled.add(prior);
-        openCreations.delete(e.item_id);
-      }
-      cancelled.add(idx);
+    if (e.type !== 'completed') {
+      const t = trail.get(e.item_id) ?? [];
+      t.push(idx);
+      trail.set(e.item_id, t);
+    }
+    if ((e.type === 'created' || e.type === 'recaptured') && typeof p.captureId === 'string') {
+      const s = captureItems.get(p.captureId) ?? new Set<string>();
+      s.add(e.item_id);
+      captureItems.set(p.captureId, s);
+    }
+    if (e.type === 'rejected') {
+      rejectedItems.add(e.item_id);
     } else if (e.type === 'completed') {
       const stack = openCompletions.get(e.item_id) ?? [];
       stack.push(idx);
@@ -1453,6 +1465,13 @@ export function compactEventLines(
       // stands on its own: bringing a let-go thing back is in-world signal.
     }
   });
+  for (const id of rejectedItems) {
+    for (const idx of trail.get(id) ?? []) cancelled.add(idx);
+  }
+  for (const [cid, itemIds] of captureItems) {
+    const idx = captureIdx.get(cid);
+    if (idx !== undefined && [...itemIds].every((id) => rejectedItems.has(id))) cancelled.add(idx);
+  }
 
   const lines: string[] = [];
   const bursts = new Map<string, { idx: number; ts: number; count: number }>();

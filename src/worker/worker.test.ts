@@ -785,6 +785,45 @@ describe('compactEventLines — churn compression for the profile builder', () =
     expect(lines[0]).toContain('completed');
   });
 
+  it('a capture whose only outcome was deleted goes with it — the utterance was unvalidated', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:09:00Z', 'user', 'captured', null, { captureId: 'c1', text: 'play pragmata' }),
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata', captureId: 'c1' }),
+        ev('2026-07-21T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a capture with any surviving item keeps its line — one real outcome validates the utterance', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T03:09:00Z', 'user', 'captured', null, { captureId: 'c1', text: 'will and pragmata' }),
+        ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata', captureId: 'c1' }),
+        ev('2026-07-20T03:10:30Z', 'ai', 'created', 'b', { title: 'Make my will', captureId: 'c1' }),
+        ev('2026-07-21T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('captured');
+    expect(lines[1]).toContain('Make my will');
+  });
+
+  it("a deleted item's whole trail vanishes — recaptures and pushes go with it", () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'system', 'push_sent', 'a', {}),
+        ev('2026-07-19T03:00:00Z', 'ai', 'recaptured', 'a', { appendedText: 'again', captureId: 'c2' }),
+        ev('2026-07-20T03:00:00Z', 'user', 'rejected', 'a', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
   it('dismissed and missed pass through as plain lines', () => {
     const lines = compactEventLines(
       [
