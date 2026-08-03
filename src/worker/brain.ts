@@ -1396,20 +1396,6 @@ export function compactEventLines(
   const fmt = (ts: string, actor: string, type: string, detail: string) =>
     `${ts.slice(5, 16).replace('T', ' ')} ${actor} ${type}${detail ? ` — ${detail}` : ''}`;
 
-  // Draft churn: created and rejected within 30 minutes → one line, no blow-by-blow.
-  const createdAt = new Map<string, number>();
-  const rejectedAt = new Map<string, number>();
-  for (const e of events) {
-    if (!e.item_id) continue;
-    if (e.type === 'created') createdAt.set(e.item_id, new Date(e.ts).getTime());
-    if (e.type === 'rejected') rejectedAt.set(e.item_id, new Date(e.ts).getTime());
-  }
-  const draftIds = new Set<string>();
-  for (const [id, c] of createdAt) {
-    const r = rejectedAt.get(id);
-    if (r !== undefined && r - c < 30 * 60_000) draftIds.add(id);
-  }
-
   // Checkbox churn: a completion_reverted negates the completion it undoes —
   // that is its entire meaning, at any distance — so the pair nets to nothing
   // and neither line is emitted (a revert alone would show a walk-back with
@@ -1422,12 +1408,30 @@ export function compactEventLines(
   // and that pair vanishes. Taps are bookkeeping, not behaviour; only settled
   // outcomes reach the profile — no (xN) trace, because a fumble count is
   // itself the churn narrative this collapse exists to remove.
+  // Deletion churn nets out the same way, with no trace at all: a rejected
+  // (delete) cancels the item's created line at any distance — deletion is
+  // hygiene, so the item's entry into the system is bookkeeping about a thing
+  // that no longer exists. (This used to leave a single draft_discarded line
+  // and tell the model to ignore it — a trace plus an instruction, the exact
+  // pattern that fails. The user's own words at capture survive regardless:
+  // captured lines aren't item-linked, and a completion that preceded a later
+  // delete stands — the doing was real; the cleanup wasn't.)
   const cancelled = new Set<number>();
+  const openCreations = new Map<string, number>();
   const openCompletions = new Map<string, number[]>();
   const openExits = new Map<string, { idx: number; ms: number }[]>();
   events.forEach((e, idx) => {
     if (!e.item_id) return;
-    if (e.type === 'completed') {
+    if (e.type === 'created') {
+      openCreations.set(e.item_id, idx);
+    } else if (e.type === 'rejected') {
+      const prior = openCreations.get(e.item_id);
+      if (prior !== undefined) {
+        cancelled.add(prior);
+        openCreations.delete(e.item_id);
+      }
+      cancelled.add(idx);
+    } else if (e.type === 'completed') {
       const stack = openCompletions.get(e.item_id) ?? [];
       stack.push(idx);
       openCompletions.set(e.item_id, stack);
@@ -1460,16 +1464,6 @@ export function compactEventLines(
     const p = parse(e.payload);
     const title = (e.item_id ? titleById.get(e.item_id) : undefined) ?? (typeof p.title === 'string' ? p.title : '');
     const t = new Date(e.ts).getTime();
-
-    if (e.item_id && draftIds.has(e.item_id)) {
-      if (e.type === 'created') lines.push(fmt(e.ts, 'user', 'draft_discarded', title));
-      continue;
-    }
-
-    // Deletion is app hygiene (a mis-parse, a duplicate) — the same tier as
-    // save, no meaning of its own. It was fetched only to fuel the draft
-    // collapse above; the deliberate "let it go" signal is 'dismissed'.
-    if (e.type === 'rejected') continue;
 
     if (e.type === 'captured' && typeof p.text === 'string') {
       const norm = p.text.trim().toLowerCase();
@@ -1523,8 +1517,8 @@ export function compactEventLines(
 // 'missed' (didn't make an event) are in-world signals; 'passed' (the clock
 // elapsed on an event) asserts nothing about the user and stays out entirely;
 // 'rejected' (delete) is app hygiene on the same tier as save — it is fetched
-// ONLY to fuel the draft-churn collapse in compactEventLines and is never
-// emitted as a line the profile can read.
+// ONLY so compactEventLines can cancel the deleted item's 'created' line, and
+// neither half is ever emitted as a line the profile can read.
 export const PROFILE_EVENT_TYPES = [
   'captured',
   'created',
@@ -1554,7 +1548,8 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
     .all<{ ts: string; actor: string; type: string; item_id: string | null; payload: string }>();
   if (!events.results.length) return getState(db, 'profile_text');
 
-  // Titles for all items incl. deleted — draft churn references them.
+  // Titles for all items incl. deleted — surviving lines of a since-deleted
+  // item (a completion that preceded the delete) still reference them.
   const itemTitles = await db
     .prepare('SELECT id, title, type FROM items')
     .all<{ id: string; title: string; type: string }>();
@@ -1564,7 +1559,7 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
 
 TENDENCIES, NOT STORIES. The Brain already reads every item's own history — age, recaptures, feelings — on the item lines it receives separately; a retold item story adds nothing there and goes stale here. Your only unique value is the shape ACROSS items, which no single item shows: when in the day things actually get done; whether the user clears several lingering things in one burst or steadily one at a time; which kinds of things move promptly and which sit; what tends to precede movement on something long-stalled (a first step named, a smaller ask); which kinds of things get deliberately let go. Name no items and no people: a tendency stated through examples is detail the reader must generalize away — state the tendency itself ("admin sits for days, then clears in one burst", never which admin).
 
-Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. Lines marked draft_discarded or (xN) are pre-collapsed churn from operating the app — never a pattern worth a line. Where the log is silent, the profile is silent.
+Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. A "(xN)" on a capture line is rapid duplicate entry collapsed away — repetition, not emphasis. Where the log is silent, the profile is silent.
 
 Be plain and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 

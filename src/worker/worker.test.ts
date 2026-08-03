@@ -707,19 +707,17 @@ describe('compactEventLines — churn compression for the profile builder', () =
     ['b', 'Make my will (DO)'],
   ]);
 
-  it('collapses a created→edited→rejected cycle into one draft_discarded line', () => {
+  it('a created→rejected cycle vanishes entirely — no draft_discarded trace', () => {
+    // The old design left one draft_discarded line and told the model to
+    // ignore it — a trace plus an instruction, the pattern that fails.
     const lines = compactEventLines(
       [
         ev('2026-07-20T03:10:00Z', 'ai', 'created', 'a', { title: 'Play Pragmata' }),
-        ev('2026-07-20T03:12:00Z', 'user', 'edited', 'a', { before: {}, after: { deadline: 'x' } }),
-        ev('2026-07-20T03:14:00Z', 'user', 'edited', 'a', { before: {}, after: { priority: 1 } }),
         ev('2026-07-20T03:20:00Z', 'user', 'rejected', 'a', { title: 'Play Pragmata' }),
       ],
       titles,
     );
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('draft_discarded');
-    expect(lines[0]).toContain('Play Pragmata');
+    expect(lines).toHaveLength(0);
   });
 
   it('collapses same-item edit bursts with a count, keeps kept items visible', () => {
@@ -761,9 +759,10 @@ describe('compactEventLines — churn compression for the profile builder', () =
     }
   });
 
-  it('deletions are hygiene, not signal — rejected lines never reach the profile', () => {
-    // Still fetched (they fuel the draft collapse) but a slow-burn delete is
-    // suppressed: the deliberate "let it go" signal is 'dismissed'.
+  it('deletion cancels the creation at any distance — a deleted item leaves no entry record', () => {
+    // Deletion is hygiene: the item's entry into the system is bookkeeping
+    // about a thing that no longer exists. The "let it go" signal is
+    // 'dismissed'; the user's words at capture survive separately.
     const lines = compactEventLines(
       [
         ev('2026-07-18T09:00:00Z', 'ai', 'created', 'b', { title: 'Make my will' }),
@@ -771,8 +770,19 @@ describe('compactEventLines — churn compression for the profile builder', () =
       ],
       titles,
     );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('a completion that preceded a later delete stands — the doing was real', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T09:00:00Z', 'user', 'completed', 'b', {}),
+        ev('2026-07-20T09:00:00Z', 'user', 'rejected', 'b', { title: 'Make my will' }),
+      ],
+      titles,
+    );
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('created');
+    expect(lines[0]).toContain('completed');
   });
 
   it('dismissed and missed pass through as plain lines', () => {
