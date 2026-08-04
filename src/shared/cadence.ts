@@ -358,17 +358,69 @@ export function neglectedByDays(
   return Math.max(0, Math.round((elapsed - cadencePeriodMs(cadence)) / DAY_MS));
 }
 
+// The occurrence walk reads calendar fields (weekday, hour, month), so it
+// must know which frame those fields live in. Real-instant callers walk in
+// the host's local frame (browser = the user's clock; worker = UTC). The
+// atTime helpers below build a SHIFTED timeline whose UTC fields hold the
+// user's sleep-frame clock, so their walk must read UTC fields: host-local
+// accessors there apply the host offset on top of the manual shift, which
+// is what pushed a Mon/Wed/Fri-at-12am rhythm onto Thursday in the browser
+// (12am minus the offset crosses midnight, so every day matched one late —
+// while the UTC-hosted worker agreed with itself and said "tonight").
+interface CalendarFrame {
+  day(d: Date): number;
+  date(d: Date): number;
+  month(d: Date): number;
+  year(d: Date): number;
+  hours(d: Date): number;
+  minutes(d: Date): number;
+  setTime(d: Date, h: number, m: number): void;
+  addDays(d: Date, n: number): void;
+  addMonths(d: Date, n: number): void;
+  make(y: number, month: number, day: number, h: number, m: number): Date;
+}
+
+const LOCAL_FRAME: CalendarFrame = {
+  day: (d) => d.getDay(),
+  date: (d) => d.getDate(),
+  month: (d) => d.getMonth(),
+  year: (d) => d.getFullYear(),
+  hours: (d) => d.getHours(),
+  minutes: (d) => d.getMinutes(),
+  setTime: (d, h, m) => d.setHours(h, m, 0, 0),
+  addDays: (d, n) => d.setDate(d.getDate() + n),
+  addMonths: (d, n) => d.setMonth(d.getMonth() + n),
+  make: (y, month, day, h, m) => new Date(y, month, day, h, m),
+};
+
+const UTC_FRAME: CalendarFrame = {
+  day: (d) => d.getUTCDay(),
+  date: (d) => d.getUTCDate(),
+  month: (d) => d.getUTCMonth(),
+  year: (d) => d.getUTCFullYear(),
+  hours: (d) => d.getUTCHours(),
+  minutes: (d) => d.getUTCMinutes(),
+  setTime: (d, h, m) => d.setUTCHours(h, m, 0, 0),
+  addDays: (d, n) => d.setUTCDate(d.getUTCDate() + n),
+  addMonths: (d, n) => d.setUTCMonth(d.getUTCMonth() + n),
+  make: (y, month, day, h, m) => new Date(Date.UTC(y, month, day, h, m)),
+};
+
 // Next occurrence of a recurring time-anchored item at or after `from`.
 // anchor = the first/reference occurrence (eventAt for HAPPEN, createdAt for DO).
 export function nextOccurrence(cadence: Cadence, anchorIso: string, from: Date): Date {
+  return nextOccurrenceIn(LOCAL_FRAME, cadence, anchorIso, from);
+}
+
+function nextOccurrenceIn(f: CalendarFrame, cadence: Cadence, anchorIso: string, from: Date): Date {
   const anchor = new Date(anchorIso);
   // The anchor is a reference point, not automatically an occurrence: a
   // "weekly on Sun" DO created on a Tuesday anchors at that Tuesday, and
   // short-circuiting on it would invent a Tuesday occurrence. Only return the
   // anchor directly when it matches the cadence's own pattern.
   const anchorOnPattern =
-    (cadence.freq !== 'weekly' || !cadence.byWeekday?.length || cadence.byWeekday.includes(anchor.getDay())) &&
-    (cadence.freq !== 'monthly' || !cadence.byMonthDay || anchor.getDate() === cadence.byMonthDay);
+    (cadence.freq !== 'weekly' || !cadence.byWeekday?.length || cadence.byWeekday.includes(f.day(anchor))) &&
+    (cadence.freq !== 'monthly' || !cadence.byMonthDay || f.date(anchor) === cadence.byMonthDay);
   if (anchor.getTime() >= from.getTime() && anchorOnPattern) return anchor;
   const interval = Math.max(1, cadence.interval || 1);
 
@@ -378,57 +430,66 @@ export function nextOccurrence(cadence: Cadence, anchorIso: string, from: Date):
   }
 
   if (cadence.freq === 'weekly') {
-    const days = cadence.byWeekday?.length ? [...cadence.byWeekday].sort() : [anchor.getDay()];
+    const days = cadence.byWeekday?.length ? [...cadence.byWeekday].sort() : [f.day(anchor)];
     // Walk day by day from `from`; bounded (≤ 7 * interval + 7 steps).
     const cursor = new Date(from);
-    cursor.setHours(anchor.getHours(), anchor.getMinutes(), 0, 0);
-    if (cursor.getTime() < from.getTime()) cursor.setDate(cursor.getDate() + 1);
+    f.setTime(cursor, f.hours(anchor), f.minutes(anchor));
+    if (cursor.getTime() < from.getTime()) f.addDays(cursor, 1);
     for (let i = 0; i < interval * 7 + 8; i++) {
-      if (days.includes(cursor.getDay())) {
+      if (days.includes(f.day(cursor))) {
         // Respect the week interval relative to the anchor's week.
-        const weeksFromAnchor = Math.floor((cursor.getTime() - startOfWeek(anchor).getTime()) / (7 * DAY_MS));
+        const weeksFromAnchor = Math.floor((cursor.getTime() - startOfWeek(f, anchor).getTime()) / (7 * DAY_MS));
         if (weeksFromAnchor % interval === 0) return new Date(cursor);
       }
-      cursor.setDate(cursor.getDate() + 1);
+      f.addDays(cursor, 1);
     }
     return cursor;
   }
 
   if (cadence.freq === 'monthly') {
-    const targetDay = cadence.byMonthDay ?? anchor.getDate();
-    const cursor = new Date(from.getFullYear(), from.getMonth(), 1, anchor.getHours(), anchor.getMinutes());
+    const targetDay = cadence.byMonthDay ?? f.date(anchor);
+    const cursor = f.make(f.year(from), f.month(from), 1, f.hours(anchor), f.minutes(anchor));
     for (let i = 0; i < 24; i++) {
-      const monthsFromAnchor =
-        (cursor.getFullYear() - anchor.getFullYear()) * 12 + (cursor.getMonth() - anchor.getMonth());
+      const monthsFromAnchor = (f.year(cursor) - f.year(anchor)) * 12 + (f.month(cursor) - f.month(anchor));
       if (monthsFromAnchor >= 0 && monthsFromAnchor % interval === 0) {
-        const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
-        const candidate = new Date(
-          cursor.getFullYear(),
-          cursor.getMonth(),
+        const lastDay = f.date(f.make(f.year(cursor), f.month(cursor) + 1, 0, 12, 0));
+        const candidate = f.make(
+          f.year(cursor),
+          f.month(cursor),
           Math.min(targetDay, lastDay),
-          anchor.getHours(),
-          anchor.getMinutes(),
+          f.hours(anchor),
+          f.minutes(anchor),
         );
         if (candidate.getTime() >= from.getTime()) return candidate;
       }
-      cursor.setMonth(cursor.getMonth() + 1);
+      f.addMonths(cursor, 1);
     }
     return cursor;
   }
 
   // yearly
-  const candidate = new Date(from.getFullYear(), anchor.getMonth(), anchor.getDate(), anchor.getHours(), anchor.getMinutes());
+  const candidate = f.make(f.year(from), f.month(anchor), f.date(anchor), f.hours(anchor), f.minutes(anchor));
   if (candidate.getTime() >= from.getTime()) return candidate;
-  candidate.setFullYear(candidate.getFullYear() + interval);
-  return candidate;
+  return f.make(f.year(from) + interval, f.month(anchor), f.date(anchor), f.hours(anchor), f.minutes(anchor));
 }
 
 // All occurrences within [from, to) — used by the calendar view and push scan.
 export function occurrencesBetween(cadence: Cadence, anchorIso: string, from: Date, to: Date, cap = 100): Date[] {
+  return occurrencesBetweenIn(LOCAL_FRAME, cadence, anchorIso, from, to, cap);
+}
+
+function occurrencesBetweenIn(
+  f: CalendarFrame,
+  cadence: Cadence,
+  anchorIso: string,
+  from: Date,
+  to: Date,
+  cap = 100,
+): Date[] {
   const out: Date[] = [];
   let cursor = new Date(from);
   while (out.length < cap) {
-    const next = nextOccurrence(cadence, anchorIso, cursor);
+    const next = nextOccurrenceIn(f, cadence, anchorIso, cursor);
     if (next.getTime() >= to.getTime()) break;
     out.push(next);
     cursor = new Date(next.getTime() + 60_000);
@@ -437,15 +498,23 @@ export function occurrencesBetween(cadence: Cadence, anchorIso: string, from: Da
 }
 
 // Recurring DOs anchor at cadence.atTime, a wall-clock "HH:MM" in the USER'S
-// timezone. The occurrence walk must run in that frame: a Thursday-8pm rhythm
-// at UTC-4 lands on Friday 00:00 UTC, so matching byWeekday against UTC days
-// (or treating "20:00" as UTC) would drift the ping by hours or a whole day.
-// These helpers shift into the user frame, walk, and shift the result back.
-function localAtTimeAnchor(cadence: Cadence, createdAtIso: string, tzMs: number): Date {
+// timezone, and byWeekday names the user's SLEEP days (5am → 5am), not
+// calendar days. The two differ only for times in the 12am–5am window:
+// "litter boxes Mon/Wed/Fri at 12am" means the midnight that ENDS Monday's
+// evening — calendar Tuesday 00:00 — exactly as the date parser's night-owl
+// rule reads one-shot phrases. So the walk runs in a frame shifted by the
+// user's offset MINUS the sleep cutoff: in that frame the 5am boundary is
+// midnight, a frame day IS a sleep day, and an atTime before 5am wraps to
+// the tail of its named day. For times from 5am on, the frame day equals
+// the calendar day and nothing changes.
+const SLEEP_SHIFT_MS = EARLY_MORNING_CUTOFF_MINUTES * 60_000;
+
+function sleepFrameAnchor(cadence: Cadence, createdAtIso: string, frameShiftMs: number): Date {
   const [h, m] = (cadence.atTime ?? '00:00').split(':').map(Number);
-  const local = new Date(new Date(createdAtIso).getTime() + tzMs);
-  local.setUTCHours(h, m, 0, 0);
-  return local;
+  const frameMinutes = (h * 60 + m - EARLY_MORNING_CUTOFF_MINUTES + 1440) % 1440;
+  const frame = new Date(new Date(createdAtIso).getTime() + frameShiftMs);
+  frame.setUTCHours(Math.floor(frameMinutes / 60), frameMinutes % 60, 0, 0);
+  return frame;
 }
 
 export function nextAtTimeOccurrence(
@@ -454,10 +523,10 @@ export function nextAtTimeOccurrence(
   from: Date,
   tzOffsetMinutes = 0,
 ): Date {
-  const tzMs = tzOffsetMinutes * 60_000;
-  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
-  const occ = nextOccurrence(cadence, anchor.toISOString(), new Date(from.getTime() + tzMs));
-  return new Date(occ.getTime() - tzMs);
+  const shiftMs = tzOffsetMinutes * 60_000 - SLEEP_SHIFT_MS;
+  const anchor = sleepFrameAnchor(cadence, createdAtIso, shiftMs);
+  const occ = nextOccurrenceIn(UTC_FRAME, cadence, anchor.toISOString(), new Date(from.getTime() + shiftMs));
+  return new Date(occ.getTime() - shiftMs);
 }
 
 export function atTimeOccurrencesBetween(
@@ -467,20 +536,21 @@ export function atTimeOccurrencesBetween(
   to: Date,
   tzOffsetMinutes = 0,
 ): Date[] {
-  const tzMs = tzOffsetMinutes * 60_000;
-  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
-  return occurrencesBetween(
+  const shiftMs = tzOffsetMinutes * 60_000 - SLEEP_SHIFT_MS;
+  const anchor = sleepFrameAnchor(cadence, createdAtIso, shiftMs);
+  return occurrencesBetweenIn(
+    UTC_FRAME,
     cadence,
     anchor.toISOString(),
-    new Date(from.getTime() + tzMs),
-    new Date(to.getTime() + tzMs),
-  ).map((d) => new Date(d.getTime() - tzMs));
+    new Date(from.getTime() + shiftMs),
+    new Date(to.getTime() + shiftMs),
+  ).map((d) => new Date(d.getTime() - shiftMs));
 }
 
-function startOfWeek(d: Date): Date {
+function startOfWeek(f: CalendarFrame, d: Date): Date {
   const s = new Date(d);
-  s.setHours(0, 0, 0, 0);
-  s.setDate(s.getDate() - s.getDay());
+  f.setTime(s, 0, 0);
+  f.addDays(s, -f.day(s));
   return s;
 }
 

@@ -3,7 +3,7 @@ import type { Cadence, Flavour, ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { FLAVOURS } from '../../shared/flavour';
 import { isDoneForNow } from '../../shared/cadence';
-import { sleepDayDiffLocal } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
 import { api, themeColor, FLAVOUR_ICONS } from '../api';
 
 // Browse (§6): the stable catalogue. Pure representation — no urgency, no
@@ -41,8 +41,10 @@ function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const days = sleepDayDiffLocal(d.getTime(), Date.now());
   if (days === 0) return 'today';
-  if (days > 0 && days < 7) return d.toLocaleDateString([], { weekday: 'short' });
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  // Label with the sleep day: a 12am–5am moment names the evening it ends.
+  const label = new Date(d.getTime() - EARLY_MORNING_CUTOFF_MINUTES * 60_000);
+  if (days > 0 && days < 7) return label.toLocaleDateString([], { weekday: 'short' });
+  return label.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function shortCadence(c: Cadence): string {

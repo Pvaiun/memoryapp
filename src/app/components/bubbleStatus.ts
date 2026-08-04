@@ -1,6 +1,6 @@
 import type { Bubble, ItemView } from '../../shared/types';
 import { deadlinePassed, isResolvedForNow, momentPassed } from '../../shared/cadence';
-import { sleepDayDiffLocal } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
 
 // Status = tone + the time word printed on the chip, both from one scan of the
 // bubble's ACTIVE items, so the scale needs no legend and completing the
@@ -32,7 +32,8 @@ export interface BubbleStatus {
 // under 24h away, and every surface prints the same count.
 
 function fmtEventDay(t: number, now: number): string {
-  const d = new Date(t);
+  // Label with the sleep day: a 12am–5am moment names the evening it ends.
+  const d = new Date(t - EARLY_MORNING_CUTOFF_MINUTES * 60_000);
   if (sleepDayDiffLocal(t, now) < 7) return d.toLocaleDateString([], { weekday: 'short' });
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
