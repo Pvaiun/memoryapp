@@ -157,6 +157,29 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
     );
     expect(occ.map((d) => d.toISOString())).toEqual(['2026-07-24T00:00:00.000Z', '2026-07-31T00:00:00.000Z']);
   });
+  it('atTime walk gives the same answer on any host clock (Mon/Wed/Fri at 12am read as Thursday in the browser)', () => {
+    // "weekly on Mon, Wed, Fri at 12am" at UTC-4, asked on Tuesday from the
+    // 5am sleep-day start (09:00Z): the next slot is Wednesday 00:00 local —
+    // tonight — i.e. Wed 04:00Z. The walk used to read host-LOCAL fields of
+    // the tz-shifted timeline, so on a browser at UTC-4 a 12am rhythm
+    // matched its weekdays at 8pm the day before and landed a day late
+    // ("next Thu"), while the UTC-hosted worker said "tonight".
+    const cadence: Cadence = { freq: 'weekly', interval: 1, byWeekday: [1, 3, 5], atTime: '00:00' };
+    const compute = () =>
+      nextAtTimeOccurrence(cadence, '2026-07-31T18:00:00Z', new Date('2026-08-04T09:00:00Z'), -240).toISOString();
+    // tsconfig has no Node types; reach the test runner's env via globalThis.
+    const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
+    const prevTz = env.TZ;
+    try {
+      env.TZ = 'UTC'; // the worker's frame
+      expect(compute()).toBe('2026-08-05T04:00:00.000Z');
+      env.TZ = 'America/Toronto'; // the browser's frame — host clock IS the user clock
+      expect(compute()).toBe('2026-08-05T04:00:00.000Z');
+    } finally {
+      if (prevTz === undefined) delete env.TZ;
+      else env.TZ = prevTz;
+    }
+  });
 });
 
 describe('captured-today relevance (§9.1, Now screen)', () => {
