@@ -22,8 +22,12 @@ function fmtDate(iso: string, timed: boolean): string {
   const days = sleepDayDiffLocal(d.getTime(), Date.now());
   const time = timed ? ` ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
   if (days === 0) return `today${time}`;
-  if (days > 0 && days < 7) return d.toLocaleDateString([], { weekday: 'short' }) + time;
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  // Name the SLEEP day, not the calendar day (same shift as the App header):
+  // a 12am–5am moment belongs to the evening it ends, so a Mon-12am rhythm
+  // reads "Mon 12:00 AM", never the calendar Tuesday it technically starts.
+  const label = new Date(d.getTime() - EARLY_MORNING_CUTOFF_MINUTES * 60_000);
+  if (days > 0 && days < 7) return label.toLocaleDateString([], { weekday: 'short' }) + time;
+  return label.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 // The app's "today" is the sleep-cycle day (5am boundary, same as localDay):

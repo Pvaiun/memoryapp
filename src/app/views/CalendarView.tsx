@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { isDoneForNow } from '../../shared/cadence';
-import { dayKey } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, dayKey } from '../../shared/dates';
 import { api, itemColor, localDay } from '../api';
 
 // Calendar (§6): a presentation lens over the same backend — HAPPENs on their
@@ -273,7 +273,10 @@ export default function CalendarView({
   const byDay = useMemo(() => {
     const m = new Map<string, Entry[]>();
     for (const e of entries) {
-      const k = dayKey(new Date(e.date));
+      // Bucket by SLEEP day (5am boundary): a 12am chore paints the cell of
+      // the evening it ends — the same day the today marker (localDay) and
+      // every date label use.
+      const k = dayKey(new Date(new Date(e.date).getTime() - EARLY_MORNING_CUTOFF_MINUTES * 60_000));
       const list = m.get(k) ?? [];
       list.push(e);
       m.set(k, list);
@@ -297,8 +300,9 @@ export default function CalendarView({
     const out: { itemId: string; start: string; end: string }[] = [];
     for (const it of Object.values(items)) {
       if (!it.eventAt || !it.eventEnd || it.cadence) continue;
-      const start = dayKey(new Date(it.eventAt));
-      const end = dayKey(new Date(it.eventEnd));
+      const shift = EARLY_MORNING_CUTOFF_MINUTES * 60_000;
+      const start = dayKey(new Date(new Date(it.eventAt).getTime() - shift));
+      const end = dayKey(new Date(new Date(it.eventEnd).getTime() - shift));
       if (end > start) out.push({ itemId: it.id, start, end });
     }
     return out.sort((a, b) => a.start.localeCompare(b.start));

@@ -157,13 +157,28 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
     );
     expect(occ.map((d) => d.toISOString())).toEqual(['2026-07-24T00:00:00.000Z', '2026-07-31T00:00:00.000Z']);
   });
-  it('atTime walk gives the same answer on any host clock (Mon/Wed/Fri at 12am read as Thursday in the browser)', () => {
-    // "weekly on Mon, Wed, Fri at 12am" at UTC-4, asked on Tuesday from the
-    // 5am sleep-day start (09:00Z): the next slot is Wednesday 00:00 local —
-    // tonight — i.e. Wed 04:00Z. The walk used to read host-LOCAL fields of
-    // the tz-shifted timeline, so on a browser at UTC-4 a 12am rhythm
-    // matched its weekdays at 8pm the day before and landed a day late
-    // ("next Thu"), while the UTC-hosted worker said "tonight".
+  it('byWeekday names SLEEP days: a 12am–5am atTime lands at the END of its named day', () => {
+    // "litter boxes weekly on Mon, Wed, Fri at 12am" at UTC-4. Under the 5am
+    // sleep-day rule, "Monday at 12am" is the midnight that ends Monday's
+    // evening — calendar Tuesday 00:00 local — exactly how the night-owl
+    // parse rule reads one-shot phrases. So the occurrence grid is calendar
+    // Tue/Thu/Sat 00:00 local, while everything shown to the user keeps
+    // saying Mon/Wed/Fri.
+    const cadence: Cadence = { freq: 'weekly', interval: 1, byWeekday: [1, 3, 5], atTime: '00:00' };
+    // From Monday's sleep-day start (Mon Aug 3 05:00 local, 09:00Z): Monday
+    // night is a litter night — calendar Tue Aug 4 00:00 local (04:00Z).
+    const fromMonday = nextAtTimeOccurrence(cadence, '2026-07-31T18:00:00Z', new Date('2026-08-03T09:00:00Z'), -240);
+    expect(fromMonday.toISOString()).toBe('2026-08-04T04:00:00.000Z');
+    // From Tuesday's sleep-day start: Tuesday is NOT a litter day — the next
+    // slot is Wednesday night (calendar Thu Aug 6 00:00 local).
+    const fromTuesday = nextAtTimeOccurrence(cadence, '2026-07-31T18:00:00Z', new Date('2026-08-04T09:00:00Z'), -240);
+    expect(fromTuesday.toISOString()).toBe('2026-08-06T04:00:00.000Z');
+  });
+  it('atTime walk gives the same answer on any host clock (it once read Mon/Wed/Fri as Thu in the browser)', () => {
+    // The walk used to read host-LOCAL fields of its shifted timeline, so
+    // the browser (host clock = user clock) and the UTC-hosted worker could
+    // disagree by a day about the same cadence. Same computation, two host
+    // clocks, one answer — that's the regression guard.
     const cadence: Cadence = { freq: 'weekly', interval: 1, byWeekday: [1, 3, 5], atTime: '00:00' };
     const compute = () =>
       nextAtTimeOccurrence(cadence, '2026-07-31T18:00:00Z', new Date('2026-08-04T09:00:00Z'), -240).toISOString();
@@ -172,9 +187,9 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
     const prevTz = env.TZ;
     try {
       env.TZ = 'UTC'; // the worker's frame
-      expect(compute()).toBe('2026-08-05T04:00:00.000Z');
+      expect(compute()).toBe('2026-08-06T04:00:00.000Z');
       env.TZ = 'America/Toronto'; // the browser's frame — host clock IS the user clock
-      expect(compute()).toBe('2026-08-05T04:00:00.000Z');
+      expect(compute()).toBe('2026-08-06T04:00:00.000Z');
     } finally {
       if (prevTz === undefined) delete env.TZ;
       else env.TZ = prevTz;
@@ -226,6 +241,15 @@ describe('captured-today relevance (§9.1, Now screen)', () => {
     expect(
       happeningToday(item({ cadence: { freq: 'daily', interval: 1, atTime: '21:00' } }), now, tz),
     ).toBe(true);
+  });
+  it('a 12am rhythm is today on the days it NAMES: Mon/Wed/Fri never claims a Tuesday', () => {
+    // "litter boxes Mon/Wed/Fri at 12am": Wednesday qualifies — its midnight
+    // comes at the end of Wednesday's evening. Tuesday does not, even though
+    // calendar Wednesday 00:00 falls inside Tuesday's sleep day.
+    const litter = { freq: 'weekly' as const, interval: 1, byWeekday: [1, 3, 5], atTime: '00:00' };
+    expect(happeningToday(item({ cadence: litter }), now, tz)).toBe(true); // Wednesday
+    const tuesday = new Date('2026-07-21T18:00:00Z');
+    expect(happeningToday(item({ cadence: litter, createdAt: '2026-07-20T17:00:00Z' }), tuesday, tz)).toBe(false);
   });
 });
 

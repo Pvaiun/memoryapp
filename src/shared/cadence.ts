@@ -362,7 +362,7 @@ export function neglectedByDays(
 // must know which frame those fields live in. Real-instant callers walk in
 // the host's local frame (browser = the user's clock; worker = UTC). The
 // atTime helpers below build a SHIFTED timeline whose UTC fields hold the
-// user's wall clock, so their walk must read UTC fields: host-local
+// user's sleep-frame clock, so their walk must read UTC fields: host-local
 // accessors there apply the host offset on top of the manual shift, which
 // is what pushed a Mon/Wed/Fri-at-12am rhythm onto Thursday in the browser
 // (12am minus the offset crosses midnight, so every day matched one late —
@@ -498,15 +498,23 @@ function occurrencesBetweenIn(
 }
 
 // Recurring DOs anchor at cadence.atTime, a wall-clock "HH:MM" in the USER'S
-// timezone. The occurrence walk must run in that frame: a Thursday-8pm rhythm
-// at UTC-4 lands on Friday 00:00 UTC, so matching byWeekday against UTC days
-// (or treating "20:00" as UTC) would drift the ping by hours or a whole day.
-// These helpers shift into the user frame, walk, and shift the result back.
-function localAtTimeAnchor(cadence: Cadence, createdAtIso: string, tzMs: number): Date {
+// timezone, and byWeekday names the user's SLEEP days (5am → 5am), not
+// calendar days. The two differ only for times in the 12am–5am window:
+// "litter boxes Mon/Wed/Fri at 12am" means the midnight that ENDS Monday's
+// evening — calendar Tuesday 00:00 — exactly as the date parser's night-owl
+// rule reads one-shot phrases. So the walk runs in a frame shifted by the
+// user's offset MINUS the sleep cutoff: in that frame the 5am boundary is
+// midnight, a frame day IS a sleep day, and an atTime before 5am wraps to
+// the tail of its named day. For times from 5am on, the frame day equals
+// the calendar day and nothing changes.
+const SLEEP_SHIFT_MS = EARLY_MORNING_CUTOFF_MINUTES * 60_000;
+
+function sleepFrameAnchor(cadence: Cadence, createdAtIso: string, frameShiftMs: number): Date {
   const [h, m] = (cadence.atTime ?? '00:00').split(':').map(Number);
-  const local = new Date(new Date(createdAtIso).getTime() + tzMs);
-  local.setUTCHours(h, m, 0, 0);
-  return local;
+  const frameMinutes = (h * 60 + m - EARLY_MORNING_CUTOFF_MINUTES + 1440) % 1440;
+  const frame = new Date(new Date(createdAtIso).getTime() + frameShiftMs);
+  frame.setUTCHours(Math.floor(frameMinutes / 60), frameMinutes % 60, 0, 0);
+  return frame;
 }
 
 export function nextAtTimeOccurrence(
@@ -515,10 +523,10 @@ export function nextAtTimeOccurrence(
   from: Date,
   tzOffsetMinutes = 0,
 ): Date {
-  const tzMs = tzOffsetMinutes * 60_000;
-  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
-  const occ = nextOccurrenceIn(UTC_FRAME, cadence, anchor.toISOString(), new Date(from.getTime() + tzMs));
-  return new Date(occ.getTime() - tzMs);
+  const shiftMs = tzOffsetMinutes * 60_000 - SLEEP_SHIFT_MS;
+  const anchor = sleepFrameAnchor(cadence, createdAtIso, shiftMs);
+  const occ = nextOccurrenceIn(UTC_FRAME, cadence, anchor.toISOString(), new Date(from.getTime() + shiftMs));
+  return new Date(occ.getTime() - shiftMs);
 }
 
 export function atTimeOccurrencesBetween(
@@ -528,15 +536,15 @@ export function atTimeOccurrencesBetween(
   to: Date,
   tzOffsetMinutes = 0,
 ): Date[] {
-  const tzMs = tzOffsetMinutes * 60_000;
-  const anchor = localAtTimeAnchor(cadence, createdAtIso, tzMs);
+  const shiftMs = tzOffsetMinutes * 60_000 - SLEEP_SHIFT_MS;
+  const anchor = sleepFrameAnchor(cadence, createdAtIso, shiftMs);
   return occurrencesBetweenIn(
     UTC_FRAME,
     cadence,
     anchor.toISOString(),
-    new Date(from.getTime() + tzMs),
-    new Date(to.getTime() + tzMs),
-  ).map((d) => new Date(d.getTime() - tzMs));
+    new Date(from.getTime() + shiftMs),
+    new Date(to.getTime() + shiftMs),
+  ).map((d) => new Date(d.getTime() - shiftMs));
 }
 
 function startOfWeek(f: CalendarFrame, d: Date): Date {
