@@ -451,6 +451,71 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).not.toContain('overdue');
   });
 
+  it('a multi-day event spanning today reads as underway, never overdue', () => {
+    // The cottage-trip case: eventAt two days back, eventEnd today. Rendered
+    // through deadline vocabulary this was happens=2d-overdue..today, and the
+    // Brain phrased an ongoing trip as a missed window ("now or it's gone").
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        title: 'Cottage trip',
+        eventAt: '2026-07-18T14:00:00.000Z',
+        eventEnd: '2026-07-20T20:00:00.000Z',
+        flavour: 'Event',
+      } as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=started-2d-ago..ends-today');
+    expect(line).not.toContain('overdue');
+  });
+
+  it('an underway event ending later still counts remaining days forward', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        title: 'Conference',
+        eventAt: '2026-07-19T14:00:00.000Z',
+        eventEnd: '2026-07-22T20:00:00.000Z',
+        flavour: 'Event',
+      } as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=started-1d-ago..ends+2d');
+  });
+
+  it('a passed point event reads Nd-ago — it happened, it is not overdue', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        title: 'Dentist',
+        eventAt: '2026-07-17T14:00:00.000Z',
+        flavour: 'Event',
+      } as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=3d-ago');
+    expect(line).not.toContain('overdue');
+  });
+
+  it('a future range keeps the plain relative-day grammar', () => {
+    const line = brainItemLine(
+      {
+        ...baseView,
+        type: 'HAPPEN',
+        title: 'Kayla going to Pei',
+        eventAt: '2026-07-31T12:00:00.000Z',
+        eventEnd: '2026-08-03T12:00:00.000Z',
+        datePrecision: 'day',
+        flavour: 'Event',
+      } as ItemView,
+      now,
+    );
+    expect(line).toContain('happens=+11d..+14d');
+  });
+
   it('the Pragmata case carries its deviations compactly', () => {
     const line = brainItemLine(
       {
