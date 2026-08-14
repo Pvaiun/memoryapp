@@ -1,0 +1,618 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field Notes — stats page mockup</title>
+<style>
+  /* Single-theme mockup: this page previews a screen inside the (dark-only) memory app,
+     so it commits to the app's own palette and paints every color explicitly. */
+  :root {
+    --bg: #0b0e17;
+    --bg-glow: radial-gradient(1200px 600px at 50% -200px, rgba(122, 132, 247, 0.08), transparent 70%);
+    --card: linear-gradient(165deg, rgba(32, 38, 58, 0.9), rgba(19, 23, 37, 0.95));
+    --card-flat: #151a28;
+    --line: rgba(148, 163, 216, 0.14);
+    --line-strong: rgba(148, 163, 216, 0.26);
+    --text: #eef0fa;
+    --text-dim: #9aa3c0;
+    --text-faint: #5d647e;
+    --accent: #8b93f8;
+    --accent-soft: rgba(139, 147, 248, 0.16);
+    --good: #6fd08c;
+    --warn: #e8c26a;
+    --danger: #f0708c;
+    /* chart series — validated (OKLCH band + CVD) against #151a28 in order teal, indigo, rose */
+    --s-teal: #26a583;
+    --s-indigo: #7079f2;
+    --s-rose: #e05a80;
+    --radius: 18px;
+    font-size: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+    line-height: 1.5;
+  }
+  .page {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 28px 16px 80px;
+    background: var(--bg-glow);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* ---------- header ---------- */
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  header h1 {
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 6px;
+    text-wrap: balance;
+  }
+  header .sub {
+    color: var(--text-dim);
+    margin-top: 8px;
+    max-width: 46ch;
+  }
+  header { padding: 8px 4px 14px; }
+
+  /* ---------- hero pattern-stats ---------- */
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tile {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 14px 14px;
+  }
+  .tile .num {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+  }
+  .tile .cap { font-size: 12.5px; color: var(--text-dim); margin-top: 4px; text-wrap: balance; }
+  @media (max-width: 520px) {
+    .tiles { grid-template-columns: 1fr; }
+    .tile { display: flex; align-items: baseline; gap: 12px; }
+    .tile .num { font-size: 24px; }
+    .tile .cap { margin-top: 0; }
+  }
+
+  /* ---------- modules ---------- */
+  section.module {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px 20px 16px;
+  }
+  .module .eyebrow { color: var(--accent); letter-spacing: 0.12em; }
+  .module h2 {
+    font-size: 19px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    line-height: 1.35;
+    margin-top: 7px;
+    text-wrap: balance;
+  }
+  .module h2 b { color: var(--accent); font-weight: 700; }
+  .module .lede { color: var(--text-dim); font-size: 14px; margin-top: 6px; max-width: 58ch; }
+  .chart { margin-top: 16px; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  .whisper {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 12.5px; color: var(--text-dim); }
+  .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .swatch.hollow { background: none !important; border: 2px solid var(--s-rose); border-radius: 50%; width: 8px; height: 8px; }
+
+  /* data table fallbacks */
+  details.data { margin-top: 10px; }
+  details.data summary {
+    font-size: 11.5px; color: var(--text-faint); cursor: pointer; user-select: none;
+    list-style: none; display: inline-flex; align-items: center; gap: 5px;
+  }
+  details.data summary::before { content: '▸'; font-size: 9px; transition: transform 0.15s; }
+  details.data[open] summary::before { transform: rotate(90deg); }
+  details.data table {
+    margin-top: 8px; border-collapse: collapse; font-size: 12px; color: var(--text-dim);
+    font-variant-numeric: tabular-nums; width: 100%;
+  }
+  details.data th, details.data td {
+    text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line);
+    font-weight: 400;
+  }
+  details.data th { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* ---------- journal-style modules ---------- */
+  .return-item { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .return-item:last-of-type { border-bottom: none; padding-bottom: 4px; }
+  .return-title { font-size: 14.5px; font-weight: 600; }
+  .return-title .times { color: var(--s-rose); font-weight: 700; }
+  .phrasings { display: flex; flex-direction: column; gap: 4px; }
+  .phrasing { display: flex; gap: 10px; font-size: 13px; align-items: baseline; }
+  .phrasing .when { color: var(--text-faint); font-size: 11.5px; flex: none; width: 52px; font-variant-numeric: tabular-nums; }
+  .phrasing .text { color: var(--text-dim); }
+  .phrasing .text q { quotes: '“' '”'; }
+
+  .released-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .released-row:last-of-type { border-bottom: none; }
+  .released-row .name { color: var(--text-dim); }
+  .released-row .held { color: var(--text-faint); font-size: 12.5px; flex: none; font-variant-numeric: tabular-nums; }
+
+  .belief { display: flex; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .belief:last-of-type { border-bottom: none; }
+  .belief .date { flex: none; width: 56px; font-size: 11.5px; color: var(--text-faint); padding-top: 3px; font-variant-numeric: tabular-nums; }
+  .belief .mark { flex: none; width: 18px; font-weight: 700; padding-top: 1px; }
+  .belief.noticed .mark { color: var(--good); }
+  .belief.revised .mark { color: var(--warn); }
+  .belief.retired .mark { color: var(--text-faint); }
+  .belief .body { font-size: 14px; color: var(--text-dim); }
+  .belief .body em { font-family: Georgia, 'Times New Roman', serif; font-style: italic; color: var(--text); font-size: 15px; }
+  .belief .body .old { text-decoration: line-through; color: var(--text-faint); }
+  .belief .note { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+
+  footer { text-align: center; color: var(--text-faint); font-size: 12px; padding-top: 18px; max-width: 52ch; margin: 0 auto; }
+
+  /* tooltip */
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: #1c2236; border: 1px solid var(--line-strong); border-radius: 10px;
+    padding: 7px 10px; font-size: 12px; color: var(--text);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    max-width: 220px;
+  }
+  #tip .t-title { font-weight: 600; }
+  #tip .t-sub { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    section.module, header, .tiles { animation: rise 0.4s ease both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Settings · Field notes — mockup</div>
+    <h1>Field Notes</h1>
+    <p class="sub">What your memory keeps noticing about you. Not how much you did — <b>how</b> you do it. Rebuilt each morning from the events log, the daily maps, and every profile the brain has ever written about you.</p>
+  </header>
+
+  <div class="tiles">
+    <div class="tile"><div class="num">71%</div><div class="cap">of completions arrive in surges of 3+, not one by one</div></div>
+    <div class="tile"><div class="num">13h</div><div class="cap">median gap between writing a thought down and acting on it</div></div>
+    <div class="tile"><div class="num">0</div><div class="cap">items with a person's name in them ever quietly dropped</div></div>
+  </div>
+
+  <!-- ═══════════ 1 · THE TIDE ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">The tide</div>
+    <h2>You don't trickle — you <b>surge</b>. Most days nothing moves; then several things fall in one sitting.</h2>
+    <p class="lede">Every completion in the last 90 days, in the hour it happened. Days go quiet for a stretch, then a late-evening wave clears the pile at once.</p>
+    <div class="chart" id="tide" role="img" aria-label="Timeline of the last 90 days; each tick is one completed item, stacked per day. Completions cluster into surge sittings of three or more items, mostly late in the evening, with quiet stretches between."></div>
+    <div class="legend">
+      <span class="key"><span class="swatch" style="background:var(--s-indigo)"></span>surge sitting — 3+ within ~90 min</span>
+      <span class="key"><span class="swatch" style="background:#4a5170"></span>solo completion</span>
+    </div>
+    <div class="whisper">From <code>completed</code> events, clustered into sittings by time-of-day gap · churn removed the same way the brain does it (complete↔revert pairs collapse)</div>
+  </section>
+
+  <!-- ═══════════ 2 · THE SHAPE OF YOUR DAY ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">The shape of your day</div>
+    <h2>Thoughts arrive in the morning. Action happens <b>after dark</b>.</h2>
+    <p class="lede">When you capture versus when you complete, by hour. The two peaks are about thirteen hours apart — your morning self writes the list, your midnight self clears it.</p>
+    <div class="chart" id="dayshape" role="img" aria-label="Two heat strips over 24 hours. Captures peak around 9 in the morning; completions peak around 11 at night. A bracket marks the roughly 13 hour lag between the two peaks."></div>
+    <div class="legend">
+      <span class="key"><span class="swatch" style="background:var(--s-teal)"></span>captures — thoughts written down</span>
+      <span class="key"><span class="swatch" style="background:var(--s-indigo)"></span>completions — things done</span>
+    </div>
+    <div class="whisper">From <code>captured</code> and <code>completed</code> event timestamps, all history · darker cell = busier hour</div>
+  </section>
+
+  <!-- ═══════════ 3 · THE PRICE OF ASKING ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">The price of asking</div>
+    <h2>Relationship things move on the <b>first ask</b>. The will has been asked <b>32 mornings</b>.</h2>
+    <p class="lede">How many mornings the map had to show something, per theme, before you moved on it. Past about ten asks, one more repeat has never worked — what works is changing the ask: a smaller step, a named time, a bundle.</p>
+    <div class="chart" id="asks" role="img" aria-label="Lollipop chart of median mornings shown before action, by theme. Relationship and friends move after one morning; home after three; errands and mom around nine; driver's license and life admin have been shown 27 and 32 mornings and are still waiting. A shaded zone beyond ten mornings is labeled as the point past which repetition has never worked."></div>
+    <div class="legend">
+      <span class="key"><span class="swatch" style="background:var(--s-indigo)"></span>moved — median asks to action</span>
+      <span class="key"><span class="swatch hollow"></span>still waiting — asks so far</span>
+    </div>
+    <details class="data"><summary>data</summary><table>
+      <tr><th>Theme</th><th>Mornings</th><th>Status</th></tr>
+      <tr><td>Relationship</td><td>1</td><td>moves</td></tr>
+      <tr><td>Friends</td><td>1</td><td>moves</td></tr>
+      <tr><td>Home</td><td>3</td><td>moves</td></tr>
+      <tr><td>Mom &amp; family</td><td>8</td><td>moves</td></tr>
+      <tr><td>Errands</td><td>9</td><td>moves</td></tr>
+      <tr><td>Movies &amp; someday</td><td>14</td><td>usually released instead</td></tr>
+      <tr><td>Driver's licence</td><td>27</td><td>still waiting</td></tr>
+      <tr><td>Life admin (the will)</td><td>32</td><td>still waiting</td></tr>
+    </table></details>
+    <div class="whisper">Median of <code>surfaced_count</code> at first status change, per theme · still-open items shown at their current count</div>
+  </section>
+
+  <!-- ═══════════ 4 · HOW A THOUGHT ENDS ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">How a thought ends</div>
+    <h2>Home tasks die young. Admin <b>clears in waves</b>. Someday-ideas just… fade.</h2>
+    <p class="lede">Of the things you capture, how many are still open after N days — split by what kind of thought they are. The admin curve doesn't slope, it <em>steps</em>: nothing for two weeks, then a whole shelf clears in one evening.</p>
+    <div class="chart" id="survival" role="img" aria-label="Survival curves over 30 days. Home and errands drop quickly to near 10 percent open, mostly completed. Admin and paperwork stay above 90 percent until about day 13, then fall in two sharp cliffs, marking waves where several items clear in one sitting. Someday and aspirational items decay slowly and mostly end in quiet release rather than completion."></div>
+    <details class="data"><summary>data</summary><table>
+      <tr><th>Still open at…</th><th>day 5</th><th>day 15</th><th>day 30</th><th>usual ending</th></tr>
+      <tr><td style="color:var(--s-indigo)">Home &amp; errands</td><td>28%</td><td>12%</td><td>8%</td><td>completed, within days</td></tr>
+      <tr><td style="color:var(--s-teal)">Admin &amp; paperwork</td><td>96%</td><td>58%</td><td>27%</td><td>completed, in waves</td></tr>
+      <tr><td style="color:var(--s-rose)">Someday &amp; aspirational</td><td>88%</td><td>62%</td><td>34%</td><td>quietly released</td></tr>
+    </table></details>
+    <div class="whisper">Kaplan–Meier-style, from item <code>created</code>→terminal event ages · themes grouped into three families</div>
+  </section>
+
+  <!-- ═══════════ 5 · WHAT UNSTICKS YOU ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">What unsticks you</div>
+    <h2>When something stalls, <b>naming a when</b> works twice as well as anything else the brain tries.</h2>
+    <p class="lede">The map has three moves for a stalled item: ask for a time, ask for a tiny first move, or break it apart. How often each one produced action within a week — against the baseline of simply asking again.</p>
+    <div class="chart" id="nudges" role="img" aria-label="Bar chart of unstick rates. Naming a when: 71 percent of 17 tries. Tiny first move: 58 percent of 12. Breaking it down: 40 percent of 15. Baseline of just repeating the item: 9 percent."></div>
+    <div class="whisper">From <code>first_step</code> tags on daily map bubbles joined to the following week of item events · n = stalled items only (10+ mornings unmoved)</div>
+  </section>
+
+  <!-- ═══════════ 6 · KEPT COMING BACK ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">Kept coming back</div>
+    <h2>Some thoughts you've written down <b>more than once</b> — your own words, drifting.</h2>
+    <p class="lede">Recaptures are the strongest signal you have. Priority is what you say something is worth; coming back to it is what it's actually worth.</p>
+    <div>
+      <div class="return-item">
+        <div class="return-title">Reach out to John <span class="times">· 3 times in 5 weeks</span></div>
+        <div class="phrasings">
+          <div class="phrasing"><span class="when">Jul 4</span><span class="text"><q>message John sometime</q></span></div>
+          <div class="phrasing"><span class="when">Jul 19</span><span class="text"><q>reach out to John, been too long</q></span></div>
+          <div class="phrasing"><span class="when">Aug 6</span><span class="text"><q>seriously — call John this week</q></span></div>
+        </div>
+      </div>
+      <div class="return-item">
+        <div class="return-title">Anchovy medallions <span class="times">· 2 times in 9 days</span></div>
+        <div class="phrasings">
+          <div class="phrasing"><span class="when">Jul 31</span><span class="text"><q>get anchovy medallions at the Chinese grocery in Chinatown</q></span></div>
+          <div class="phrasing"><span class="when">Aug 8</span><span class="text"><q>the anchovy things — still want these</q></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="whisper">From <code>raw_texts</code> phrasing history — each recapture appends your exact words · note the tone sharpening on the third John capture</div>
+  </section>
+
+  <!-- ═══════════ 7 · RELEASED ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">Released</div>
+    <h2>This season you let go of <b>four ideas</b>. Every one was a thing — never a person.</h2>
+    <p class="lede">Quiet dismissals aren't failure; they're the system digesting. What you release says as much as what you keep: so far it's only ever open-ended, low-stakes, no-name-attached ideas.</p>
+    <div>
+      <div class="released-row"><span class="name">Build a grocery ordering app</span><span class="held">held 47 days</span></div>
+      <div class="released-row"><span class="name">Paintings vs. walk</span><span class="held">held 21 days</span></div>
+      <div class="released-row"><span class="name">Keep warm (decor ideas)</span><span class="held">held 30 days</span></div>
+      <div class="released-row"><span class="name">Dollarama spatula</span><span class="held">held 12 days</span></div>
+    </div>
+    <div class="whisper">From <code>dismissed</code> events on optional items with no recapture and no person in title or theme</div>
+  </section>
+
+  <!-- ═══════════ 8 · CHANGES OF MIND ═══════════ -->
+  <section class="module">
+    <div class="eyebrow">Changes of mind</div>
+    <h2>The brain rewrites what it believes about you <b>every morning</b>. Here's when it changed its mind.</h2>
+    <p class="lede">A daily profile of you has been kept since day one — every version saved. Diffing them gives a timeline of beliefs: noticed, revised, retired.</p>
+    <div>
+      <div class="belief noticed">
+        <span class="date">May 28</span><span class="mark">+</span>
+        <div><div class="body"><em>Routine chores get done almost immediately after a push.</em></div><div class="note">first profile ever written · still holds, 73 days</div></div>
+      </div>
+      <div class="belief noticed">
+        <span class="date">Jun 14</span><span class="mark">+</span>
+        <div><div class="body"><em>Evenings, roughly 9pm–1am, are the main active window.</em></div><div class="note">noticed after 17 days of late-night completion clusters</div></div>
+      </div>
+      <div class="belief revised">
+        <span class="date">Jul 2</span><span class="mark">~</span>
+        <div><div class="body"><span class="old">Vague items stall indefinitely.</span> → <em>Vague items move once narrowed to a first step.</em></div><div class="note">revised the week three stalled items cleared after breakdowns</div></div>
+      </div>
+      <div class="belief retired">
+        <span class="date">Jul 26</span><span class="mark">−</span>
+        <div><div class="body"><em style="color:var(--text-faint)">Weekend mornings are active hours.</em></div><div class="note">retired — contradicted six weekends running</div></div>
+      </div>
+      <div class="belief noticed">
+        <span class="date">Aug 9</span><span class="mark">+</span>
+        <div><div class="body"><em>Relationship- and health-adjacent items are never quietly dropped.</em></div><div class="note">today's profile · the brain's longest-standing observation about what you protect</div></div>
+      </div>
+    </div>
+    <div class="whisper">Sentence-level diff of the <code>profiles</code> table — one row per day, kept forever, no API needed beyond a new endpoint</div>
+  </section>
+
+  <footer>Mockup with representative data. Every number on this page is computable today from the events log, the preserved daily maps, and the profile history already sitting in the database.</footer>
+</div>
+
+<div id="tip"></div>
+
+<script>
+(function () {
+  'use strict';
+  var NS = 'http://www.w3.org/2000/svg';
+  var C = { teal: '#26a583', indigo: '#7079f2', rose: '#e05a80', solo: '#4a5170',
+            ink: '#eef0fa', dim: '#9aa3c0', faint: '#5d647e', line: 'rgba(148,163,216,0.14)',
+            lineStrong: 'rgba(148,163,216,0.3)', good: '#6fd08c' };
+  var FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+  function el(name, attrs, parent) {
+    var n = document.createElementNS(NS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function txt(parent, x, y, s, opts) {
+    opts = opts || {};
+    var t = el('text', {
+      x: x, y: y,
+      fill: opts.fill || C.faint,
+      'font-size': opts.size || 10.5,
+      'font-family': FONT,
+      'font-weight': opts.weight || 400,
+      'text-anchor': opts.anchor || 'start'
+    }, parent);
+    t.textContent = s;
+    return t;
+  }
+
+  var tip = document.getElementById('tip');
+  function showTip(evt, title, sub) {
+    tip.innerHTML = '<div class="t-title"></div><div class="t-sub"></div>';
+    tip.children[0].textContent = title;
+    tip.children[1].textContent = sub;
+    tip.style.display = 'block';
+    var pad = 14, w = tip.offsetWidth;
+    var x = Math.min(evt.clientX + pad, window.innerWidth - w - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = (evt.clientY - 40) + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+  function hoverable(node, title, sub) {
+    node.style.cursor = 'default';
+    node.addEventListener('mousemove', function (e) { showTip(e, title, sub); });
+    node.addEventListener('mouseleave', hideTip);
+  }
+
+  /* deterministic PRNG so the mockup renders identically every load */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* ══════════ 1 · THE TIDE ══════════ */
+  (function tide() {
+    var W = 640, H = 150, left = 8, right = 8, base = H - 26;
+    var days = 90, rnd = mulberry32(9);
+    var data = [];               // [{n, surge, label}]
+    var d = 0;
+    while (d < days) {
+      var gap = 3 + Math.floor(rnd() * 6);         // quiet stretch
+      for (var g = 0; g < gap && d < days; g++, d++) {
+        data.push(rnd() < 0.3 ? { n: 1, surge: false } : { n: 0 });
+      }
+      if (d < days) { data.push({ n: 3 + Math.floor(rnd() * 5), surge: true }); d++; }
+    }
+    // hand-pick the champion surge for annotation
+    var maxI = 0;
+    data.forEach(function (v, i) { if (v.n > data[maxI].n) maxI = i; });
+    data[maxI].n = 7;
+
+    var months = [{ i: 0, l: 'May' }, { i: 21, l: 'Jun' }, { i: 51, l: 'Jul' }, { i: 82, l: 'Aug' }];
+    function dayLabel(i) {
+      var m = 0;
+      for (var k = 0; k < months.length; k++) if (i >= months[k].i) m = k;
+      return months[m].l + ' ' + (i - months[m].i + 1 + (m === 0 ? 10 : 0));
+    }
+
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H }, document.getElementById('tide'));
+    var colW = (W - left - right) / days;
+    el('line', { x1: left, y1: base + 0.5, x2: W - right, y2: base + 0.5, stroke: C.line, 'stroke-width': 1 }, svg);
+    months.forEach(function (m) { txt(svg, left + m.i * colW, H - 8, m.l); });
+
+    var evening = ['9:12pm', '9:48pm', '10:15pm', '10:52pm', '11:31pm', '11:58pm', '12:24am'];
+    data.forEach(function (v, i) {
+      if (!v.n) return;
+      var x = left + i * colW + colW / 2;
+      if (v.surge) {
+        el('ellipse', { cx: x, cy: base, rx: 9, ry: 5, fill: 'rgba(112,121,242,0.18)' }, svg);
+      }
+      for (var k = 0; k < v.n; k++) {
+        el('rect', {
+          x: x - 1.6, y: base - 4 - k * 11, width: 3.2, height: 8, rx: 1.6,
+          fill: v.surge ? C.indigo : C.solo
+        }, svg);
+      }
+      var hit = el('rect', { x: left + i * colW, y: 0, width: colW, height: base, fill: 'transparent' }, svg);
+      var t0 = evening[Math.floor(rnd() * 3)], t1 = evening[3 + Math.floor(rnd() * 4)];
+      hoverable(hit, dayLabel(i) + ' — ' + v.n + ' done',
+        v.surge ? 'one sitting, ' + t0 + '–' + t1 : 'solo, ' + t1);
+    });
+
+    // annotate the champion surge
+    var ax = left + maxI * colW + colW / 2, ay = base - 4 - 7 * 11;
+    el('line', { x1: ax, y1: ay - 4, x2: ax, y2: ay - 16, stroke: C.lineStrong, 'stroke-width': 1 }, svg);
+    var anchor = maxI > days * 0.65 ? 'end' : (maxI < days * 0.3 ? 'start' : 'middle');
+    txt(svg, ax, ay - 22, dayLabel(maxI) + ' — 7 in one sitting, 10:52pm–12:10am', { fill: C.dim, size: 11, anchor: anchor, weight: 500 });
+  })();
+
+  /* ══════════ 2 · THE SHAPE OF YOUR DAY ══════════ */
+  (function dayshape() {
+    var W = 640, H = 190, left = 96, right = 10;
+    var cw = (W - left - right) / 24;
+    var rows = [
+      { y: 34, label: 'captures', color: [38, 165, 131],   // teal ramp
+        vals: [1,0,0,0,0,0,2,5,8,10,7,4,3,3,2,2,3,2,3,4,3,3,2,1], peak: 9 },
+      { y: 78, label: 'completions', color: [112, 121, 242], // indigo ramp
+        vals: [4,2,0,0,0,0,0,1,2,2,1,1,2,1,1,1,2,2,3,4,6,8,10,7], peak: 22 }
+    ];
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H }, document.getElementById('dayshape'));
+
+    rows.forEach(function (row) {
+      var max = Math.max.apply(null, row.vals);
+      txt(svg, left - 12, row.y + 20, row.label, { anchor: 'end', fill: C.dim, size: 12, weight: 500 });
+      row.vals.forEach(function (v, h) {
+        var a = 0.06 + 0.94 * (v / max);       // sequential: one hue, opacity ramp
+        var cell = el('rect', {
+          x: left + h * cw + 1, y: row.y, width: cw - 2, height: 30, rx: 3,
+          fill: 'rgba(' + row.color.join(',') + ',' + a.toFixed(2) + ')'
+        }, svg);
+        var hh = h % 12 === 0 ? 12 : h % 12;
+        var ampm = (h < 12 ? 'am' : 'pm');
+        hoverable(cell, hh + ampm, v + ' ' + row.label + ' per typical week');
+      });
+      // peak marker
+      var px = left + row.peak * cw + cw / 2;
+      el('circle', { cx: px, cy: row.y - 7, r: 2.5, fill: 'rgb(' + row.color.join(',') + ')' }, svg);
+    });
+
+    // hour axis
+    [0, 6, 12, 18].forEach(function (h) {
+      var l = h === 0 ? '12am' : h === 12 ? 'noon' : (h % 12) + (h < 12 ? 'am' : 'pm');
+      txt(svg, left + h * cw + 1, 128, l);
+    });
+    txt(svg, left + 24 * cw - 2, 128, '11pm', { anchor: 'end' });
+
+    // lag bracket between the two peaks
+    var x1 = left + rows[0].peak * cw + cw / 2, x2 = left + rows[1].peak * cw + cw / 2, by = 150;
+    el('path', {
+      d: 'M ' + x1 + ' ' + (by - 8) + ' V ' + by + ' H ' + x2 + ' V ' + (by - 8),
+      fill: 'none', stroke: C.lineStrong, 'stroke-width': 1.2
+    }, svg);
+    txt(svg, (x1 + x2) / 2, by + 16, '≈ 13 hours between thought and action', { anchor: 'middle', fill: C.ink, size: 12, weight: 600 });
+  })();
+
+  /* ══════════ 3 · THE PRICE OF ASKING ══════════ */
+  (function asks() {
+    var rowsData = [
+      { name: 'Relationship', v: 1, moved: true, ex: '“Speak French with Kayla” — moves at its moment' },
+      { name: 'Friends', v: 1, moved: true, ex: '“Rose and Vince day” — moved next morning' },
+      { name: 'Home', v: 3, moved: true, ex: '“Find TV stand” — 3 mornings, then done in a burst' },
+      { name: 'Mom & family', v: 8, moved: true, ex: '“Dim sum in Chinatown” — moved once bundled' },
+      { name: 'Errands', v: 9, moved: true, ex: '“Anchovy medallions” — rode along on the bundle' },
+      { name: 'Movies & someday', v: 14, moved: true, ex: 'usually released, not completed' },
+      { name: "Driver's licence", v: 27, moved: false, ex: '“Book driving lesson” — asked 27 mornings' },
+      { name: 'Life admin', v: 32, moved: false, ex: '“Sign my will” — asked 32 mornings' }
+    ];
+    var W = 640, rowH = 30, top = 26, H = top + rowsData.length * rowH + 34;
+    var left = 128, right = 46, plotW = W - left - right, maxV = 34;
+    var x = function (v) { return left + (v / maxV) * plotW; };
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H }, document.getElementById('asks'));
+
+    // "repeats stop working" zone
+    el('rect', { x: x(10), y: top - 12, width: x(maxV) - x(10), height: rowsData.length * rowH + 12, fill: 'rgba(224,90,128,0.05)' }, svg);
+    el('line', { x1: x(10), y1: top - 12, x2: x(10), y2: top + rowsData.length * rowH, stroke: 'rgba(224,90,128,0.35)', 'stroke-width': 1, 'stroke-dasharray': '3 4' }, svg);
+    txt(svg, x(10) + 6, top - 15, 'past ~10 asks, repeating has never worked', { fill: C.rose, size: 10.5 });
+
+    [0, 10, 20, 30].forEach(function (v) {
+      el('line', { x1: x(v), y1: top - 2, x2: x(v), y2: top + rowsData.length * rowH, stroke: v ? C.line : C.lineStrong, 'stroke-width': 1 }, svg);
+      txt(svg, x(v), H - 18, String(v), { anchor: 'middle' });
+    });
+    txt(svg, x(20), H - 4, 'mornings shown before movement', { anchor: 'middle', size: 10.5 });
+
+    rowsData.forEach(function (r, i) {
+      var cy = top + i * rowH + rowH / 2 - 4;
+      txt(svg, left - 10, cy + 4, r.name, { anchor: 'end', fill: C.dim, size: 12 });
+      el('line', { x1: x(0), y1: cy, x2: x(r.v), y2: cy, stroke: r.moved ? 'rgba(112,121,242,0.5)' : 'rgba(224,90,128,0.5)', 'stroke-width': 2 }, svg);
+      var dot;
+      if (r.moved) {
+        dot = el('circle', { cx: x(r.v), cy: cy, r: 5, fill: C.indigo }, svg);
+      } else {
+        dot = el('circle', { cx: x(r.v), cy: cy, r: 4.5, fill: '#151a28', stroke: C.rose, 'stroke-width': 2.5 }, svg);
+      }
+      txt(svg, x(r.v) + 11, cy + 4, String(r.v), { fill: C.ink, size: 11.5, weight: 600 });
+      var hit = el('rect', { x: 0, y: top + i * rowH - 4, width: W, height: rowH, fill: 'transparent' }, svg);
+      hoverable(hit, r.name + ' — ' + r.v + (r.moved ? ' asks to action' : ' asks and counting'), r.ex);
+    });
+  })();
+
+  /* ══════════ 4 · HOW A THOUGHT ENDS ══════════ */
+  (function survival() {
+    var W = 640, H = 240, left = 44, right = 158, top = 16, bottom = 34;
+    var plotW = W - left - right, plotH = H - top - bottom;
+    var x = function (d) { return left + (d / 30) * plotW; };
+    var y = function (p) { return top + (1 - p / 100) * plotH; };
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H }, document.getElementById('survival'));
+
+    [0, 25, 50, 75, 100].forEach(function (p) {
+      el('line', { x1: left, y1: y(p), x2: W - right, y2: y(p), stroke: p === 0 ? C.lineStrong : C.line, 'stroke-width': 1 }, svg);
+      txt(svg, left - 7, y(p) + 3.5, p + '%', { anchor: 'end' });
+    });
+    [0, 10, 20, 30].forEach(function (d) { txt(svg, x(d), H - 18, d ? 'day ' + d : 'day 0', { anchor: d ? 'middle' : 'start' }); });
+
+    var series = [
+      { name: 'Home & errands', color: C.indigo, end: 'mostly ✓ completed, young', dy: 0,
+        pts: [[0,100],[1,72],[2,45],[3,36],[5,28],[8,18],[10,12],[15,12],[20,10],[30,8]] },
+      { name: 'Admin & paperwork', color: C.teal, end: 'completed — in waves', dy: 8,
+        pts: [[0,100],[5,96],[10,94],[13,92],[13.4,66],[14,58],[20,56],[23,55],[23.4,32],[24,27],[30,27]] },
+      { name: 'Someday & aspirational', color: C.rose, end: 'mostly released, quietly', dy: -18,
+        pts: [[0,100],[3,95],[5,88],[8,80],[12,70],[15,62],[20,50],[25,41],[30,34]] }
+    ];
+
+    series.forEach(function (s) {
+      var d = s.pts.map(function (p, i) { return (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1); }).join(' ');
+      el('path', { d: d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, svg);
+      var last = s.pts[s.pts.length - 1];
+      el('circle', { cx: x(last[0]), cy: y(last[1]), r: 3.5, fill: s.color, stroke: '#151a28', 'stroke-width': 2 }, svg);
+      var ly = y(last[1]) + s.dy;
+      txt(svg, x(30) + 10, ly + 1, s.name, { fill: C.ink, size: 11.5, weight: 600 });
+      txt(svg, x(30) + 10, ly + 13, s.end, { fill: C.faint, size: 10 });
+      s.pts.forEach(function (p) {
+        var h = el('circle', { cx: x(p[0]), cy: y(p[1]), r: 9, fill: 'transparent' }, svg);
+        hoverable(h, s.name, 'day ' + Math.round(p[0]) + ' — ' + Math.round(p[1]) + '% still open');
+      });
+    });
+
+    // annotate the admin cliff
+    txt(svg, x(13.4) + 6, y(80), '← an admin wave:', { fill: C.dim, size: 10.5, weight: 500 });
+    txt(svg, x(13.4) + 6, y(74), '5 cleared in one evening', { fill: C.dim, size: 10.5 });
+  })();
+
+  /* ══════════ 5 · WHAT UNSTICKS YOU ══════════ */
+  (function nudges() {
+    var rows = [
+      { name: 'Name a when', pct: 71, n: 17, base: false, ex: '“When could this Chinatown trip happen?”' },
+      { name: 'Tiny first move', pct: 58, n: 12, base: false, ex: '“What’s the first small move on any of these?”' },
+      { name: 'Break it down', pct: 40, n: 15, base: false, ex: '“What would be one small piece to start with?”' },
+      { name: 'Just ask again', pct: 9, n: 41, base: true, ex: 'the baseline — repeat the item unchanged' }
+    ];
+    var W = 640, rowH = 40, top = 8, H = top + rows.length * rowH + 6;
+    var left = 128, right = 96, plotW = W - left - right;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H }, document.getElementById('nudges'));
+
+    rows.forEach(function (r, i) {
+      var cy = top + i * rowH + rowH / 2;
+      var w = (r.pct / 100) * plotW;
+      txt(svg, left - 10, cy + 4, r.name, { anchor: 'end', fill: r.base ? C.faint : C.dim, size: 12, weight: r.base ? 400 : 500 });
+      el('rect', { x: left, y: cy - 7, width: plotW, height: 14, rx: 4, fill: 'rgba(148,163,216,0.06)' }, svg);
+      var bar = el('rect', { x: left, y: cy - 7, width: w, height: 14, rx: 4, fill: r.base ? '#4a5170' : C.indigo }, svg);
+      txt(svg, left + w + 9, cy + 4, r.pct + '%', { fill: C.ink, size: 12.5, weight: 650 });
+      txt(svg, left + w + 44, cy + 4, 'of ' + r.n, { fill: C.faint, size: 10.5 });
+      hoverable(bar, r.name + ' — unstuck ' + r.pct + '% of ' + r.n + ' stalled items', r.ex);
+    });
+  })();
+})();
+</script>
