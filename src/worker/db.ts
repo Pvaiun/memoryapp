@@ -28,6 +28,7 @@ interface ItemRow {
   event_end: string | null;
   alert_lead_minutes: number | null;
   show_on_calendar: number;
+  snoozed_until: string | null;
   priority_base: number;
   priority_boost: number;
   boost_updated_at: string | null;
@@ -64,6 +65,7 @@ export function rowToItem(row: ItemRow, themes: Theme[] = []): Item {
     eventEnd: row.event_end,
     alertLeadMinutes: row.alert_lead_minutes,
     showOnCalendar: !!row.show_on_calendar,
+    snoozedUntil: row.snoozed_until ?? null,
     priorityBase: row.priority_base,
     priorityBoost: row.priority_boost,
     boostUpdatedAt: row.boost_updated_at,

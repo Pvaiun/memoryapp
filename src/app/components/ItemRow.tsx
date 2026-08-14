@@ -1,7 +1,7 @@
 import type { ItemView } from '../../shared/types';
 import { isClosedStatus } from '../../shared/types';
 import { deadlinePassed, describeCadence, isDoneForNow, nextAtTimeOccurrence, nextOccurrence } from '../../shared/cadence';
-import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal } from '../../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiffLocal, snoozeActive } from '../../shared/dates';
 import { FLAVOUR_ICONS, itemColor, tzOffsetMinutes } from '../api';
 
 export function priorityColor(p: number): string {
@@ -80,6 +80,10 @@ export default function ItemRow({
   // when the day does, at the 5am rollover.
   const timed = item.datePrecision !== 'day';
   const overdue = item.type === 'DO' && item.status === 'active' && deadlinePassed(item, Date.now());
+  // The trust half of the snooze: hidden from the map, but visibly parked
+  // here — the badge names the wake day so "did I lose it?" has an answer.
+  const rowSnoozed =
+    item.status === 'active' && snoozeActive(item.snoozedUntil, Date.now(), tzOffsetMinutes());
 
   return (
     <div className={`item-row${done || closed ? ' done' : ''}`} onClick={() => onOpen(item)}>
@@ -132,6 +136,7 @@ export default function ItemRow({
           )}
           {item.cadence && <span>{describeCadence(item.cadence)}</span>}
           {closed && item.status !== 'completed' && <span>{item.status}</span>}
+          {rowSnoozed && <span className="snoozed">snoozed · back {fmtDate(item.snoozedUntil!, false)}</span>}
           {doneToday && (
             <span className="done-today">done today{nextOcc ? ` · next ${fmtDate(nextOcc.toISOString(), !!item.cadence?.atTime)}` : ''}</span>
           )}

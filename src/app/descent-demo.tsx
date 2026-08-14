@@ -33,6 +33,7 @@ function mkItem(over: Partial<ItemView>): ItemView {
     eventEnd: null,
     alertLeadMinutes: null,
     showOnCalendar: true,
+    snoozedUntil: null,
     priorityBase: 0.5,
     priorityBoost: 0,
     boostUpdatedAt: null,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveFlavour } from './flavour';
 import { effectivePriority, decayedBoost, PRIORITY_BASE, RECAPTURE_BOOST, priorityLabel } from './priority';
 import { atTimeOccurrencesBetween, completedWithinSleepDay, deadlinePassed, eventPassed, happeningToday, isNeglected, isResolvedForNow, momentPassed, nextAtTimeOccurrence, nextLatenessBoundary, nextOccurrence, occurrencesBetween, cadencePeriodMs, describeCadence, rollEventAnchor } from './cadence';
-import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey } from './dates';
+import { expandBareOrdinals, refineWithSourceTime, resolveDatePhrase, inferHardness, inferOptionality, dayKey, sleepDayDiff, sleepDayKey, snoozeActive } from './dates';
 import { heuristicParse, parseCadencePhrase } from './heuristicParse';
 import type { Cadence } from './types';
 
@@ -760,5 +760,34 @@ describe('a named part of the day is a coarse time, not an absent one', () => {
     expect(refined.coarse).toBeUndefined();
     expect(hourOf(refined.iso)).toBe(18);
     expect(new Date(refined.iso).getUTCMinutes()).toBe(30);
+  });
+});
+
+describe('snoozeActive — the one predicate every snooze reader shares', () => {
+  const tz = -240; // UTC-4
+
+  it('null is never snoozed', () => {
+    expect(snoozeActive(null, Date.parse('2026-07-20T12:00:00Z'), tz)).toBe(false);
+  });
+
+  it('hidden through the day before the wake day, awake on the wake day itself', () => {
+    // Snoozed "until Aug 19" (noon-anchored). Aug 18 local: still hidden.
+    const until = '2026-08-19T16:00:00.000Z'; // noon local Aug 19
+    expect(snoozeActive(until, Date.parse('2026-08-18T16:00:00Z'), tz)).toBe(true);
+    // Aug 19, 6am local — the wake day has arrived; the instant's clock time
+    // (noon) must not matter.
+    expect(snoozeActive(until, Date.parse('2026-08-19T10:00:00Z'), tz)).toBe(false);
+  });
+
+  it('the wake day starts at the 5am sleep boundary, not midnight', () => {
+    const until = '2026-08-19T16:00:00.000Z'; // noon local Aug 19
+    // Aug 19, 2am local is still Aug 18's sleep day — hidden.
+    expect(snoozeActive(until, Date.parse('2026-08-19T06:00:00Z'), tz)).toBe(true);
+    // Aug 19, 5am local — the day rolls, the item wakes with the morning map.
+    expect(snoozeActive(until, Date.parse('2026-08-19T09:00:00Z'), tz)).toBe(false);
+  });
+
+  it('a past wake day is not snoozed (the sweep clears it; visibility never waits)', () => {
+    expect(snoozeActive('2026-07-01T16:00:00Z', Date.parse('2026-07-20T12:00:00Z'), tz)).toBe(false);
   });
 });

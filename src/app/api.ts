@@ -132,6 +132,11 @@ export const api = {
   dismissItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/dismiss`, { method: 'POST' }),
   missItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/miss`, { method: 'POST' }),
   reopenItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/reopen`, { method: 'POST' }),
+  // Hide from the map and silence pushes until `until`'s day arrives; the
+  // item stays active and badged in Browse/Search.
+  snoozeItem: (id: string, until: string) =>
+    req<{ item: ItemView }>(`/api/items/${id}/snooze`, { method: 'POST', body: JSON.stringify({ until }) }),
+  unsnoozeItem: (id: string) => req<{ item: ItemView }>(`/api/items/${id}/unsnooze`, { method: 'POST' }),
   rejectItem: (id: string) => req<{ ok: boolean }>(`/api/items/${id}`, { method: 'DELETE' }),
 
   browse: () =>

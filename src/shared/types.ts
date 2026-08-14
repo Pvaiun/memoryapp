@@ -113,6 +113,16 @@ export interface Item {
   // in the item sheet wins.
   showOnCalendar: boolean;
 
+  // Item-level snooze: parked until this instant's sleep DAY arrives (the
+  // comparison is day-granular — shared/dates.ts snoozeActive). While the
+  // snooze runs the item stays 'active' — it still matters, unlike
+  // 'dismissed' — but the map, push, and Captured Today skip it. Browse and
+  // Search keep showing it (badged), so the user can trust it isn't lost.
+  // Cleared by the daily sweep once the wake day arrives, by an explicit
+  // un-snooze, or by recapturing the item — re-mentioning it is the clearest
+  // possible signal it's back on the user's mind.
+  snoozedUntil: string | null;
+
   // Priority (§9.3): base + boosts with decay; user edit wins.
   priorityBase: number; // 0..1 (low .25 / medium .5 / high .75)
   priorityBoost: number; // accumulated recapture boost, decays over time

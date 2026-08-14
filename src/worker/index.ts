@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
 import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, morningRebuild, rebuildMap } from './brain';
-import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, uncompleteItem, type ItemEdits } from './items';
+import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, snoozeItem, uncompleteItem, unsnoozeItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
 
@@ -161,7 +161,7 @@ app.get('/api/debug/brain', async (c) => {
 app.get('/api/export', async (c) => {
   const db = c.env.DB;
   const [items, captures, themes, itemThemes, events, bubbles, bubbleItems, profiles, themeNotes] = await Promise.all([
-    db.prepare('SELECT id,type,title,raw_texts,status,deadline,deadline_hardness,cadence,optionality,effort,ping_natured,event_at,event_end,alert_lead_minutes,priority_base,priority_boost,boost_updated_at,user_priority,flavour_override,created_at,updated_at,last_touched_at,last_completed_at,completion_count,streak,last_surfaced_at,surfaced_count,parse_confidence,capture_id,affect_tags FROM items').all(),
+    db.prepare('SELECT id,type,title,raw_texts,status,deadline,deadline_hardness,cadence,optionality,effort,ping_natured,event_at,event_end,alert_lead_minutes,snoozed_until,priority_base,priority_boost,boost_updated_at,user_priority,flavour_override,created_at,updated_at,last_touched_at,last_completed_at,completion_count,streak,last_surfaced_at,surfaced_count,parse_confidence,capture_id,affect_tags FROM items').all(),
     db.prepare('SELECT * FROM captures').all(),
     db.prepare('SELECT * FROM themes').all(),
     db.prepare('SELECT * FROM item_themes').all(),
@@ -226,6 +226,22 @@ app.post('/api/items/:id/uncomplete', async (c) => {
 app.post('/api/items/:id/dismiss', async (c) => {
   const item = await dismissItem(c.env, c.req.param('id'));
   if (!item) return c.json({ error: 'not found' }, 404);
+  return c.json({ item });
+});
+
+// Snooze: hide from the map and silence pushes until `until`'s sleep day
+// arrives; the item stays active and visible (badged) in Browse/Search.
+app.post('/api/items/:id/snooze', async (c) => {
+  const { until } = await c.req.json<{ until?: string }>().catch(() => ({ until: undefined }));
+  if (!until) return c.json({ error: 'until required (ISO)' }, 400);
+  const item = await snoozeItem(c.env, c.req.param('id'), until);
+  if (!item) return c.json({ error: 'not found, not active, or wake day not in the future' }, 404);
+  return c.json({ item });
+});
+
+app.post('/api/items/:id/unsnooze', async (c) => {
+  const item = await unsnoozeItem(c.env, c.req.param('id'));
+  if (!item) return c.json({ error: 'not found or not snoozed' }, 404);
   return c.json({ item });
 });
 

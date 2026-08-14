@@ -93,11 +93,14 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         boost_updated_at: nowIso(),
         raw_texts: JSON.stringify(rawTexts),
         affect_tags: affects.length ? JSON.stringify(affects) : null,
+        // Re-mentioning a snoozed item is the clearest possible signal it's
+        // back on the user's mind — the snooze ends here, not at its date.
+        ...(matched.snoozedUntil ? { snoozed_until: null } : {}),
       });
       await syncFts(db, matched.id, matched.title, rawTexts.map((r) => r.text).join('\n'));
       await logEvent(db, 'ai', 'recaptured', {
         itemId: matched.id,
-        payload: { appendedText: p.title, boost: RECAPTURE_BOOST, captureId },
+        payload: { appendedText: p.title, boost: RECAPTURE_BOOST, captureId, ...(matched.snoozedUntil ? { unsnoozed: true } : {}) },
       });
       const fresh = await getItem(db, matched.id);
       if (fresh) boosted.push({ item: toItemView(fresh, now, tz), appendedText: p.title });
