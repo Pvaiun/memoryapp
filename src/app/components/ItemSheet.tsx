@@ -69,6 +69,8 @@ export default function ItemSheet({
   const [themes, setThemes] = useState(item.themes.map((t) => t.name).join(', '));
   const [affects, setAffects] = useState<AffectTag[]>([...new Set((item.affects ?? []).map((a) => a.tag))]);
   const [saving, setSaving] = useState(false);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const [snoozeDate, setSnoozeDate] = useState('');
 
   // Flipping the toggle re-reads whatever is already typed through the other
   // input shape rather than clearing it: dropping to a date keeps the date,
@@ -145,6 +147,19 @@ export default function ItemSheet({
   // exit — they pass on their own (neutral) or get flagged missed (the fail).
   const oneShotEvent = item.type === 'HAPPEN' && !item.cadence;
   const spentEvent = oneShotEvent && (item.status === 'passed' || eventPassed(item, Date.now()));
+
+  // Snooze: park without closing — off the map and silent until the wake day,
+  // still active and badged in Browse/Search. Wake days anchor at local noon
+  // like every all-day date; the server compares sleep days, so the item
+  // returns with the wake day's morning map.
+  const snoozed = item.status === 'active' && !!item.snoozedUntil;
+  const snoozeUntil = (iso: string | null) => {
+    if (iso) void applyExit(api.snoozeItem(item.id, iso));
+  };
+  const snoozeFor = (days: number) => {
+    const d = new Date();
+    snoozeUntil(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, 12, 0, 0, 0).toISOString());
+  };
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
@@ -371,6 +386,31 @@ export default function ItemSheet({
           </div>
         </div>
 
+        {snoozed && (
+          <p className="snoozed-note">
+            Snoozed until {new Date(item.snoozedUntil!).toLocaleDateString([], { month: 'long', day: 'numeric' })} — off
+            the map and silent until then.
+          </p>
+        )}
+        {item.status === 'active' && !snoozed && snoozeOpen && (
+          <div className="field">
+            <label>Snooze — hide from the map until</label>
+            <div className="seg">
+              <button onClick={() => snoozeFor(7)}>A week</button>
+              <button onClick={() => snoozeFor(30)}>A month</button>
+              <button onClick={() => snoozeFor(90)}>3 months</button>
+            </div>
+            <div className="field-row" style={{ marginTop: 8, alignItems: 'flex-end' }}>
+              <div className="field">
+                <input type="date" value={snoozeDate} onChange={(e) => setSnoozeDate(e.target.value)} />
+              </div>
+              <button disabled={!snoozeDate} onClick={() => snoozeUntil(fromLocalInput(snoozeDate, true))}>
+                That day
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="sheet-actions">
           <button className="danger" onClick={reject}>
             Remove
@@ -386,6 +426,12 @@ export default function ItemSheet({
           {item.status === 'active' && !spentEvent && (
             <button onClick={() => applyExit(api.dismissItem(item.id))}>Dismiss</button>
           )}
+          {/* Snooze is the softer "not now": dismiss says it stopped
+              mattering; snooze says not for a while, don't lose it. */}
+          {item.status === 'active' && !spentEvent && !snoozed && (
+            <button onClick={() => setSnoozeOpen((o) => !o)}>{snoozeOpen ? 'Never mind' : 'Snooze…'}</button>
+          )}
+          {snoozed && <button onClick={() => applyExit(api.unsnoozeItem(item.id))}>Wake</button>}
           {(item.status === 'passed' || (item.status === 'active' && spentEvent)) && (
             <button onClick={() => applyExit(api.missItem(item.id))}>Missed it</button>
           )}

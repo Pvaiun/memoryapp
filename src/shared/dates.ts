@@ -193,6 +193,18 @@ export function sleepDayDiffLocal(t: number, now: number): number {
   return idx(t) - idx(now);
 }
 
+// Is an item's snooze still running? Day-granular by design: "snoozed until
+// Sep 14" hides the item through Sep 13's sleep day and hands it back to
+// Sep 14's 5am morning map — never mid-day off the stored instant's clock
+// time, which is just whatever hour the snooze was set at. Every reader that
+// hides snoozed items (map candidates, push, Captured Today, row badges)
+// must go through this one predicate so they can't disagree about the wake
+// day.
+export function snoozeActive(snoozedUntil: string | null, nowMsUtc: number, tzOffsetMinutes: number): boolean {
+  if (!snoozedUntil) return false;
+  return sleepDayOf(new Date(snoozedUntil).getTime(), tzOffsetMinutes) > sleepDayOf(nowMsUtc, tzOffsetMinutes);
+}
+
 export function dayKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');

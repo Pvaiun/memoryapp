@@ -4,7 +4,7 @@ import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
-import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey, sleepDayOf } from '../shared/dates';
+import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey, sleepDayOf, snoozeActive } from '../shared/dates';
 import {
   cadenceStanding,
   compareTier,
@@ -17,7 +17,7 @@ import {
 import type { BrainTier } from './placement';
 import { llmParse } from './capture';
 import { embed } from './embeddings';
-import { rollRecurringDeadlines, rollRecurringEvents, sweepPassedEvents } from './items';
+import { rollRecurringDeadlines, rollRecurringEvents, sweepPassedEvents, wakeSnoozedItems } from './items';
 import {
   getItem,
   getState,
@@ -79,21 +79,33 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   const items = await listItems(db, { statuses: ['active', 'completed', 'dismissed', 'passed', 'missed'] });
   const tz = await getTzOffset(db);
   const views: Record<string, ItemView> = {};
-  for (const item of items) views[item.id] = toItemView(item, now, tz);
+  // A snooze takes effect immediately, not at the next rebuild: dropping the
+  // item from the shipped views makes it vanish from today's bubbles (member
+  // lists filter on views below) and keeps it out of Captured Today. Unlike a
+  // same-day exit, which stays greyed in place, hiding is the entire point of
+  // a snooze.
+  for (const item of items) {
+    if (snoozeActive(item.snoozedUntil, now.getTime(), tz)) continue;
+    views[item.id] = toItemView(item, now, tz);
+  }
 
-  const bubbles: Bubble[] = bubbleRows.results.map((b) => ({
-    id: b.id,
-    day: b.day,
-    name: b.name,
-    kind: b.kind as Bubble['kind'],
-    prominence: b.prominence,
-    reason: b.reason,
-    sentence: b.sentence ?? '',
-    firstStep: b.first_step ?? null,
-    // Completing an item updates the map in place (grey/remove, §9.1) —
-    // completed members stay listed; the client renders them greyed.
-    itemIds: (members.get(b.id) ?? []).filter((id) => views[id]),
-  }));
+  const bubbles: Bubble[] = bubbleRows.results
+    .map((b) => ({
+      id: b.id,
+      day: b.day,
+      name: b.name,
+      kind: b.kind as Bubble['kind'],
+      prominence: b.prominence,
+      reason: b.reason,
+      sentence: b.sentence ?? '',
+      firstStep: b.first_step ?? null,
+      // Completing an item updates the map in place (grey/remove, §9.1) —
+      // completed members stay listed; the client renders them greyed.
+      itemIds: (members.get(b.id) ?? []).filter((id) => views[id]),
+    }))
+    // A bubble can lose every member mid-day (its lone item snoozed or
+    // deleted) — an empty shell has nothing to say, so it leaves the map.
+    .filter((b) => b.itemIds.length > 0);
 
   // Captured Today (§9.1): deterministic bucket — items created on `day`
   // (user-local) that the morning rebuild hasn't folded in yet.
@@ -168,10 +180,18 @@ export async function rebuildMap(
     await sweepPassedEvents(db, now, tz);
     await rollRecurringDeadlines(db, now, tz);
     await rollRecurringEvents(db, now, tz);
+    await wakeSnoozedItems(db, now, tz);
   } catch (err) {
     console.error('lifecycle sweep failed', err);
   }
-  const items = (await listItems(db, { statuses: ['active'] })).map((i) => toItemView(i, now, tz));
+  // The single candidate gate: everything downstream — placement, the Brain's
+  // curation, and the "Also today" safety net — only ever sees this set, so
+  // filtering snoozed items here is what keeps them off the map entirely
+  // (including a snoozed DATED item, which the safety net would otherwise
+  // force back on).
+  const items = (await listItems(db, { statuses: ['active'] }))
+    .filter((i) => !snoozeActive(i.snoozedUntil, now.getTime(), tz))
+    .map((i) => toItemView(i, now, tz));
 
   // Yesterday's bubbles — supplied separately, framed as "reuse only if apt" (§8.2).
   let previous: { name: string; itemTitles: string[] }[] = [];
@@ -1439,6 +1459,7 @@ export function compactEventLines(
   const cancelled = new Set<number>();
   const openCompletions = new Map<string, number[]>();
   const openExits = new Map<string, { idx: number; ms: number }[]>();
+  const openSnoozes = new Map<string, { idx: number; ms: number }[]>();
   const trail = new Map<string, number[]>(); // item -> its non-completion event indices
   const rejectedItems = new Set<string>();
   const captureIdx = new Map<string, number>(); // captureId -> its captured line
@@ -1479,6 +1500,19 @@ export function compactEventLines(
       }
       // A reopen of an exit older than the log window (or on a later day)
       // stands on its own: bringing a let-go thing back is in-world signal.
+    } else if (e.type === 'snoozed') {
+      const stack = openSnoozes.get(e.item_id) ?? [];
+      stack.push({ idx, ms: new Date(e.ts).getTime() });
+      openSnoozes.set(e.item_id, stack);
+    } else if (e.type === 'unsnoozed') {
+      // Same mis-tap rule as dismiss→reopen: a same-sleep-day snooze and
+      // un-snooze net to nothing; a later-day early wake is a real decision
+      // and both lines stand.
+      const prior = openSnoozes.get(e.item_id)?.pop();
+      if (prior && sleepDayOf(prior.ms, tzOffsetMinutes) === sleepDayOf(new Date(e.ts).getTime(), tzOffsetMinutes)) {
+        cancelled.add(prior.idx);
+        cancelled.add(idx);
+      }
     }
   });
   for (const id of rejectedItems) {
@@ -1567,6 +1601,10 @@ export function compactEventLines(
 // is likewise never emitted: the re-said words reach the profile as their
 // own captured lines, and per-item salience (recaptured=, the boost) is the
 // Brain's channel, not the profile's.
+// 'snoozed' is in-world on the same footing as 'dismissed' — a deliberate
+// "not now" about a life thing, softer than letting it go; 'unsnoozed' is the
+// deliberate early return, like 'reopened'. 'snooze_expired' is the clock,
+// not behaviour, and stays out with 'passed'.
 export const PROFILE_EVENT_TYPES = [
   'captured',
   'created',
@@ -1576,6 +1614,8 @@ export const PROFILE_EVENT_TYPES = [
   'dismissed',
   'missed',
   'reopened',
+  'snoozed',
+  'unsnoozed',
   'rejected',
   'push_sent',
   'first_step_added',
@@ -1607,7 +1647,7 @@ async function recomputeProfile(env: Env, day: string): Promise<string | null> {
 
 TENDENCIES, NOT STORIES. The Brain already reads every item's own history — age, recaptures, feelings — on the item lines it receives separately; a retold item story adds nothing there and goes stale here. Your only unique value is the shape ACROSS items, which no single item shows: when in the day things actually get done; whether the user clears several lingering things in one burst or steadily one at a time; which kinds of things move promptly and which sit; what tends to precede movement on something long-stalled (a first step named, a smaller ask); which kinds of things get deliberately let go. Name no items and no people: a tendency stated through examples is detail the reader must generalize away — state the tendency itself ("admin sits for days, then clears in one burst", never which admin).
 
-Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. Where the log is silent, the profile is silent.
+Events mean exactly what they say, and nothing more: "completed" — they did it; "dismissed" — they deliberately decided it no longer matters (a real decision); "missed" — they marked an event as not made; "reopened" — they brought a previously let-go item back; "snoozed" — they deliberately parked something to come back to later (a "not now", not an abandonment); "unsnoozed" — they brought a parked item back early. Events attended leave NO trace in this log (they close silently), so attendance and follow-through are invisible here — never describe them. Deletions never appear either; beyond an explicit dismissal, wantedness is not yours to judge. Where the log is silent, the profile is silent.
 
 Be plain and hedged ("tends to", "often"). This profile is ADVISORY — it flavours the Brain's judgement, it never gates decisions. No JSON, just the prose.`;
 

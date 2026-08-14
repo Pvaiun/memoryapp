@@ -1,0 +1,19 @@
+-- Item-level snooze (design spec "an item-level snooze"): the user parks an
+-- item without closing it — "don't show me this for a month, but don't lose
+-- it either".
+--
+-- A column, not a status, deliberately. A snoozed item hasn't stopped
+-- mattering (that exit is 'dismissed'); it stays status='active' so it keeps
+-- none of the closed-status behaviour (greyed rows, reopen flows) and its
+-- record stays fully searchable and browsable — the whole point is "I don't
+-- want to forget it". Hiding is the reader's job: the map's candidate gate,
+-- the push scan, and the Captured Today bucket each skip items whose snooze
+-- is still running (shared/dates.ts snoozeActive).
+--
+-- The value is an ISO instant, but snoozing is DAY-granular: an item is
+-- hidden through the sleep day before its wake day and returns with that
+-- day's 5am morning map (snoozeActive compares sleep-day indices, never
+-- instants). The daily lifecycle sweep clears expired values and logs a
+-- system 'snooze_expired' event, so a running snooze is always a non-null
+-- value that snoozeActive agrees is still ahead.
+ALTER TABLE items ADD COLUMN snoozed_until TEXT;

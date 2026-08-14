@@ -1,5 +1,5 @@
 import { completedForOccurrence, completedWithinSleepDay, nextAtTimeOccurrence, nextOccurrence } from '../shared/cadence';
-import { sleepDayOf } from '../shared/dates';
+import { sleepDayOf, snoozeActive } from '../shared/dates';
 import type { DatePrecision, Effort } from '../shared/types';
 import type { Env } from './env';
 import { getTzOffset, listItems, logEvent, newId, nowIso } from './db';
@@ -55,6 +55,7 @@ export function computeDueAlerts(
     cadence: import('../shared/types').Cadence | null;
     createdAt: string;
     lastCompletedAt?: string | null;
+    snoozedUntil?: string | null;
   }[],
   now: Date,
   tzOffsetMinutes = 0,
@@ -78,6 +79,9 @@ export function computeDueAlerts(
 
   for (const item of items) {
     if (item.status !== 'active') continue;
+    // A snooze silences pushes too, or it isn't really a pause — the evening
+    // sweep, runways, and occurrence pings all wait for the wake day.
+    if (snoozeActive(item.snoozedUntil ?? null, nowMs, tzOffsetMinutes)) continue;
 
     // Has the user already dealt with the thing this alert would be about?
     //

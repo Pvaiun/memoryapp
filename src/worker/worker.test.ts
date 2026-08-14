@@ -140,6 +140,22 @@ describe('Layer-1 punctual push (§11.4)', () => {
     expect(computeDueAlerts(items, new Date('2026-07-20T17:00:00Z'))).toHaveLength(0);
   });
 
+  it('a snoozed item is silent everywhere — punctual, runway, and the evening sweep', () => {
+    // A snooze that hides an item from the map but lets it keep pinging
+    // wouldn't be a pause at all.
+    const snoozed = { ...baseItem, deadline: '2026-07-20T18:00:00Z', deadlineHardness: 'hard', snoozedUntil: '2026-08-19T12:00:00Z' };
+    expect(computeDueAlerts([snoozed], new Date('2026-07-20T17:00:00Z'))).toHaveLength(0);
+    const allDay = { ...snoozed, deadline: '2026-07-20T12:00:00.000Z', datePrecision: 'day' as const };
+    expect(computeDueAlerts([allDay], new Date('2026-07-20T21:02:00Z'))).toHaveLength(0);
+    const event = { ...baseItem, type: 'HAPPEN', eventAt: '2026-07-20T15:00:00Z', snoozedUntil: '2026-08-19T12:00:00Z' };
+    expect(computeDueAlerts([event], new Date('2026-07-20T14:20:00Z'))).toHaveLength(0);
+  });
+
+  it('…and speaks again once the wake day arrives, even before the sweep clears the field', () => {
+    const woken = { ...baseItem, deadline: '2026-07-20T18:00:00Z', deadlineHardness: 'hard', snoozedUntil: '2026-07-20T10:00:00Z' };
+    expect(computeDueAlerts([woken], new Date('2026-07-20T17:00:00Z'))).toHaveLength(1);
+  });
+
   it('recurring DO pings at its atTime in the USER timezone, not UTC', () => {
     // "every Thursday at 8pm" at UTC-4 → occurrences at Fridays 00:00 UTC.
     const items = [
@@ -835,14 +851,16 @@ describe('compactEventLines — churn compression for the profile builder', () =
   });
 
   it('the profile builder sees in-world events only — no app-admin mechanics', () => {
-    for (const t of ['captured', 'recaptured', 'completed', 'dismissed', 'missed', 'push_sent']) {
+    // 'snoozed'/'unsnoozed' are deliberate "not now"/"back now" decisions, in
+    // on the same footing as dismissed/reopened.
+    for (const t of ['captured', 'recaptured', 'completed', 'dismissed', 'missed', 'push_sent', 'snoozed', 'unsnoozed']) {
       expect(PROFILE_EVENT_TYPES).toContain(t);
     }
     // The librarian's restructures and the user's filing/editing gestures must
     // never reach the profile — describing them as habits fed capture a
     // self-reinforcing "consolidate everything" signal. 'passed' is the clock,
-    // not behaviour, so it stays out too.
-    for (const t of ['edited', 're_themed', 'theme_merged', 'theme_renamed', 'map_rebuilt', 'passed']) {
+    // not behaviour, so it stays out too — and so is 'snooze_expired'.
+    for (const t of ['edited', 're_themed', 'theme_merged', 'theme_renamed', 'map_rebuilt', 'passed', 'snooze_expired']) {
       expect(PROFILE_EVENT_TYPES).not.toContain(t);
     }
   });
@@ -995,6 +1013,30 @@ describe('compactEventLines — churn compression for the profile builder', () =
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('dismissed');
     expect(lines[1]).toContain('reopened');
+  });
+
+  it('a same-sleep-day snooze→unsnooze is a mis-tap — the pair vanishes', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-20T21:00:00Z', 'user', 'snoozed', 'b', { after: { snoozedUntil: '2026-08-19T12:00:00Z' } }),
+        ev('2026-07-20T21:03:00Z', 'user', 'unsnoozed', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(0);
+  });
+
+  it('an early wake on a later day is a real decision — snooze and unsnooze both stand', () => {
+    const lines = compactEventLines(
+      [
+        ev('2026-07-18T21:00:00Z', 'user', 'snoozed', 'b', { after: { snoozedUntil: '2026-08-19T12:00:00Z' } }),
+        ev('2026-07-21T10:00:00Z', 'user', 'unsnoozed', 'b', {}),
+      ],
+      titles,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('snoozed');
+    expect(lines[1]).toContain('unsnoozed');
   });
 
   it("the 5am boundary defines the mis-tap day: a 1am reopen pairs with the evening's dismissal", () => {

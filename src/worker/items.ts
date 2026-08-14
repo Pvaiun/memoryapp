@@ -1,7 +1,7 @@
 import type { AffectTag, Cadence, DatePrecision, Flavour, ItemView } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
 import { atTimeOccurrencesBetween, cadencePeriodMs, completedWithinSleepDay, eventPassed, nextOccurrence, occurrencesBetween, rollEventAnchor } from '../shared/cadence';
-import { EARLY_MORNING_CUTOFF_MINUTES, resolveDatePhrase, sleepDayOf } from '../shared/dates';
+import { EARLY_MORNING_CUTOFF_MINUTES, resolveDatePhrase, sleepDayOf, snoozeActive } from '../shared/dates';
 import type { Env } from './env';
 import { embed, FALLBACK_DIMS } from './embeddings';
 import {
@@ -171,6 +171,65 @@ export async function dismissItem(env: Env, id: string): Promise<ItemView | null
   });
   const fresh = await getItem(db, id);
   return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
+}
+
+// Snooze: park an item without closing it — "not for a while, but don't lose
+// it". The item stays 'active' (it still matters; the meaningful let-go exit
+// is dismiss) and the readers that put things in front of the user — the map's
+// candidate gate, push, Captured Today — skip it while snoozeActive says the
+// wake day hasn't arrived. Browse/Search keep showing it, badged, so it stays
+// verifiable. Day-granular: it returns with the wake day's 5am morning map.
+export async function snoozeItem(env: Env, id: string, untilIso: string): Promise<ItemView | null> {
+  const db = env.DB;
+  const item = await getItem(db, id);
+  if (!item || item.status !== 'active') return null;
+  const until = new Date(untilIso);
+  if (Number.isNaN(until.getTime())) return null;
+  const tz = await getTzOffset(db);
+  // A wake day that is already today (or past) would be a no-op snooze the
+  // sweep clears overnight — reject it so the UI can't silently do nothing.
+  if (!snoozeActive(until.toISOString(), Date.now(), tz)) return null;
+  await updateItemFields(db, id, { snoozed_until: until.toISOString() });
+  await logEvent(db, 'user', 'snoozed', {
+    itemId: id,
+    payload: { before: { snoozedUntil: item.snoozedUntil }, after: { snoozedUntil: until.toISOString() }, title: item.title },
+  });
+  const fresh = await getItem(db, id);
+  return fresh ? toItemView(fresh, new Date(), tz) : null;
+}
+
+// The explicit early wake ("actually, I want to see this again"). The other
+// two wake paths are the daily sweep (wakeSnoozedItems) and a recapture —
+// re-mentioning a snoozed item un-snoozes it in capture.ts.
+export async function unsnoozeItem(env: Env, id: string): Promise<ItemView | null> {
+  const db = env.DB;
+  const item = await getItem(db, id);
+  if (!item || !item.snoozedUntil) return null;
+  await updateItemFields(db, id, { snoozed_until: null });
+  await logEvent(db, 'user', 'unsnoozed', {
+    itemId: id,
+    payload: { before: { snoozedUntil: item.snoozedUntil }, after: { snoozedUntil: null }, title: item.title },
+  });
+  const fresh = await getItem(db, id);
+  return fresh ? toItemView(fresh, new Date(), await getTzOffset(db)) : null;
+}
+
+// Daily sweep half of the snooze: once an item's wake day arrives, clear the
+// field so state doesn't sit around stale. Visibility never depends on this —
+// every reader asks snoozeActive, which already says "awake" — this just
+// crystallizes the wake into stored state and the event log. System-asserted
+// clock maintenance like 'passed'/'deadline_rolled'; 'snooze_expired' never
+// reaches the profile (the user's decision was the snooze itself).
+export async function wakeSnoozedItems(db: D1Database, now: Date, tzOffsetMinutes: number): Promise<void> {
+  const items = await listItems(db, { statuses: ['active'] });
+  for (const item of items) {
+    if (!item.snoozedUntil || snoozeActive(item.snoozedUntil, now.getTime(), tzOffsetMinutes)) continue;
+    await updateItemFields(db, item.id, { snoozed_until: null });
+    await logEvent(db, 'system', 'snooze_expired', {
+      itemId: item.id,
+      payload: { before: { snoozedUntil: item.snoozedUntil }, after: { snoozedUntil: null }, title: item.title },
+    });
+  }
 }
 
 // Missed: the user's explicit "didn't make it" on a one-shot event — the one
