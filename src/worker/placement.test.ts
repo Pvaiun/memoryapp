@@ -295,9 +295,39 @@ describe('placeItem — recurring rhythms', () => {
 
   it('a slipped weekly rhythm is a quiet nudge naming the missed days', () => {
     // Saturdays; last turn (Jul 18) unmet; today is Wednesday → 4 days unmet.
+    // Never completed since capture three weeks ago, so the rhythm is well
+    // past its grace and the nudge is earned.
     const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6] };
     const p = placeItem(item({ cadence: weekly, createdAt: '2026-07-01T21:30:00Z' }), NOW, 0);
     expect(p).toEqual({ floor: 'quiet', rule: 'rhythm-unmet-4d' });
+  });
+
+  it('a turn that went by inside the grace places nothing — the rhythm is time-gated', () => {
+    // The Sunday check-in case. "Weekly on Sun", kept last Sunday (Jul 12),
+    // missed this one (Jul 19); today is Wednesday. Nothing is asked of today
+    // — the rhythm comes round on Sunday — and the 1.5x-period grace has not
+    // run out, so the map stays quiet instead of carrying "2 days past its
+    // Sunday slot" every morning until the next turn.
+    const weeklySun = { freq: 'weekly' as const, interval: 1, byWeekday: [0], atTime: '11:00' };
+    const p = placeItem(
+      item({ cadence: weeklySun, createdAt: '2026-06-01T11:00:00Z', lastCompletedAt: '2026-07-12T15:00:00Z' }),
+      NOW,
+      0,
+    );
+    expect(p).toBeNull();
+  });
+
+  it('the same missed turn becomes a nudge once the grace runs out', () => {
+    // Same rhythm, same missed Sunday — but the last kept turn is now three
+    // weeks back, so neglect has fired and the nudge is earned. The gate moves
+    // WHEN a slipped rhythm speaks, never whether it can.
+    const weeklySun = { freq: 'weekly' as const, interval: 1, byWeekday: [0], atTime: '11:00' };
+    const p = placeItem(
+      item({ cadence: weeklySun, createdAt: '2026-06-01T11:00:00Z', lastCompletedAt: '2026-07-01T15:00:00Z' }),
+      NOW,
+      0,
+    );
+    expect(p).toEqual({ floor: 'quiet', rule: 'rhythm-unmet-3d' });
   });
 
   it('a kept weekly rhythm whose next turn is days away stays out', () => {

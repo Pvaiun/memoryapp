@@ -3,6 +3,7 @@ import {
   cadenceGridGapMs,
   completedForOccurrence,
   completedWithinSleepDay,
+  isNeglected,
   nextAtTimeOccurrence,
   nextOccurrence,
 } from '../shared/cadence';
@@ -138,14 +139,20 @@ export function isTodayRelevant(
 // ---------- cadence standing ----------
 
 // Where a recurring rhythm stands relative to the user-local today: its turn
-// falls today, its last turn passed unmet, or it next comes round in N days.
-// One axis, one derivation — the same-day floor, the happens=today token and
-// the next= token all read it, so the guarantee and the Brain's input can
-// never disagree.
+// falls today, its last turn passed unmet long enough to be a nudge, or it
+// next comes round in N days. One axis, one derivation — the same-day floor,
+// the happens=today token and the next= token all read it, so the guarantee
+// and the Brain's input can never disagree.
+//
+// 'overdue' is gated (see below): a turn that went by is not a miss to raise
+// until the rhythm's own grace has run out. Inside that grace the standing is
+// 'upcoming' — nothing is being asked — and `unmet` carries the turn that went
+// by, so a reader can still tell a kept rhythm from a slipped one without the
+// map treating the two the same.
 export type CadenceStanding =
   | { kind: 'today'; at: Date }
   | { kind: 'overdue'; at: Date; days: number }
-  | { kind: 'upcoming'; at: Date; days: number };
+  | { kind: 'upcoming'; at: Date; days: number; unmet?: { at: Date; days: number } };
 
 type CadenceItem = {
   cadence?: Cadence | null;
@@ -189,13 +196,36 @@ export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: numb
   }
   // Same rule as doneToday, one turn further back: a turn is met by a
   // completion on its sleep day or any later one (completedForOccurrence).
-  if (previous && !completedForOccurrence(i.lastCompletedAt, previous.getTime(), tzOffsetMinutes)) {
-    return { kind: 'overdue', at: previous, days: -sleepDayDiff(previous.getTime(), now.getTime(), tzOffsetMinutes) };
+  const unmet =
+    previous && !completedForOccurrence(i.lastCompletedAt, previous.getTime(), tzOffsetMinutes)
+      ? { at: previous, days: -sleepDayDiff(previous.getTime(), now.getTime(), tzOffsetMinutes) }
+      : null;
+  // THE TIME GATE (§7.2). A rhythm is time-gated: its ask comes round on its
+  // own grid, so a turn that went by is not a deadline left unpaid — it is
+  // the previous opening of a gate that opens again. Reporting it 'overdue'
+  // from the morning after made every slipped rhythm a standing reproach that
+  // could not be answered: the weekly Sunday check-in read "two days past its
+  // Sunday slot" on Tuesday, when nothing is being asked of the user until
+  // Sunday. §7.2 already fixed where that line sits — neglect, half a period
+  // of grace past the rhythm's own period ("a missed occurrence resurfaces the
+  // item; it does not fail it") — and it is the same line the slipping= token
+  // and the "slipped" chip draw. This path was the one place a missed turn
+  // spoke before the grace did.
+  //
+  // So: past the grace it is a nudge and reads overdue; inside it the rhythm
+  // is merely upcoming, carrying the unmet turn as context, not as a charge.
+  if (unmet && isNeglected(i.cadence, i.lastCompletedAt ?? null, i.createdAt ?? anchor, now)) {
+    return { kind: 'overdue', at: unmet.at, days: unmet.days };
   }
   // Today's turn already done releases the rhythm until tomorrow, so the
   // search for the next one starts past the end of today.
   const next = occurrenceFrom(new Date(releasedToday ? dayEndUtc : dayStartUtc));
-  return { kind: 'upcoming', at: next, days: sleepDayDiff(next.getTime(), now.getTime(), tzOffsetMinutes) };
+  return {
+    kind: 'upcoming',
+    at: next,
+    days: sleepDayDiff(next.getTime(), now.getTime(), tzOffsetMinutes),
+    ...(unmet ? { unmet } : {}),
+  };
 }
 
 // The occurrence of a recurring rhythm that falls within the user-local today,
@@ -324,7 +354,10 @@ export function placeItem(i: ItemView, now: Date, tzOffsetMinutes: number): { fl
     if (standing?.kind === 'today') {
       take(optional ? 'quiet' : 'mid', 'rhythm-today');
     } else if (standing?.kind === 'overdue') {
-      // A slipped rhythm is a nudge, not an alarm — quiet regardless.
+      // A slipped rhythm is a nudge, not an alarm — quiet regardless. And it
+      // only reaches here once the rhythm's grace has run out (cadenceStanding
+      // gates the kind): a turn that merely went by yesterday asks nothing of
+      // today, so it places nothing.
       take('quiet', `rhythm-unmet-${standing.days}d`);
     }
   }
@@ -337,12 +370,15 @@ export function placeItem(i: ItemView, now: Date, tzOffsetMinutes: number): { fl
 // skeleton is a strict superset of the old reliable floor.
 //
 // A rhythm placement does not require today is necessarily upcoming (a turn
-// falling today or gone unmet both fire rules above), and an upcoming rhythm
-// is WITHHELD — in neither list, invisible to the curator. Neither of the
-// curator's two reasons can ever hold for one: opportunity can't — the
-// completion machinery cannot bank a future turn, so a chip on it is a lie
-// by construction (ticked tonight, un-done by morning) — and attention
-// can't — a rhythm gets its airtime every time its turn comes round. Code
+// falling today, or one gone unmet past its grace, both fire rules above), and
+// an upcoming rhythm is WITHHELD — in neither list, invisible to the curator.
+// A turn that went by inside the grace is withheld by the same door: nothing
+// is being asked until the rhythm comes round, so there is nothing to put on
+// today's map. Neither of the curator's two reasons can ever hold for one:
+// opportunity can't — the completion machinery cannot bank a future turn, so a
+// chip on it is a lie by construction (ticked tonight, un-done by morning) —
+// and attention can't — a rhythm gets its airtime every time its turn comes
+// round, and a turn it let go by comes back as neglect once the grace is up. Code
 // runs the calendar for rhythms in both directions: required on their day,
 // invisible before it. (The observed failure: tomorrow's recycling and
 // litter boxes pulled onto tonight's routine card as "get a jump on it".)
