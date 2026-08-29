@@ -629,36 +629,18 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).not.toContain('overdue');
   });
 
-  it('a turn that went by inside the grace reads unmet=, never overdue', () => {
+  it('a turn that went by unmet carries next=Nd-overdue', () => {
     // Same rhythm, same Saturday, never completed: Tuesday's turn passed. The
-    // rhythm is time-gated — nothing is asked until Tuesday — so the line says
-    // when it comes round and states the unmet turn as context. It must still
-    // be separable from the kept case above (which carries next=+3d alone), or
-    // the Brain goes back to date-mathing the weekday name.
+    // 1.5×-period neglect threshold has not fired yet, so slipping= is silent
+    // and this token is the only thing separating the two cases.
     const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
     const line = brainItemLine(
       { ...baseView, cadence: weeklyTue, createdAt: '2026-07-20T04:00:00Z' } as ItemView,
       new Date('2026-07-25T16:00:00Z'),
       -240,
     );
-    expect(line).toContain('next=+3d');
-    expect(line).toContain('unmet=4d');
-    expect(line).not.toContain('overdue');
-    expect(line).not.toContain('slipping=');
-  });
-
-  it('past the grace, the same unmet turn reads next=Nd-overdue', () => {
-    // The nudge is not removed, only gated: captured three and a half weeks
-    // back and never once kept, this rhythm is past its 1.5×-period neglect
-    // threshold, and the token that names the missed turn comes back.
-    const weeklyTue = { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence;
-    const line = brainItemLine(
-      { ...baseView, cadence: weeklyTue, createdAt: '2026-07-01T04:00:00Z' } as ItemView,
-      new Date('2026-07-25T16:00:00Z'),
-      -240,
-    );
     expect(line).toContain('next=4d-overdue');
-    expect(line).not.toContain('unmet=');
+    expect(line).not.toContain('slipping=');
   });
 
   it('a turn predating the item was never asked, so it reads as upcoming', () => {

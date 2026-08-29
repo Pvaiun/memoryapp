@@ -293,41 +293,26 @@ describe('placeItem — recurring rhythms', () => {
     expect(p).toBeNull();
   });
 
-  it('a slipped weekly rhythm is a quiet nudge naming the missed days', () => {
-    // Saturdays; last turn (Jul 18) unmet; today is Wednesday → 4 days unmet.
-    // Never completed since capture three weeks ago, so the rhythm is well
-    // past its grace and the nudge is earned.
+  it('a slipped weekly rhythm places nothing off its day — the grid asks again on its own', () => {
+    // Saturdays; last turn (Jul 18) unmet; today is Wednesday. A rhythm asks
+    // on its days and no others, so an unmet turn buys no airtime on the days
+    // between — Saturday will ask again by itself.
     const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6] };
     const p = placeItem(item({ cadence: weekly, createdAt: '2026-07-01T21:30:00Z' }), NOW, 0);
-    expect(p).toEqual({ floor: 'quiet', rule: 'rhythm-unmet-4d' });
-  });
-
-  it('a turn that went by inside the grace places nothing — the rhythm is time-gated', () => {
-    // The Sunday check-in case. "Weekly on Sun", kept last Sunday (Jul 12),
-    // missed this one (Jul 19); today is Wednesday. Nothing is asked of today
-    // — the rhythm comes round on Sunday — and the 1.5x-period grace has not
-    // run out, so the map stays quiet instead of carrying "2 days past its
-    // Sunday slot" every morning until the next turn.
-    const weeklySun = { freq: 'weekly' as const, interval: 1, byWeekday: [0], atTime: '11:00' };
-    const p = placeItem(
-      item({ cadence: weeklySun, createdAt: '2026-06-01T11:00:00Z', lastCompletedAt: '2026-07-12T15:00:00Z' }),
-      NOW,
-      0,
-    );
     expect(p).toBeNull();
   });
 
-  it('the same missed turn becomes a nudge once the grace runs out', () => {
-    // Same rhythm, same missed Sunday — but the last kept turn is now three
-    // weeks back, so neglect has fired and the nudge is earned. The gate moves
-    // WHEN a slipped rhythm speaks, never whether it can.
+  it('a missed turn stays off the map on the very eve of its next one', () => {
+    // The reported case: "weekly on Sun at 11am", last Sunday's turn unmet and
+    // neglect long since fired — read on the SATURDAY before the next Sunday.
+    // A day from the only moment this rhythm wants, it was billing itself as
+    // six days overdue; the grid was about to ask it anyway.
     const weeklySun = { freq: 'weekly' as const, interval: 1, byWeekday: [0], atTime: '11:00' };
-    const p = placeItem(
-      item({ cadence: weeklySun, createdAt: '2026-06-01T11:00:00Z', lastCompletedAt: '2026-07-01T15:00:00Z' }),
-      NOW,
-      0,
-    );
-    expect(p).toEqual({ floor: 'quiet', rule: 'rhythm-unmet-3d' });
+    const saturday = new Date('2026-07-25T16:00:00Z');
+    const it18 = item({ cadence: weeklySun, createdAt: '2026-06-01T11:00:00Z', lastCompletedAt: '2026-07-05T15:00:00Z' });
+    expect(placeItem(it18, saturday, 0)).toBeNull();
+    // ...and it is required again the moment its day arrives.
+    expect(placeItem(it18, new Date('2026-07-26T16:00:00Z'), 0)).toEqual({ floor: 'mid', rule: 'rhythm-today' });
   });
 
   it('a kept weekly rhythm whose next turn is days away stays out', () => {
@@ -429,13 +414,16 @@ describe('placeItems — the skeleton/pile split and the reliable-floor invarian
     expect(eligible).toHaveLength(0);
   });
 
-  it('rhythms whose turn is today or unmet still land in mandatory, never withheld', () => {
+  it("a rhythm is mandatory on its day and withheld on every other, slipped or not", () => {
+    // The one axis: today's turn, or nothing. A rhythm never reaches the
+    // curation pile either — off its day it is invisible in both directions,
+    // so the curator is never tempted to spend airtime the grid already owns.
     const daily = { freq: 'daily' as const, interval: 1, atTime: '20:00' };
     const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [6] };
     const dueToday = item({ id: 't', cadence: daily, createdAt: '2026-07-15T20:00:00Z' });
     const slipped = item({ id: 's', cadence: weekly, createdAt: '2026-07-01T21:30:00Z' });
     const { mandatory, eligible } = placeItems([dueToday, slipped], NOW, 0);
-    expect(mandatory.map((m) => m.item.id).sort()).toEqual(['s', 't']);
+    expect(mandatory.map((m) => m.item.id)).toEqual(['t']);
     expect(eligible).toHaveLength(0);
   });
 
