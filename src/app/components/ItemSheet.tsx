@@ -41,6 +41,119 @@ const CADENCE_PRESETS: { label: string; value: Cadence | null }[] = [
 
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+const CADENCE_UNITS: Record<Cadence['freq'], [string, string]> = {
+  daily: ['day', 'days'],
+  weekly: ['week', 'weeks'],
+  monthly: ['month', 'months'],
+  yearly: ['year', 'years'],
+};
+
+// The recurrence editor: pick the unit with a preset, then "every N" of it —
+// every 3 weeks, every 3 months. withAtTime: a DO's turns ping at a clock
+// time; an event's time is its own When, so it has no separate one.
+function RhythmFields({
+  label,
+  cadence,
+  onChange,
+  withAtTime,
+}: {
+  label: string;
+  cadence: Cadence | null;
+  onChange: (next: Cadence | null) => void;
+  withAtTime: boolean;
+}) {
+  // Text being typed into "every N", kept apart from the cadence so clearing
+  // the box to retype doesn't snap it back to 1 mid-edit. null = not editing.
+  const [intervalDraft, setIntervalDraft] = useState<string | null>(null);
+  const interval = Math.max(1, cadence?.interval || 1);
+  const [one, many] = cadence ? CADENCE_UNITS[cadence.freq] : ['', ''];
+
+  return (
+    <>
+      <div className="field">
+        <label>{label}</label>
+        <div className="seg">
+          {CADENCE_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              className={(cadence?.freq ?? null) === (p.value?.freq ?? null) ? 'on' : ''}
+              onClick={() => {
+                setIntervalDraft(null);
+                if (!p.value) return onChange(null);
+                // Re-tapping the active rhythm keeps its interval and day/time
+                // details; switching frequency keeps the time only.
+                if (cadence?.freq === p.value.freq) return;
+                onChange({ ...p.value, ...(cadence?.atTime ? { atTime: cadence.atTime } : {}) });
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {cadence && (
+        <div className="field-row">
+          <div className="field">
+            <label>Every</label>
+            <div className="every-input">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={365}
+                aria-label={`Repeat every how many ${many}`}
+                value={intervalDraft ?? String(interval)}
+                onChange={(e) => {
+                  setIntervalDraft(e.target.value);
+                  const n = parseInt(e.target.value, 10);
+                  if (n >= 1 && n <= 365) onChange({ ...cadence, interval: n });
+                }}
+                onBlur={() => setIntervalDraft(null)}
+              />
+              <span>{interval === 1 ? one : many}</span>
+            </div>
+          </div>
+          {withAtTime && (
+            <div className="field" style={{ maxWidth: 150 }}>
+              <label>At time</label>
+              <input
+                type="time"
+                value={cadence.atTime ?? ''}
+                onChange={(e) => {
+                  const { atTime: _drop, ...rest } = cadence;
+                  onChange(e.target.value ? { ...rest, atTime: e.target.value } : rest);
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {cadence?.freq === 'weekly' && (
+        <div className="field">
+          <label>On days</label>
+          <div className="seg">
+            {WEEKDAY_LABELS.map((dayLabel, day) => (
+              <button
+                key={day}
+                className={cadence.byWeekday?.includes(day) ? 'on' : ''}
+                onClick={() => {
+                  const days = cadence.byWeekday?.includes(day)
+                    ? (cadence.byWeekday ?? []).filter((d) => d !== day)
+                    : [...(cadence.byWeekday ?? []), day].sort();
+                  const { byWeekday: _drop, ...rest } = cadence;
+                  onChange(days.length ? { ...rest, byWeekday: days } : rest);
+                }}
+              >
+                {dayLabel}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function ItemSheet({
   item,
   onClose,
@@ -209,65 +322,7 @@ export default function ItemSheet({
                 </div>
               </div>
             )}
-            <div className="field-row">
-              <div className="field">
-                <label>Rhythm</label>
-                <div className="seg">
-                  {CADENCE_PRESETS.map((p) => (
-                    <button
-                      key={p.label}
-                      className={(cadence?.freq ?? null) === (p.value?.freq ?? null) ? 'on' : ''}
-                      onClick={() =>
-                        setCadence((prev) => {
-                          if (!p.value) return null;
-                          // Re-tapping the active rhythm keeps its day/time
-                          // details; switching frequency keeps the time only.
-                          if (prev?.freq === p.value.freq) return prev;
-                          return { ...p.value, ...(prev?.atTime ? { atTime: prev.atTime } : {}) };
-                        })
-                      }
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {cadence && (
-                <div className="field" style={{ maxWidth: 150 }}>
-                  <label>At time</label>
-                  <input
-                    type="time"
-                    value={cadence.atTime ?? ''}
-                    onChange={(e) => {
-                      const { atTime: _drop, ...rest } = cadence;
-                      setCadence(e.target.value ? { ...rest, atTime: e.target.value } : rest);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-            {cadence?.freq === 'weekly' && (
-              <div className="field">
-                <label>On days</label>
-                <div className="seg">
-                  {WEEKDAY_LABELS.map((label, day) => (
-                    <button
-                      key={day}
-                      className={cadence.byWeekday?.includes(day) ? 'on' : ''}
-                      onClick={() => {
-                        const days = cadence.byWeekday?.includes(day)
-                          ? (cadence.byWeekday ?? []).filter((d) => d !== day)
-                          : [...(cadence.byWeekday ?? []), day].sort();
-                        const { byWeekday: _drop, ...rest } = cadence;
-                        setCadence(days.length ? { ...rest, byWeekday: days } : rest);
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <RhythmFields label="Rhythm" cadence={cadence} onChange={setCadence} withAtTime />
             <div className="field-row">
               <div className="field">
                 <label>Must / nice to do</label>
@@ -317,13 +372,14 @@ export default function ItemSheet({
                 />
               </div>
             </div>
+            <RhythmFields label="Repeats" cadence={cadence} onChange={setCadence} withAtTime={false} />
           </>
         )}
 
         {/* Recurrence-only: one-offs always paint their dates. Whether a
             rhythm earns calendar presence is the parser's guess (§6) — this
             is the override. */}
-        {(type === 'DO' ? cadence : type === 'HAPPEN' ? item.cadence : null) && (
+        {type !== 'KNOW' && cadence && (
           <div className="field">
             <label>On the calendar</label>
             <div className="seg">

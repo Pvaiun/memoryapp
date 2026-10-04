@@ -770,6 +770,20 @@ textarea:focus {
   display: flex;
   gap: 10px;
 }
+/* "Every [3] weeks": a short number box with its unit read beside it. */
+.every-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.field .every-input input {
+  width: 76px;
+  text-align: center;
+}
+.every-input span {
+  color: var(--text-dim);
+  font-size: 14px;
+}
 .field-row .field {
   flex: 1;
 }

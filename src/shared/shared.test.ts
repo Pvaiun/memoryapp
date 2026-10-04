@@ -197,6 +197,98 @@ describe('cadence & neglect (§3.1, §7.2)', () => {
   });
 });
 
+describe('custom intervals — every N weeks / every N months', () => {
+  const days = (a: Date, b: Date) => Math.round((b.getTime() - a.getTime()) / 86_400_000);
+
+  it('every 3 weeks lands 21 days apart on the anchor weekday', () => {
+    const c: Cadence = { freq: 'weekly', interval: 3 };
+    const occ = occurrencesBetween(c, '2026-07-07T15:00:00Z', new Date('2026-07-01T00:00:00Z'), new Date('2026-10-01T00:00:00Z'));
+    expect(occ.map((d) => d.toISOString().slice(0, 10))).toEqual([
+      '2026-07-07',
+      '2026-07-28',
+      '2026-08-18',
+      '2026-09-08',
+      '2026-09-29',
+    ]);
+  });
+
+  it('every 3 months keeps the anchor day of month', () => {
+    const c: Cadence = { freq: 'monthly', interval: 3 };
+    const occ = occurrencesBetween(c, '2026-01-15T12:00:00Z', new Date('2026-01-01T00:00:00Z'), new Date('2027-01-01T00:00:00Z'));
+    expect(occ.map((d) => d.toISOString().slice(0, 10))).toEqual(['2026-01-15', '2026-04-15', '2026-07-15', '2026-10-15']);
+  });
+
+  it('a long monthly interval still finds its turn', () => {
+    // The month walk used to give up after 24 months and hand back a junk date.
+    const next = nextOccurrence({ freq: 'monthly', interval: 36 }, '2026-01-15T12:00:00Z', new Date('2026-02-01T00:00:00Z'));
+    expect(next.toISOString().slice(0, 10)).toBe('2029-01-15');
+  });
+
+  it('every 2 weeks keeps a 14-day beat across a DST change in the local frame', () => {
+    // The browser walks non-atTime rhythms in its own zone. Counting weeks by
+    // elapsed ms lost an hour at the spring-forward and put a turn one week
+    // early (Mar 8 → Mar 15 instead of Mar 22).
+    // Node re-reads TZ on assignment; the project has no Node typings.
+    const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
+    const prevTz = env.TZ;
+    env.TZ = 'America/New_York';
+    try {
+      const anchor = new Date(2026, 1, 22, 0, 30).toISOString(); // Sun Feb 22, 00:30 local
+      const occ = occurrencesBetween({ freq: 'weekly', interval: 2 }, anchor, new Date(2026, 1, 20), new Date(2026, 4, 1));
+      expect(occ.length).toBe(5);
+      expect(occ.slice(1).map((d, i) => days(occ[i], d))).toEqual([14, 14, 14, 14]);
+    } finally {
+      if (prevTz === undefined) delete env.TZ;
+      else env.TZ = prevTz;
+    }
+  });
+
+  it('describes custom intervals', () => {
+    expect(describeCadence({ freq: 'weekly', interval: 3 })).toBe('every 3 weeks');
+    expect(describeCadence({ freq: 'monthly', interval: 3 })).toBe('every 3 months');
+    expect(describeCadence({ freq: 'weekly', interval: 2, byWeekday: [2], atTime: '16:00' })).toBe('every 2 weeks on Tue at 4pm');
+  });
+
+  it('parses intervals however they are said', () => {
+    expect(parseCadencePhrase('water the fern every 3 weeks')).toEqual({ freq: 'weekly', interval: 3 });
+    expect(parseCadencePhrase('haircut every three weeks')).toEqual({ freq: 'weekly', interval: 3 });
+    expect(parseCadencePhrase('once every 6 weeks')).toEqual({ freq: 'weekly', interval: 6 });
+    expect(parseCadencePhrase('replace the furnace filter every 3 months')).toEqual({ freq: 'monthly', interval: 3 });
+    expect(parseCadencePhrase('review the budget every third month')).toEqual({ freq: 'monthly', interval: 3 });
+    expect(parseCadencePhrase('clean the gutters every couple of months')).toEqual({ freq: 'monthly', interval: 2 });
+    expect(parseCadencePhrase('every other day')).toEqual({ freq: 'daily', interval: 2 });
+    expect(parseCadencePhrase('pay estimated taxes quarterly')).toEqual({ freq: 'monthly', interval: 3 });
+    expect(parseCadencePhrase('biweekly 1:1')).toEqual({ freq: 'weekly', interval: 2 });
+    expect(parseCadencePhrase('fortnightly review')).toEqual({ freq: 'weekly', interval: 2 });
+  });
+
+  it('attaches named days to an interval', () => {
+    expect(parseCadencePhrase('therapy every other Tuesday')).toEqual({ freq: 'weekly', interval: 2, byWeekday: [2] });
+    expect(parseCadencePhrase('call mom every 2 weeks on Sundays')).toEqual({ freq: 'weekly', interval: 2, byWeekday: [0] });
+    expect(parseCadencePhrase('gym every week on monday and thursday')).toEqual({ freq: 'weekly', interval: 1, byWeekday: [1, 4] });
+    expect(parseCadencePhrase('pay rent every 2 months on the 1st')).toEqual({ freq: 'monthly', interval: 2, byMonthDay: 1 });
+    expect(parseCadencePhrase('swim every monday and thursday')).toEqual({ freq: 'weekly', interval: 1, byWeekday: [1, 4] });
+    // A weekday mentioned outside the rhythm is not one of its days.
+    expect(parseCadencePhrase('recycling every monday, bins due friday')).toEqual({ freq: 'weekly', interval: 1, byWeekday: [1] });
+  });
+
+  it('a rhythm phrase is not a date: no "in 3 weeks" deadline, and out of the title', () => {
+    const ref = new Date('2026-10-04T15:00:00Z');
+    const fern = heuristicParse('water the fern every 3 weeks', ref, -240).items[0];
+    expect(fern.cadence).toEqual({ freq: 'weekly', interval: 3 });
+    expect(fern.deadlinePhrase).toBeNull();
+    expect(fern.title).toBe('Water the fern');
+
+    const mom = heuristicParse('call mom every 2 weeks on sunday at 9am', ref, -240).items[0];
+    expect(mom.cadence).toEqual({ freq: 'weekly', interval: 2, byWeekday: [0], atTime: '09:00' });
+    expect(mom.title).toBe('Call mom');
+
+    const rent = heuristicParse('pay rent every 2 months on the 1st', ref, -240).items[0];
+    expect(rent.cadence).toEqual({ freq: 'monthly', interval: 2, byMonthDay: 1 });
+    expect(rent.title).toBe('Pay rent');
+  });
+});
+
 describe('captured-today relevance (§9.1, Now screen)', () => {
   // A UTC user, Wednesday 2026-07-22 18:00. Sleep day = Jul 22 05:00 → Jul 23 05:00.
   const now = new Date('2026-07-22T18:00:00Z');
