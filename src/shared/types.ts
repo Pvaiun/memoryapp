@@ -177,6 +177,11 @@ export interface MapPayload {
   day: string;
   builtAt: string | null;
   stale: boolean; // true → client should trigger a rebuild (first open of day, §9.1)
+  // Set when the Brain failed and this map is the deterministic fallback: a
+  // short reason, for the banner that tells the user something went wrong.
+  // Null for a good build, and for the no-API-key setup where the fallback
+  // map is simply how the app runs.
+  buildError: string | null;
   bubbles: Bubble[];
   capturedToday: string[]; // item ids in the deterministic Captured Today bucket (§9.1)
   items: Record<string, ItemView>;

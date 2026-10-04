@@ -45,8 +45,10 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   const builtAt = await getState(db, 'map_built_at');
 
   if (mapDay !== day) {
-    return { day, builtAt: null, stale: true, bubbles: [], capturedToday: [], items: {} };
+    return { day, builtAt: null, stale: true, buildError: null, bubbles: [], capturedToday: [], items: {} };
   }
+  // Written by the same rebuild that wrote map_day, so it describes this map.
+  const buildError = (await getState(db, 'map_build_error')) || null;
 
   const bubbleRows = await db
     .prepare('SELECT * FROM bubbles WHERE day = ? ORDER BY prominence DESC')
@@ -120,7 +122,29 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
   const shipped: Record<string, ItemView> = {};
   for (const id of referenced) shipped[id] = views[id];
 
-  return { day, builtAt, stale: false, bubbles, capturedToday, items: shipped };
+  return { day, builtAt, stale: false, buildError, bubbles, capturedToday, items: shipped };
+}
+
+// What the map's error banner says about a failed Brain call. API failures
+// carry a JSON body that's for the logs; the user gets the gist and the
+// status, so "try again" vs "check the key" is answerable at a glance.
+export function briefBrainError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const api = msg.match(/^Anthropic API (\d{3})/);
+  if (api) {
+    const status = Number(api[1]);
+    const why =
+      status === 401 || status === 403
+        ? 'the AI service rejected the API key'
+        : status === 429
+          ? 'the AI service was rate-limiting requests'
+          : status >= 500
+            ? 'the AI service was down or overloaded'
+            : 'the AI service refused the request';
+    return `${why} (HTTP ${status})`;
+  }
+  const line = msg.split('\n')[0].trim() || 'unknown error';
+  return line.length > 160 ? `${line.slice(0, 157)}…` : line;
 }
 
 // force: user-initiated re-run for a day that already has a map — the escape
@@ -146,6 +170,11 @@ export async function rebuildMap(
 ): Promise<MapPayload> {
   const db = env.DB;
   const now = new Date();
+  // The map's builtAt is when this build STARTED. Captured Today is "made at
+  // or after builtAt and not in a bubble", and the app stays usable while a
+  // build runs — a capture made mid-build is in no bubble, so stamping the
+  // finish time would hide it from the map for the rest of the day.
+  const startedAt = now.toISOString();
 
   // If another request already rebuilt for this day, don't do it twice.
   const existingDay = await getState(db, 'map_day');
@@ -247,6 +276,9 @@ export async function rebuildMap(
   let snapshotPayload: Record<string, unknown> = input.payload;
   let proposed: ProposedBubble[];
   let mode: 'llm' | 'fallback' = 'fallback';
+  // Only a FAILED Brain is an error the user must see. No key configured (or
+  // nothing to place) builds the same fallback map on purpose.
+  let buildError: string | null = null;
   if (llmAvailable(env) && items.length) {
     try {
       if (useStaged) {
@@ -259,6 +291,7 @@ export async function rebuildMap(
       mode = 'llm';
     } catch (err) {
       console.error('Brain call failed; using deterministic fallback map', err);
+      buildError = briefBrainError(err);
       // A failed staged run must not leave the legacy-shaped input in the
       // snapshot — that would claim the single-call Brain saw a payload it
       // never received. Record what actually happened.
@@ -364,8 +397,10 @@ export async function rebuildMap(
       .run();
   }
 
+  // Before map_day: whoever reads the new day's map reads its error with it.
+  await setState(db, 'map_build_error', buildError ?? '');
   await setState(db, 'map_day', day);
-  await setState(db, 'map_built_at', ts);
+  await setState(db, 'map_built_at', startedAt);
   // What the Brain was actually called with — the debug snapshot's source of
   // truth (a fresh reconstruction would drift and hide noHistory/fallback runs).
   await setState(
@@ -373,7 +408,8 @@ export async function rebuildMap(
     'brain_last_input',
     JSON.stringify({
       day,
-      builtAt: ts,
+      builtAt: startedAt,
+      buildError,
       mode,
       noHistory,
       noProfile,
@@ -394,8 +430,8 @@ export async function rebuildMap(
 // Scheduled morning rebuild (§9.1 precompute). The cron tick doubles as the
 // map's alarm clock: the app's day rolls over at 5am user-local, so the first
 // tick past that boundary finds a sleep-day with no map and builds it while
-// the user is still asleep. By the time they open the app the map is done —
-// the loading screen becomes a 2-second acknowledgement, not a wait.
+// the user is still asleep. By the time they open the app the map is done,
+// so first open shows it straight away.
 //
 // Why this rides the existing 5-minute cron instead of a `0 5 * * *` entry:
 // Cloudflare crons fire in UTC, but "5am" here means 5am *for the user*, and
