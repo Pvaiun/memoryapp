@@ -3,6 +3,7 @@ import { computeDueAlerts } from './push';
 import {
   aliasItems,
   brainItemLine,
+  briefBrainError,
   compactEventLines,
   isTodayRelevant,
   PROFILE_EVENT_TYPES,
@@ -1067,6 +1068,21 @@ describe('compactEventLines — churn compression for the profile builder', () =
       titles,
     );
     expect(lines).toHaveLength(0);
+  });
+});
+
+describe('briefBrainError — what the fallback-map banner says', () => {
+  it('turns an API failure into its gist and status, dropping the JSON body', () => {
+    const body = '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+    expect(briefBrainError(new Error(`Anthropic API 529: ${body}`))).toBe('the AI service was down or overloaded (HTTP 529)');
+    expect(briefBrainError(new Error('Anthropic API 401: {}'))).toBe('the AI service rejected the API key (HTTP 401)');
+    expect(briefBrainError(new Error('Anthropic API 429: {}'))).toBe('the AI service was rate-limiting requests (HTTP 429)');
+    expect(briefBrainError(new Error('Anthropic API 400: {}'))).toBe('the AI service refused the request (HTTP 400)');
+  });
+  it('keeps other failures to one bounded line', () => {
+    expect(briefBrainError(new Error('Could not extract JSON\nfrom model output'))).toBe('Could not extract JSON');
+    expect(briefBrainError(new Error('x'.repeat(400))).length).toBe(158);
+    expect(briefBrainError('timeout')).toBe('timeout');
   });
 });
 

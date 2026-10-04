@@ -63,7 +63,8 @@ app.get('/api/map', async (c) => {
   return c.json(payload);
 });
 
-// First-open-of-day rebuild; the client shows a loading screen while this runs.
+// First-open-of-day rebuild; the client's Now view waits on this (the rest of
+// the app stays usable) and banners a failure.
 // force=true is the user-initiated "Organize now" re-run (bulk-import days).
 // noHistory=true is the workshop variant: the Brain composes without
 // yesterday's groupings (librarian and profile still see full history).

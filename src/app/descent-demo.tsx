@@ -209,6 +209,7 @@ const map: MapPayload = {
   day: new Date(now).toISOString().slice(0, 10),
   builtAt: iso(now),
   stale: false,
+  buildError: null,
   bubbles,
   capturedToday: [],
   items,

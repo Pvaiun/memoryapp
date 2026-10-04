@@ -459,15 +459,107 @@ textarea:focus {
   line-height: 1.6;
 }
 
-.loading-screen {
-  flex: 1;
+/* The Now view before today's map arrives — the rest of the app is live. */
+.map-pending {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 18px;
+  padding: 72px 24px;
   color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+  text-align: center;
 }
+
+/* ---------- map status banner ---------- */
+/* Under the header on every tab. Neutral while a build runs; a failure is
+   tinted and carries its fix, so it can't be mistaken for decoration. */
+.map-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 16px 10px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: rgba(148, 163, 216, 0.07);
+  font-size: 13.5px;
+  line-height: 1.4;
+  animation: banner-in 0.25s ease-out;
+}
+@keyframes banner-in {
+  from {
+    opacity: 0;
+  }
+}
+.map-banner.error {
+  border-color: rgba(240, 112, 140, 0.55);
+  background: rgba(240, 112, 140, 0.12);
+}
+.map-banner.warn {
+  border-color: rgba(232, 194, 106, 0.5);
+  background: rgba(232, 194, 106, 0.1);
+}
+.map-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.map-banner-text strong {
+  font-weight: 700;
+}
+.map-banner.error .map-banner-text strong {
+  color: var(--danger);
+}
+.map-banner.warn .map-banner-text strong {
+  color: var(--warn);
+}
+.map-banner-text span {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.map-banner-action {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  background: rgba(148, 163, 216, 0.12);
+  border: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+.map-banner-dismiss {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+}
+.map-banner-dots {
+  display: flex;
+  gap: 5px;
+}
+.map-banner-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.map-banner-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+  background: var(--good);
+}
+.map-banner-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+  background: var(--warn);
+}
+
 .loading-bubbles {
   display: flex;
   gap: 10px;
@@ -677,6 +769,20 @@ textarea:focus {
 .field-row {
   display: flex;
   gap: 10px;
+}
+/* "Every [3] weeks": a short number box with its unit read beside it. */
+.every-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.field .every-input input {
+  width: 76px;
+  text-align: center;
+}
+.every-input span {
+  color: var(--text-dim);
+  font-size: 14px;
 }
 .field-row .field {
   flex: 1;

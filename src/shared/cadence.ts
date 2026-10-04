@@ -435,10 +435,14 @@ function nextOccurrenceIn(f: CalendarFrame, cadence: Cadence, anchorIso: string,
     const cursor = new Date(from);
     f.setTime(cursor, f.hours(anchor), f.minutes(anchor));
     if (cursor.getTime() < from.getTime()) f.addDays(cursor, 1);
+    const anchorWeekStart = calendarDayNumber(f, startOfWeek(f, anchor));
     for (let i = 0; i < interval * 7 + 8; i++) {
       if (days.includes(f.day(cursor))) {
-        // Respect the week interval relative to the anchor's week.
-        const weeksFromAnchor = Math.floor((cursor.getTime() - startOfWeek(f, anchor).getTime()) / (7 * DAY_MS));
+        // Respect the week interval relative to the anchor's week. Counted in
+        // calendar days, not elapsed ms: across a DST change a local week is
+        // an hour short, and flooring the ms gap then lands an "every 2 weeks"
+        // turn one week early.
+        const weeksFromAnchor = Math.floor((calendarDayNumber(f, cursor) - anchorWeekStart) / 7);
         if (weeksFromAnchor % interval === 0) return new Date(cursor);
       }
       f.addDays(cursor, 1);
@@ -449,7 +453,9 @@ function nextOccurrenceIn(f: CalendarFrame, cadence: Cadence, anchorIso: string,
   if (cadence.freq === 'monthly') {
     const targetDay = cadence.byMonthDay ?? f.date(anchor);
     const cursor = f.make(f.year(from), f.month(from), 1, f.hours(anchor), f.minutes(anchor));
-    for (let i = 0; i < 24; i++) {
+    // The first on-grid month is at most `interval` months out, and one more
+    // interval covers a candidate that falls earlier in its month than `from`.
+    for (let i = 0; i < 2 * interval + 24; i++) {
       const monthsFromAnchor = (f.year(cursor) - f.year(anchor)) * 12 + (f.month(cursor) - f.month(anchor));
       if (monthsFromAnchor >= 0 && monthsFromAnchor % interval === 0) {
         const lastDay = f.date(f.make(f.year(cursor), f.month(cursor) + 1, 0, 12, 0));
@@ -552,6 +558,12 @@ function startOfWeek(f: CalendarFrame, d: Date): Date {
   f.setTime(s, 0, 0);
   f.addDays(s, -f.day(s));
   return s;
+}
+
+// Days since the epoch of the date `d` shows in frame `f` — a DST-proof day
+// count for comparing calendar dates.
+function calendarDayNumber(f: CalendarFrame, d: Date): number {
+  return Math.round(Date.UTC(f.year(d), f.month(d), f.date(d)) / DAY_MS);
 }
 
 // Human-readable cadence, for the UI. atTime is user-local wall clock, so it

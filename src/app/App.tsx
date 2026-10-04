@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ItemView, MapPayload } from '../shared/types';
 import type { CaptureResponse } from '../shared/types';
 import { isDoneForNow } from '../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 import { api, AuthError, localDay } from './api';
+import MapBanner from './components/MapBanner';
 import PasswordGate from './components/PasswordGate';
 import ReviewSheet from './components/ReviewSheet';
 import SettingsSheet from './components/SettingsSheet';
@@ -41,31 +42,6 @@ interface Toast {
 
 let toastSeq = 1;
 
-// The morning map should announce itself. The 5am cron (§9.1) has normally
-// built it hours ago, so the first open of the day has nothing to wait for —
-// hold the calculating screen for a beat anyway, so the rebuild reads as
-// something that happened rather than a map that silently changed overnight.
-const REVEAL_MS = 2000;
-const SEEN_DAY_KEY = 'memory.mapDaySeen';
-
-// Which day's map this device has already been shown — per device, so the
-// reveal plays once on the phone and once on the laptop.
-function seenMapDay(): string | null {
-  try {
-    return localStorage.getItem(SEEN_DAY_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function markMapDaySeen(day: string): void {
-  try {
-    localStorage.setItem(SEEN_DAY_KEY, day);
-  } catch {
-    /* private mode — the reveal just plays again on the next open */
-  }
-}
-
 // The Brain runs once a day and the payload is a few KB, so the map is worth
 // keeping on the device: the app paints the last one immediately and the
 // /api/map fetch becomes a background revalidation instead of a gate on first
@@ -77,13 +53,10 @@ function readCachedMap(): MapPayload | null {
     const raw = localStorage.getItem(MAP_CACHE_KEY);
     if (!raw) return null;
     const cached = JSON.parse(raw) as MapPayload;
-    // Two conditions, both about not showing a map that has been superseded:
-    // it must be today's, and the day's reveal must already have played.
-    // Yesterday's bubbles are precisely the stale-then-swapped thing §9.1
-    // forbids, and the first open of the day belongs to the reveal.
+    // Today's only: yesterday's bubbles are precisely the stale-then-swapped
+    // thing §9.1 forbids.
     if (!cached?.day || !cached.bubbles || cached.day !== localDay()) return null;
-    if (seenMapDay() !== cached.day) return null;
-    return cached;
+    return { ...cached, buildError: cached.buildError ?? null };
   } catch {
     return null;
   }
@@ -104,10 +77,6 @@ function clearCachedMap(): void {
     /* nothing to do */
   }
 }
-
-// 'building' = the Brain is actually running; 'ready' = it already ran and
-// we're holding the same screen so the user sees that it did.
-type BuildPhase = 'idle' | 'building' | 'ready';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('map');
@@ -150,7 +119,14 @@ export default function App() {
       /* private mode — the choice just won't persist */
     }
   }, []);
-  const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
+  // The Brain is running for today's map right now (first-open rebuild or
+  // "Organize now"). Nothing waits on it but the Now view.
+  const [building, setBuilding] = useState(false);
+  // Why today's map couldn't be loaded or built. Stays up — banner on every
+  // tab — until a load succeeds; a toast that faded was how this went unseen.
+  const [mapError, setMapError] = useState<string | null>(null);
+  // The fallback-map banner, dismissed for the build it was about (builtAt).
+  const [dismissedBuild, setDismissedBuild] = useState<string | null>(null);
   const [openItem, setOpenItem] = useState<ItemView | null>(null);
   const [review, setReview] = useState<CaptureResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -178,50 +154,47 @@ export default function App() {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ttl);
   }, []);
 
-  const revealTimerRef = useRef<number | null>(null);
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
 
-  // First open of the day (§9.1). Two ways in:
-  //   • The 5am cron already built today's map — the usual case. Show the
-  //     calculating screen for REVEAL_MS anyway, then the finished map.
-  //   • The map is still stale (cron missed, long silence, fresh install) —
-  //     rebuild on demand behind the same screen, as the app always did.
-  // Either way the map is never shown stale-then-swapped.
-  const loadMap = useCallback(async () => {
-    try {
-      const m = await api.getMap();
-      const firstOpenOfDay = seenMapDay() !== m.day;
-      if (m.stale) {
-        setBuildPhase('building');
-        const rebuilt = await api.rebuildMap();
-        setMap(rebuilt);
-        markMapDaySeen(rebuilt.day);
-        setBuildPhase('idle');
-      } else if (firstOpenOfDay) {
-        setMap(m);
-        markMapDaySeen(m.day);
-        setBuildPhase('ready');
-        if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
-        revealTimerRef.current = window.setTimeout(() => {
-          revealTimerRef.current = null;
-          setBuildPhase('idle');
-        }, REVEAL_MS);
-      } else {
-        setMap(m);
+  // Today's map (§9.1). The 5am cron has normally built it, so this is one
+  // fetch. If it hasn't (cron missed, long silence, fresh install), build it
+  // now — with nothing gating the app: the shell stays usable, the Now view
+  // shows a placeholder, and the banner says the map is building. The map is
+  // still never shown stale-then-swapped: yesterday's leaves before today's
+  // build starts. A call while one is in flight (returning to the app
+  // mid-build) joins it rather than starting a second Brain run.
+  const loadMap = useCallback((): Promise<void> => {
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+    const run = (async () => {
+      try {
+        const m = await api.getMap();
+        if (m.stale) {
+          setMap(null);
+          setBuilding(true);
+          setMap(await api.rebuildMap());
+        } else {
+          setMap(m);
+        }
+        setMapError(null);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          // A locked device must not keep painting the map it cached while it
+          // was unlocked. One flash is possible (the cache is read before the
+          // 401 lands); dropping it here means there is never a second.
+          clearCachedMap();
+          setMap(null);
+          setLocked(true);
+          return;
+        }
+        setMapError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBuilding(false);
+        loadInFlightRef.current = null;
       }
-    } catch (err) {
-      setBuildPhase('idle');
-      if (err instanceof AuthError) {
-        // A locked device must not keep painting the map it cached while it
-        // was unlocked. One flash is possible (the cache is read before the
-        // 401 lands); dropping it here means there is never a second.
-        clearCachedMap();
-        setMap(null);
-        setLocked(true);
-        return;
-      }
-      toast(`Couldn't load the map: ${err instanceof Error ? err.message : err}`);
-    }
-  }, [toast]);
+    })();
+    loadInFlightRef.current = run;
+    return run;
+  }, []);
 
   // Every map the app holds — fetched, rebuilt, or patched in place by a
   // completion — is what the next open should paint.
@@ -240,7 +213,7 @@ export default function App() {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
     // Re-check on return to the app: across the 5am boundary this is where the
-    // new day's map (and its reveal) arrives without a reload.
+    // new day's map arrives without a reload.
     const onVisible = () => {
       if (document.visibilityState === 'visible') loadMap();
     };
@@ -248,7 +221,6 @@ export default function App() {
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.clearTimeout(warm);
-      if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current);
     };
   }, [loadMap]);
 
@@ -491,15 +463,17 @@ export default function App() {
   // noProfile are the workshop variants — compose without yesterday's
   // groupings, or without the user profile (the profile-value A/B). The
   // prompt used is the stored morning-prompt preference (Settings toggle).
+  // Today's map stays up while it rebuilds; the banner says so.
   const organizeNow = useCallback(
     async (opts: { noHistory?: boolean; noProfile?: boolean } = {}) => {
-      setBuildPhase('building');
+      setBuilding(true);
       try {
         setMap(await api.rebuildMap(true, !!opts.noHistory, undefined, !!opts.noProfile));
+        setMapError(null);
       } catch (err) {
         toast(`Couldn't rebuild: ${err instanceof Error ? err.message : err}`);
       } finally {
-        setBuildPhase('idle');
+        setBuilding(false);
       }
     },
     [toast],
@@ -567,6 +541,15 @@ export default function App() {
     }
   }, [toast]);
 
+  // The review sheet reads items from the map so ticks made there show up —
+  // but a capture made while today's map is still building (or failed to
+  // load) has no map to land in, and must still get its review.
+  const reviewItems = useMemo(() => {
+    if (!review) return {};
+    const own = [...review.created, ...review.boosted.map((b) => b.item)];
+    return { ...Object.fromEntries(own.map((i) => [i.id, i])), ...(map?.items ?? {}) };
+  }, [review, map]);
+
   if (locked) {
     return (
       <div className="app">
@@ -576,27 +559,6 @@ export default function App() {
             loadMap();
           }}
         />
-      </div>
-    );
-  }
-
-  if (buildPhase !== 'idle' || (!map && !toasts.length)) {
-    return (
-      <div className="app">
-        <div className="loading-screen">
-          <div className="loading-bubbles">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div>
-            {buildPhase === 'building'
-              ? 'Building today’s map…'
-              : buildPhase === 'ready'
-                ? 'Today’s map is ready…'
-                : 'Loading…'}
-          </div>
-        </div>
       </div>
     );
   }
@@ -626,9 +588,37 @@ export default function App() {
         </div>
       </header>
 
+      <MapBanner
+        building={building}
+        hasMap={!!map}
+        loadError={mapError}
+        buildError={map?.buildError && map.builtAt !== dismissedBuild ? map.buildError : null}
+        onRetryLoad={loadMap}
+        onRebuild={() => organizeNow()}
+        onDismissBuildError={() => setDismissedBuild(map?.builtAt ?? null)}
+      />
+
       <main
         className={`view${tab === 'map' && nowView === 'descent' && map && (map.bubbles.length > 0 || capturedForToday(map).length > 0) ? ' view-descent' : ''}${tab === 'calendar' ? ' view-cal' : ''}`}
       >
+        {/* Until today's map arrives, only this view waits — the banner above
+            carries what's happening (building, or what went wrong). */}
+        {tab === 'map' && !map && (
+          <div className="map-pending">
+            {mapError ? (
+              <p>Today’s map will show here once it loads.</p>
+            ) : (
+              <>
+                <div className="loading-bubbles" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                {building && <p>You can capture, browse and check the calendar while it builds.</p>}
+              </>
+            )}
+          </div>
+        )}
         {tab === 'map' && map && (
           <MapView
             map={map}
@@ -716,10 +706,10 @@ export default function App() {
         />
       )}
 
-      {review && map && (
+      {review && (
         <ReviewSheet
           response={review}
-          items={map.items}
+          items={reviewItems}
           onOpenItem={setOpenItem}
           onToggleComplete={toggleComplete}
           onUndoBoost={undoBoost}
