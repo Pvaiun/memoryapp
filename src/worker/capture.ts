@@ -1,7 +1,7 @@
 import type { AffectTag, CaptureResponse, Item, ItemView, ParseResult, ParsedItem, RawText } from '../shared/types';
 import { AFFECT_TAGS } from '../shared/types';
 import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
-import { refineWithSourceTime, resolveDatePhrase } from '../shared/dates';
+import { refineWithSourceTime, resolveDatePhrase, type ResolvedDate } from '../shared/dates';
 import { defaultCalendarWorthy, heuristicParse } from '../shared/heuristicParse';
 import type { Env } from './env';
 import { anthropicJson, llmAvailable } from './ai';
@@ -78,13 +78,24 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
   const boosted: { item: ItemView; appendedText: string }[] = [];
 
   for (const p of parsed.items) {
-    const matched = p.matchItemId ? candidates.find((c) => c.id === p.matchItemId) : undefined;
+    const sourceText = parsed.items.length > 1 ? p.title : req.text;
+    let matched = p.matchItemId ? candidates.find((c) => c.id === p.matchItemId) : undefined;
+    // A boost appends phrasing and nothing else, so a match that would drop a
+    // date is not a recapture: "therapy on the 21st at 2:30" is a different
+    // appointment from today's 1:30 therapy, however alike the words.
+    if (matched && !sameWhen(resolveWhen(p, sourceText, ref, tz).when, matched, tz ?? 0)) {
+      await logEvent(db, 'ai', 'recapture_refused', {
+        itemId: matched.id,
+        payload: { reason: 'date-mismatch', captureId, text: sourceText },
+      });
+      matched = undefined;
+    }
     if (matched) {
       // Recapture-as-boost (§9.3): raise priority, append the new phrasing —
       // never synthesise a merged replacement. Visible + undoable (§10.1).
       // Affect appends too: re-entering "I keep forgetting" twice is history
       // worth counting, not a field worth overwriting.
-      const rawTexts: RawText[] = [...matched.rawTexts, { ts: nowIso(), text: p.title }];
+      const rawTexts: RawText[] = [...matched.rawTexts, { ts: nowIso(), text: sourceText }];
       const affects = p.affect.length
         ? [...matched.affects, ...p.affect.map((tag) => ({ tag, ts: nowIso() }))]
         : matched.affects;
@@ -98,71 +109,26 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         ...(matched.snoozedUntil ? { snoozed_until: null } : {}),
       });
       await syncFts(db, matched.id, matched.title, rawTexts.map((r) => r.text).join('\n'));
+      // The full parse rides along so an undo can rebuild exactly the item
+      // this capture would have made — date, time and all — not a bare title.
       await logEvent(db, 'ai', 'recaptured', {
         itemId: matched.id,
-        payload: { appendedText: p.title, boost: RECAPTURE_BOOST, captureId, ...(matched.snoozedUntil ? { unsnoozed: true } : {}) },
+        payload: {
+          appendedText: sourceText,
+          boost: RECAPTURE_BOOST,
+          captureId,
+          parsed: p,
+          ref: ref.toISOString(),
+          ...(tz !== undefined ? { tz } : {}),
+          ...(matched.snoozedUntil ? { unsnoozed: true } : {}),
+        },
       });
       const fresh = await getItem(db, matched.id);
-      if (fresh) boosted.push({ item: toItemView(fresh, now, tz), appendedText: p.title });
+      if (fresh) boosted.push({ item: toItemView(fresh, now, tz), appendedText: sourceText });
       continue;
     }
 
-    // Deterministic date resolution (§12): the model only extracted phrases.
-    // refineWithSourceTime recovers clock times the extraction dropped.
-    const sourceText = parsed.items.length > 1 ? p.title : req.text;
-    const deadline = refineWithSourceTime(
-      p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, ref, tz) : null,
-      sourceText,
-      ref,
-      tz,
-    );
-    const eventAt = refineWithSourceTime(
-      p.eventAtPhrase ? resolveDatePhrase(p.eventAtPhrase, ref, tz) : null,
-      sourceText,
-      ref,
-      tz,
-    );
-
-    // An event is its date. The heuristic parser already refuses to type a
-    // dateless capture as HAPPEN; the LLM path must agree: a HAPPEN whose
-    // when neither resolved nor recurs demotes to DO — the intention to do
-    // or arrange it, with a full lifecycle — never a dateless event, which
-    // has none (can't pass, can't complete, invisible to placement, and an
-    // open invitation for the Brain to invent the missing date). A recurring
-    // HAPPEN keeps its type: the cadence IS its when.
-    const type = p.type === 'HAPPEN' && !eventAt && !p.cadence ? 'DO' : p.type;
-    // The parser already knows whether the phrase named a time; until now that
-    // fact was dropped at the door and three surfaces re-guessed it from the
-    // stored noon anchor. Keep it. Whichever date this item type carries is
-    // the one that decides — an undated item's precision is inert.
-    const resolved = type === 'HAPPEN' ? eventAt : deadline;
-    const itemEmbedding = await embed(env, p.title);
-    const id = await insertItem(db, {
-      type,
-      title: p.title,
-      rawText: { ts: nowIso(), text: parsed.items.length > 1 ? p.title : req.text },
-      deadline: type === 'DO' ? deadline?.iso ?? null : null,
-      deadlineHardness: type === 'DO' && deadline ? p.deadlineHardness ?? 'hard' : null,
-      datePrecision: resolved && !resolved.hasTime ? 'day' : 'time',
-      cadence: type === 'KNOW' ? null : p.cadence,
-      optionality: p.optionality,
-      effort: p.effort,
-      pingNatured: type === 'DO' ? p.pingNatured : false,
-      eventAt: type === 'HAPPEN' ? eventAt?.iso ?? null : null,
-      eventEnd: type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
-      alertLeadMinutes: p.alertLeadMinutes,
-      showOnCalendar: p.calendarWorthy,
-      priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
-      parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4,
-      captureId,
-      affects: p.affect.map((tag) => ({ tag, ts: nowIso() })),
-      embedding: itemEmbedding,
-    });
-    const themes = await setItemThemes(db, id, p.themes, 'ai');
-    await logEvent(db, 'ai', 'created', {
-      itemId: id,
-      payload: { type: p.type, title: p.title, themes: themes.map((t) => t.name), captureId },
-    });
+    const id = await createParsedItem(env, p, { sourceText, ref, tz, captureId, parseConfidence: parsed.confidence === 'high' ? 0.9 : 0.4 });
     const item = await getItem(db, id);
     if (item) created.push(toItemView(item, now, tz));
   }
@@ -179,13 +145,110 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
   return { captureId, rawText: req.text, created, boosted, nudge };
 }
 
+// Deterministic date resolution (§12): the model only extracted phrases.
+// refineWithSourceTime recovers clock times the extraction dropped. `when` is
+// whichever date the item will carry once typed (see createParsedItem).
+function resolveWhen(p: ParsedItem, sourceText: string, ref: Date, tz: number | undefined) {
+  const deadline = refineWithSourceTime(
+    p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, ref, tz) : null,
+    sourceText,
+    ref,
+    tz,
+  );
+  const eventAt = refineWithSourceTime(
+    p.eventAtPhrase ? resolveDatePhrase(p.eventAtPhrase, ref, tz) : null,
+    sourceText,
+    ref,
+    tz,
+  );
+  // An event is its date. The heuristic parser already refuses to type a
+  // dateless capture as HAPPEN; the LLM path must agree: a HAPPEN whose
+  // when neither resolved nor recurs demotes to DO — the intention to do
+  // or arrange it, with a full lifecycle — never a dateless event, which
+  // has none (can't pass, can't complete, invisible to placement, and an
+  // open invitation for the Brain to invent the missing date). A recurring
+  // HAPPEN keeps its type: the cadence IS its when.
+  const type = p.type === 'HAPPEN' && !eventAt && !p.cadence ? 'DO' : p.type;
+  return { type, deadline, eventAt, when: type === 'HAPPEN' ? eventAt : deadline };
+}
+
+// Could a capture dated `when` be the same thing as `item`? A capture with no
+// date can always boost; one with a date only boosts an item already on that
+// date — same moment when both name a time, same local day otherwise.
+export function sameWhen(
+  when: ResolvedDate | null,
+  item: Pick<Item, 'eventAt' | 'deadline' | 'datePrecision'>,
+  tzOffsetMinutes: number,
+): boolean {
+  if (!when) return true;
+  const existing = item.eventAt ?? item.deadline;
+  if (!existing) return false;
+  if (when.hasTime && item.datePrecision === 'time') {
+    return Math.abs(Date.parse(when.iso) - Date.parse(existing)) < 60_000;
+  }
+  const localDay = (iso: string) => new Date(Date.parse(iso) + tzOffsetMinutes * 60_000).toISOString().slice(0, 10);
+  return localDay(when.iso) === localDay(existing);
+}
+
+async function createParsedItem(
+  env: Env,
+  p: ParsedItem,
+  opts: {
+    sourceText: string;
+    ref: Date;
+    tz: number | undefined;
+    captureId?: string;
+    parseConfidence: number;
+    fallbackThemes?: string[];
+  },
+): Promise<string> {
+  const db = env.DB;
+  const { type, deadline, eventAt, when } = resolveWhen(p, opts.sourceText, opts.ref, opts.tz);
+  const itemEmbedding = await embed(env, p.title);
+  const id = await insertItem(db, {
+    type,
+    title: p.title,
+    rawText: { ts: nowIso(), text: opts.sourceText },
+    deadline: type === 'DO' ? deadline?.iso ?? null : null,
+    deadlineHardness: type === 'DO' && deadline ? p.deadlineHardness ?? 'hard' : null,
+    // The parser already knows whether the phrase named a time; until now that
+    // fact was dropped at the door and three surfaces re-guessed it from the
+    // stored noon anchor. Keep it. Whichever date this item type carries is
+    // the one that decides — an undated item's precision is inert.
+    datePrecision: when && !when.hasTime ? 'day' : 'time',
+    cadence: type === 'KNOW' ? null : p.cadence,
+    optionality: p.optionality,
+    effort: p.effort,
+    pingNatured: type === 'DO' ? p.pingNatured : false,
+    eventAt: type === 'HAPPEN' ? eventAt?.iso ?? null : null,
+    eventEnd: type === 'HAPPEN' ? eventAt?.endIso ?? null : null,
+    alertLeadMinutes: p.alertLeadMinutes,
+    showOnCalendar: p.calendarWorthy,
+    priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
+    parseConfidence: opts.parseConfidence,
+    captureId: opts.captureId ?? null,
+    affects: p.affect.map((tag) => ({ tag, ts: nowIso() })),
+    embedding: itemEmbedding,
+  });
+  const themes = await setItemThemes(db, id, p.themes.length ? p.themes : opts.fallbackThemes ?? [], 'ai');
+  await logEvent(db, 'ai', 'created', {
+    itemId: id,
+    payload: { type: p.type, title: p.title, themes: themes.map((t) => t.name), ...(opts.captureId ? { captureId: opts.captureId } : {}) },
+  });
+  return id;
+}
+
 // Undo a recapture-merge (§10.3): revert the boost AND split the appended
 // phrasing back out into its own fresh item — a compensating event, not an erasure.
+// The new item is the one the capture would have made had it never matched:
+// rebuilt from the parse logged with the merge, dates resolved against the
+// moment of capture, not the moment of undo.
 export async function undoRecapture(env: Env, itemId: string, appendedText: string): Promise<ItemView | null> {
   const db = env.DB;
   const now = new Date();
   const item = await getItem(db, itemId);
   if (!item) return null;
+  const tzNow = await getTzOffset(db);
 
   const idx = item.rawTexts.map((r) => r.text).lastIndexOf(appendedText);
   const rawTexts = idx >= 0 ? [...item.rawTexts.slice(0, idx), ...item.rawTexts.slice(idx + 1)] : item.rawTexts;
@@ -195,34 +258,51 @@ export async function undoRecapture(env: Env, itemId: string, appendedText: stri
   });
   await syncFts(db, itemId, item.title, rawTexts.map((r) => r.text).join('\n'));
 
-  // Recreate the appended phrasing as a fresh item via the normal parse path,
-  // skipping recapture-match so it cannot immediately re-merge.
-  const parsed = heuristicParse(appendedText, now);
-  const p = parsed.items[0];
-  const embedding = await embed(env, p.title);
-  const newItemId = await insertItem(db, {
-    type: p.type,
-    title: p.title,
-    rawText: { ts: nowIso(), text: appendedText },
-    deadline: p.deadlinePhrase ? resolveDatePhrase(p.deadlinePhrase, now)?.iso ?? null : null,
-    deadlineHardness: p.deadlineHardness,
-    cadence: p.cadence,
-    optionality: p.optionality,
-    effort: p.effort,
-    pingNatured: p.pingNatured,
-    showOnCalendar: p.calendarWorthy,
-    priorityBase: PRIORITY_BASE[p.priority] ?? 0.5,
-    parseConfidence: 0.4,
-    embedding,
+  const merge = await findRecaptureEvent(db, itemId, appendedText);
+  const ref = merge?.ref ? new Date(merge.ref) : now;
+  const tz = merge ? merge.tz : tzNow;
+  // Merges logged before the parse rode along fall back to re-parsing the
+  // appended phrasing — skipping recapture-match so it cannot re-merge.
+  const p = merge?.parsed ?? heuristicParse(appendedText, ref, tz).items[0];
+  const newItemId = await createParsedItem(env, p, {
+    sourceText: appendedText,
+    ref,
+    tz,
+    captureId: merge?.captureId,
+    parseConfidence: merge?.parsed ? 0.9 : 0.4,
+    fallbackThemes: item.themes.map((t) => t.name),
   });
-  await setItemThemes(db, newItemId, item.themes.map((t) => t.name), 'ai');
 
   await logEvent(db, 'user', 'recapture_undone', {
     itemId,
     payload: { appendedText, newItemId },
   });
   const fresh = await getItem(db, newItemId);
-  return fresh ? toItemView(fresh, now, await getTzOffset(db)) : null;
+  return fresh ? toItemView(fresh, now, tzNow) : null;
+}
+
+interface RecapturePayload {
+  appendedText?: string;
+  captureId?: string;
+  parsed?: ParsedItem;
+  ref?: string;
+  tz?: number;
+}
+
+async function findRecaptureEvent(db: D1Database, itemId: string, appendedText: string): Promise<RecapturePayload | null> {
+  const rows = await db
+    .prepare("SELECT payload FROM events WHERE item_id = ? AND type = 'recaptured' ORDER BY ts DESC LIMIT 50")
+    .bind(itemId)
+    .all<{ payload: string }>();
+  for (const r of rows.results) {
+    try {
+      const pl = JSON.parse(r.payload) as RecapturePayload;
+      if (pl.appendedText === appendedText) return pl;
+    } catch {
+      // a malformed payload just isn't this merge
+    }
+  }
+  return null;
 }
 
 // ---------- The cheap-tier parse call ----------
@@ -280,7 +360,7 @@ FOR EACH ITEM emit:
 - "priority": "low" | "medium" | "high". Default "medium"; "this is really important" → "high"; a casual aside → "low".
 - "themes": 1-3 theme names. You are the librarian of an EMERGENT taxonomy: strongly prefer reusing an existing theme; coin a new short name (1-2 words, e.g. "Home", "Health", "Sarah") only when nothing fits. Multi-theme is encouraged when genuinely apt.
 - "affect": 0-2 tags from EXACTLY this list — the emotional colour the USER'S OWN PHRASING carries, never what the task's nature implies. nervous ("scared to", "anxious about it"); dreading ("ugh", "don't want to", annoyance); excited ("can't wait", "finally!"); someday (loose aspiration — "at some point", "one day", "eventually I want to"); for-someone (relational stakes — "promised Dad", "she really needs this", "the team's waiting on me"); guilty ("should have done this ages ago"); forgotten ("I keep forgetting"); important (speaker emphasis — "big deal", "really matters", "no excuses"); heavy (grief or weight — the phrasing is quiet about something hard). Most captures carry NO flavour: emit [] unless the phrasing plainly carries it, and prefer one tag. The natural stack is for-someone plus one other ("I promised her and I keep forgetting" → ["for-someone","forgotten"]).
-- "matchItemId": if this capture refers to the SAME thing as one of the existing candidate items (same referent/intent, phrasing-independent), that item's id — else null. BE CONSERVATIVE: a false merge is worse than a missed match. "Sarah likes soy milk" vs "Sarah hates soy milk" are DIFFERENT. Only match on high-confidence sameness.
+- "matchItemId": if this capture refers to the SAME thing as one of the existing candidate items (same referent/intent, phrasing-independent), that item's id — else null. BE CONSERVATIVE: a false merge is worse than a missed match. "Sarah likes soy milk" vs "Sarah hates soy milk" are DIFFERENT. A capture at a different date or time than a candidate's "when" is a different occurrence, never the same thing. Only match on high-confidence sameness.
 
 TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture was ambiguous, hard to segment, or you guessed on anything load-bearing.`;
 
@@ -293,6 +373,7 @@ TOP-LEVEL: {"items":[...], "confidence":"high"|"low"} — "low" if the capture w
       id: c.id,
       type: c.type,
       title: c.title,
+      when: c.eventAt ?? c.deadline,
       phrasings: c.rawTexts.map((r) => r.text).slice(-3),
     })),
   });
