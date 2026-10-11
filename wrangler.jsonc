@@ -32,9 +32,9 @@
   "vars": {
     // Model routing (§12): capture on Sonnet while validating the premise
     // (at ~1-3 captures/day the cheap-tier saving is negligible; drop to
-    // claude-haiku-4-5 later if Sonnet proves unnecessary). Brain → top tier.
-    "CAPTURE_MODEL": "claude-sonnet-5",
-    "BRAIN_MODEL": "claude-opus-4-8"
+    // claude-haiku-5-5 later if Sonnet proves unnecessary). Brain → top tier.
+    "CAPTURE_MODEL": "claude-sonnet-5-5",
+    "BRAIN_MODEL": "claude-opus-5-5"
   }
   // Secrets (set with `wrangler secret put <NAME>`):
   //   ANTHROPIC_API_KEY  — enables real Smart Capture + Brain (heuristic fallback without it)

@@ -8,37 +8,68 @@ export function llmAvailable(env: Env): boolean {
   return !!env.ANTHROPIC_API_KEY;
 }
 
-export async function anthropicJson<T>(
+// Models whose safety classifiers can decline a request, and which accept
+// `fallbacks: "default"` to have the API re-run a decline on a substitute
+// model. Anything else (e.g. Haiku) is sent without it rather than risk a 400.
+const SERVER_FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
+
+// Thinking is always on for the current models and counts toward max_tokens,
+// so the default leaves room for it on top of the reply.
+export async function anthropicText(
   env: Env,
   model: string,
   system: string,
   user: string,
-  maxTokens = 4096,
-): Promise<T> {
+  maxTokens = 16000,
+): Promise<string> {
+  const fallback = SERVER_FALLBACK_MODELS.has(model);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-api-key': env.ANTHROPIC_API_KEY!,
       'anthropic-version': '2023-06-01',
+      ...(fallback ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
     },
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: user }],
+      ...(fallback ? { fallbacks: 'default' } : {}),
     }),
   });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 500)}`);
   }
-  const data = (await res.json()) as { content: { type: string; text?: string }[] };
-  const text = data.content
+  const data = (await res.json()) as {
+    content: { type: string; text?: string }[];
+    stop_reason?: string;
+    stop_details?: { category?: string | null } | null;
+  };
+  // A decline is an HTTP 200 with empty or partial content; a max_tokens stop
+  // is a cut-off reply. Neither is usable, so callers take their fallback path.
+  if (data.stop_reason === 'refusal') {
+    throw new Error(`Anthropic API refusal (${data.stop_details?.category ?? 'uncategorized'})`);
+  }
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error(`Anthropic API reply truncated at max_tokens=${maxTokens}`);
+  }
+  return data.content
     .filter((c) => c.type === 'text')
     .map((c) => c.text ?? '')
     .join('');
-  return extractJson<T>(text);
+}
+
+export async function anthropicJson<T>(
+  env: Env,
+  model: string,
+  system: string,
+  user: string,
+  maxTokens?: number,
+): Promise<T> {
+  return extractJson<T>(await anthropicText(env, model, system, user, maxTokens));
 }
 
 // Models sometimes wrap JSON in prose or fences; extract the first balanced
