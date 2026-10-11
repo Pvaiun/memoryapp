@@ -8,10 +8,23 @@ export function llmAvailable(env: Env): boolean {
   return !!env.ANTHROPIC_API_KEY;
 }
 
-// Models whose safety classifiers can decline a request, and which accept
-// `fallbacks: "default"` to have the API re-run a decline on a substitute
-// model. Anything else (e.g. Haiku) is sent without it rather than risk a 400.
-const SERVER_FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1']);
+// The model's safety classifiers declined the request. Typed so the paths
+// the user is watching (capture, the map build) can say so instead of
+// recovering quietly the way they do from an outage.
+export class ModelDeclinedError extends Error {
+  constructor(readonly category: string | null) {
+    super(`Anthropic API refusal (${category ?? 'uncategorized'})`);
+    this.name = 'ModelDeclinedError';
+  }
+}
+
+// What the user is told about a decline. The category (e.g. "general_harms")
+// is the API's own label for which filter fired.
+export function describeDecline(err: ModelDeclinedError): string {
+  return err.category
+    ? `the AI model declined the request (safety filter: ${err.category.replace(/_/g, ' ')})`
+    : 'the AI model declined the request';
+}
 
 // Thinking is always on for the current models and counts toward max_tokens,
 // so the default leaves room for it on top of the reply.
@@ -22,21 +35,18 @@ export async function anthropicText(
   user: string,
   maxTokens = 16000,
 ): Promise<string> {
-  const fallback = SERVER_FALLBACK_MODELS.has(model);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'x-api-key': env.ANTHROPIC_API_KEY!,
       'anthropic-version': '2023-06-01',
-      ...(fallback ? { 'anthropic-beta': 'server-side-fallback-2026-07-01' } : {}),
     },
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: user }],
-      ...(fallback ? { fallbacks: 'default' } : {}),
     }),
   });
   if (!res.ok) {
@@ -49,9 +59,9 @@ export async function anthropicText(
     stop_details?: { category?: string | null } | null;
   };
   // A decline is an HTTP 200 with empty or partial content; a max_tokens stop
-  // is a cut-off reply. Neither is usable, so callers take their fallback path.
+  // is a cut-off reply. Neither is usable.
   if (data.stop_reason === 'refusal') {
-    throw new Error(`Anthropic API refusal (${data.stop_details?.category ?? 'uncategorized'})`);
+    throw new ModelDeclinedError(data.stop_details?.category ?? null);
   }
   if (data.stop_reason === 'max_tokens') {
     throw new Error(`Anthropic API reply truncated at max_tokens=${maxTokens}`);

@@ -4,7 +4,7 @@ import { PRIORITY_BASE, RECAPTURE_BOOST } from '../shared/priority';
 import { refineWithSourceTime, resolveDatePhrase, type ResolvedDate } from '../shared/dates';
 import { defaultCalendarWorthy, heuristicParse } from '../shared/heuristicParse';
 import type { Env } from './env';
-import { anthropicJson, llmAvailable } from './ai';
+import { anthropicJson, describeDecline, llmAvailable, ModelDeclinedError } from './ai';
 import { embed } from './embeddings';
 import {
   getItem,
@@ -55,12 +55,15 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
   // 3. Parse: segment + classify + themes + match adjudication in one cheap-tier
   //    call (§10.3 "folded into the parse call"), or the deterministic fallback.
   let parsed: ParseResult;
+  let declined: string | null = null;
   if (llmAvailable(env)) {
     try {
       parsed = await llmParse(env, req.text, ref, tz, candidates);
     } catch (err) {
       console.error('LLM parse failed; falling back to heuristics', err);
       parsed = heuristicParse(req.text, ref, tz);
+      // An outage falls back quietly; a decline is about this text, so say so.
+      if (err instanceof ModelDeclinedError) declined = describeDecline(err);
     }
   } else {
     parsed = heuristicParse(req.text, ref, tz);
@@ -142,7 +145,7 @@ export async function handleCapture(env: Env, req: CaptureRequest): Promise<Capt
         ? 'low-confidence'
         : null;
 
-  return { captureId, rawText: req.text, created, boosted, nudge };
+  return { captureId, rawText: req.text, created, boosted, nudge, declined };
 }
 
 // Deterministic date resolution (§12): the model only extracted phrases.

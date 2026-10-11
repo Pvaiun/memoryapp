@@ -245,4 +245,7 @@ export interface CaptureResponse {
   created: ItemView[];
   boosted: { item: ItemView; appendedText: string }[]; // recapture merges, each undoable
   nudge: 'split' | 'low-confidence' | 'merge' | null;
+  // Set when the AI model declined to parse this capture and the heuristic
+  // parser filed it instead: the reason, for the review sheet to show.
+  declined: string | null;
 }

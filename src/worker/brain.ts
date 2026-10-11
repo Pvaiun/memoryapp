@@ -2,7 +2,7 @@ import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResul
 import { describeAtTime, describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
-import { anthropicJson, anthropicText, llmAvailable } from './ai';
+import { anthropicJson, anthropicText, describeDecline, llmAvailable, ModelDeclinedError } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
 import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey, sleepDayOf, snoozeActive } from '../shared/dates';
 import {
@@ -129,6 +129,7 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // carry a JSON body that's for the logs; the user gets the gist and the
 // status, so "try again" vs "check the key" is answerable at a glance.
 export function briefBrainError(err: unknown): string {
+  if (err instanceof ModelDeclinedError) return describeDecline(err);
   const msg = err instanceof Error ? err.message : String(err);
   const api = msg.match(/^Anthropic API (\d{3})/);
   if (api) {
@@ -525,12 +526,14 @@ export async function addFirstStep(
   const now = new Date();
   const tz = await getTzOffset(db);
   let parsed: ParseResult;
+  let declined: string | null = null;
   if (llmAvailable(env)) {
     try {
       parsed = await llmParse(env, title, now, tz, []);
     } catch (err) {
       console.error('first-step parse failed; falling back to heuristics', err);
       parsed = heuristicParse(title, now, tz);
+      if (err instanceof ModelDeclinedError) declined = describeDecline(err);
     }
   } else {
     parsed = heuristicParse(title, now, tz);
@@ -579,6 +582,7 @@ export async function addFirstStep(
     created: created ? [toItemView(created, now, tz)] : [],
     boosted: [],
     nudge: parsed.confidence === 'low' ? 'low-confidence' : null,
+    declined,
   };
   return { map: await getMap(env, bubble.day), capture };
 }
