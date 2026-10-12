@@ -2,7 +2,7 @@ import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResul
 import { describeAtTime, describeCadence, neglectedByDays } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
-import { anthropicJson, llmAvailable } from './ai';
+import { anthropicJson, anthropicText, describeDecline, llmAvailable, ModelDeclinedError } from './ai';
 import { heuristicParse } from '../shared/heuristicParse';
 import { refineWithSourceTime, resolveDatePhrase, sleepDayDiff, sleepDayKey, sleepDayOf, snoozeActive } from '../shared/dates';
 import {
@@ -129,6 +129,7 @@ export async function getMap(env: Env, day: string): Promise<MapPayload> {
 // carry a JSON body that's for the logs; the user gets the gist and the
 // status, so "try again" vs "check the key" is answerable at a glance.
 export function briefBrainError(err: unknown): string {
+  if (err instanceof ModelDeclinedError) return describeDecline(err);
   const msg = err instanceof Error ? err.message : String(err);
   const api = msg.match(/^Anthropic API (\d{3})/);
   if (api) {
@@ -525,12 +526,14 @@ export async function addFirstStep(
   const now = new Date();
   const tz = await getTzOffset(db);
   let parsed: ParseResult;
+  let declined: string | null = null;
   if (llmAvailable(env)) {
     try {
       parsed = await llmParse(env, title, now, tz, []);
     } catch (err) {
       console.error('first-step parse failed; falling back to heuristics', err);
       parsed = heuristicParse(title, now, tz);
+      if (err instanceof ModelDeclinedError) declined = describeDecline(err);
     }
   } else {
     parsed = heuristicParse(title, now, tz);
@@ -579,6 +582,7 @@ export async function addFirstStep(
     created: created ? [toItemView(created, now, tz)] : [],
     boosted: [],
     nudge: parsed.confidence === 'low' ? 'low-confidence' : null,
+    declined,
   };
   return { map: await getMap(env, bubble.day), capture };
 }
@@ -1209,7 +1213,6 @@ async function stagedBuildBubbles(
     env.BRAIN_MODEL,
     curationSystem,
     JSON.stringify(curationInput),
-    4096,
   );
   const plan = validateCurationPlan(rawPlan, floors, eligibleAliases);
 
@@ -1257,7 +1260,6 @@ async function stagedBuildBubbles(
       env.BRAIN_MODEL,
       RENDER_SYSTEM,
       JSON.stringify(renderInput),
-      8192,
     );
     renderCards = Array.isArray(out.cards) ? out.cards : [];
   } catch (err) {
@@ -1323,7 +1325,7 @@ async function llmBuildBubbles(env: Env, input: BrainInput, system: string): Pro
     firstStep?: unknown;
     itemIds?: unknown[];
   }
-  const out = await anthropicJson<{ bubbles: RawBubble[] }>(env, env.BRAIN_MODEL, system, user, 8192);
+  const out = await anthropicJson<{ bubbles: RawBubble[] }>(env, env.BRAIN_MODEL, system, user);
   const raw = (out.bubbles ?? []).filter((b) => b && b.name && Array.isArray(b.itemIds));
   const prominences = tierProminences(raw.map((b) => (isBrainTier(b.tier) ? b.tier : 'quiet')));
   return raw.map((b, idx) => {
@@ -1700,23 +1702,7 @@ Be plain and hedged ("tends to", "often"). This profile is ADVISORY — it flavo
 
   const user = JSON.stringify({ today: day, events: lines });
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: env.CAPTURE_MODEL,
-      max_tokens: 1024,
-      system,
-      messages: [{ role: 'user', content: user }],
-    }),
-  });
-  if (!res.ok) throw new Error(`profile recompute: Anthropic ${res.status}`);
-  const data = (await res.json()) as { content: { type: string; text?: string }[] };
-  const text = data.content.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('').trim();
+  const text = (await anthropicText(env, env.CAPTURE_MODEL, system, user)).trim();
   if (!text) return getState(db, 'profile_text');
 
   // One profile row per day: forced re-runs replace, never duplicate.

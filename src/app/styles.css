@@ -725,6 +725,9 @@ textarea:focus {
   font-size: 13.5px;
   margin-bottom: 10px;
 }
+.sheet .reason.warn {
+  color: var(--warn);
+}
 .sheet-grabber {
   width: 42px;
   height: 4px;

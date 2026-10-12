@@ -8,13 +8,33 @@ export function llmAvailable(env: Env): boolean {
   return !!env.ANTHROPIC_API_KEY;
 }
 
-export async function anthropicJson<T>(
+// The model's safety classifiers declined the request. Typed so the paths
+// the user is watching (capture, the map build) can say so instead of
+// recovering quietly the way they do from an outage.
+export class ModelDeclinedError extends Error {
+  constructor(readonly category: string | null) {
+    super(`Anthropic API refusal (${category ?? 'uncategorized'})`);
+    this.name = 'ModelDeclinedError';
+  }
+}
+
+// What the user is told about a decline. The category (e.g. "general_harms")
+// is the API's own label for which filter fired.
+export function describeDecline(err: ModelDeclinedError): string {
+  return err.category
+    ? `the AI model declined the request (safety filter: ${err.category.replace(/_/g, ' ')})`
+    : 'the AI model declined the request';
+}
+
+// Thinking is always on for the current models and counts toward max_tokens,
+// so the default leaves room for it on top of the reply.
+export async function anthropicText(
   env: Env,
   model: string,
   system: string,
   user: string,
-  maxTokens = 4096,
-): Promise<T> {
+  maxTokens = 16000,
+): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -33,12 +53,33 @@ export async function anthropicJson<T>(
     const body = await res.text();
     throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 500)}`);
   }
-  const data = (await res.json()) as { content: { type: string; text?: string }[] };
-  const text = data.content
+  const data = (await res.json()) as {
+    content: { type: string; text?: string }[];
+    stop_reason?: string;
+    stop_details?: { category?: string | null } | null;
+  };
+  // A decline is an HTTP 200 with empty or partial content; a max_tokens stop
+  // is a cut-off reply. Neither is usable.
+  if (data.stop_reason === 'refusal') {
+    throw new ModelDeclinedError(data.stop_details?.category ?? null);
+  }
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error(`Anthropic API reply truncated at max_tokens=${maxTokens}`);
+  }
+  return data.content
     .filter((c) => c.type === 'text')
     .map((c) => c.text ?? '')
     .join('');
-  return extractJson<T>(text);
+}
+
+export async function anthropicJson<T>(
+  env: Env,
+  model: string,
+  system: string,
+  user: string,
+  maxTokens?: number,
+): Promise<T> {
+  return extractJson<T>(await anthropicText(env, model, system, user, maxTokens));
 }
 
 // Models sometimes wrap JSON in prose or fences; extract the first balanced

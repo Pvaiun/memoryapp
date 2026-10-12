@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeDueAlerts } from './push';
 import {
   aliasItems,
@@ -12,7 +12,7 @@ import {
   tierProminences,
 } from './brain';
 import type { Cadence, ItemView } from '../shared/types';
-import { extractJson } from './ai';
+import { anthropicText, extractJson, ModelDeclinedError } from './ai';
 import { trigramEmbed } from './embeddings';
 import { semanticCut } from './items';
 import { cosine } from './db';
@@ -1083,6 +1083,40 @@ describe('briefBrainError — what the fallback-map banner says', () => {
     expect(briefBrainError(new Error('Could not extract JSON\nfrom model output'))).toBe('Could not extract JSON');
     expect(briefBrainError(new Error('x'.repeat(400))).length).toBe(158);
     expect(briefBrainError('timeout')).toBe('timeout');
+  });
+  it('says the model declined, naming the filter when the API gave one', () => {
+    expect(briefBrainError(new ModelDeclinedError('general_harms'))).toBe(
+      'the AI model declined the request (safety filter: general harms)',
+    );
+    expect(briefBrainError(new ModelDeclinedError(null))).toBe('the AI model declined the request');
+  });
+});
+
+describe('anthropicText — reading the reply', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const env = { ANTHROPIC_API_KEY: 'k' } as Parameters<typeof anthropicText>[0];
+  const reply = (body: unknown) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+
+  it('skips thinking blocks and joins the text', async () => {
+    reply({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: '{"ok":1}' }] });
+    expect(await anthropicText(env, 'claude-opus-5-5', 's', 'u')).toBe('{"ok":1}');
+  });
+  it('a decline throws ModelDeclinedError, and no fallback model is requested', async () => {
+    const fetchMock = reply({ stop_reason: 'refusal', stop_details: { type: 'refusal', category: 'cyber' }, content: [] });
+    const err = await anthropicText(env, 'claude-sonnet-5-5', 's', 'u').catch((e) => e);
+    expect(err).toBeInstanceOf(ModelDeclinedError);
+    expect(err.category).toBe('cyber');
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('fallbacks');
+    expect(init.headers).not.toHaveProperty('anthropic-beta');
+  });
+  it('a reply cut off at max_tokens is an error, not a partial answer', async () => {
+    reply({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"bubbles":[' }] });
+    await expect(anthropicText(env, 'claude-opus-5-5', 's', 'u')).rejects.toThrow(/truncated/);
   });
 });
 

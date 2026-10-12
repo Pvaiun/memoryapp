@@ -30,6 +30,12 @@ export default function ReviewSheet({
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-grabber" />
         <h2>{total > 1 ? `Filed as ${total} things` : 'Filed'}</h2>
+        {response.declined && (
+          <p className="reason warn" role="alert">
+            Smart Capture couldn’t read this: {response.declined}. It was filed with basic parsing — check the
+            details below.
+          </p>
+        )}
         {response.nudge === 'low-confidence' && (
           <p className="reason">Some details were a guess — worth a glance below.</p>
         )}
