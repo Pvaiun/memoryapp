@@ -347,17 +347,6 @@ export function happeningToday(
   return false;
 }
 
-export function neglectedByDays(
-  cadence: Cadence,
-  lastCompletedAt: string | null,
-  createdAt: string,
-  now: Date,
-): number {
-  const anchor = lastCompletedAt ?? createdAt;
-  const elapsed = now.getTime() - new Date(anchor).getTime();
-  return Math.max(0, Math.round((elapsed - cadencePeriodMs(cadence)) / DAY_MS));
-}
-
 // The occurrence walk reads calendar fields (weekday, hour, month), so it
 // must know which frame those fields live in. Real-instant callers walk in
 // the host's local frame (browser = the user's clock; worker = UTC). The

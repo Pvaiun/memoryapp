@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemView } from '../shared/types';
-import { isTodayRelevant, maxTier, placeItem, placeItems, tierProminences } from './placement';
+import { isTodayRelevant, maxTier, missedTurns, placeItem, placeItems, tierProminences } from './placement';
 
 // Placement (staged Brain, layer 1): the deterministic skeleton. These tests
 // pin the lead-time table — the contract that ended "quick task surfaced
@@ -367,6 +367,53 @@ describe('placeItem — recurring rhythms', () => {
       0,
     );
     expect(p).toEqual({ floor: 'mid', rule: 'rhythm-today' });
+  });
+});
+
+describe('missedTurns — the current run of unticked turns', () => {
+  // The recycling, UTC-4: "weekly on Tue at 9:30pm" (01:30Z Wednesday).
+  const weeklyTue = { freq: 'weekly' as const, interval: 1, byWeekday: [2], atTime: '21:30' };
+  const wedMorning = new Date('2026-10-14T09:00:27Z'); // 5am local, the morning build
+  const recycling = (over: Partial<ItemView>) =>
+    item({ cadence: weeklyTue, createdAt: '2026-07-20T12:00:00Z', ...over });
+
+  it('counts every turn since the last tick: last ticked Sep 29, so Oct 6 and Oct 13 are missed', () => {
+    const i = recycling({ lastCompletedAt: '2026-09-30T01:30:00Z' }); // Tue Sep 29 9:30pm local
+    expect(missedTurns(i, wedMorning, -240)).toBe(2);
+  });
+
+  it('a tick resets the run — misses before it never count', () => {
+    const i = recycling({ lastCompletedAt: '2026-10-07T01:30:00Z' }); // Oct 6's turn kept
+    expect(missedTurns(i, wedMorning, -240)).toBe(1);
+  });
+
+  it('a tick earlier on the turn’s own day meets it', () => {
+    const i = recycling({ lastCompletedAt: '2026-10-14T00:00:00Z' }); // Tue 8pm local
+    expect(missedTurns(i, wedMorning, -240)).toBe(0);
+  });
+
+  it('a late tick the next morning still meets the turn it was for', () => {
+    const i = recycling({ lastCompletedAt: '2026-10-14T12:00:00Z' }); // Wed 8am local
+    expect(missedTurns(i, new Date('2026-10-15T16:00:00Z'), -240)).toBe(0);
+  });
+
+  it('never ticked counts from capture — a turn before the item existed was never asked', () => {
+    const i = recycling({ createdAt: '2026-10-07T16:00:00Z' }); // Wed Oct 7, after Oct 6's turn
+    expect(missedTurns(i, wedMorning, -240)).toBe(1);
+  });
+
+  it('today’s own turn is never counted; its day is still running', () => {
+    const daily = { freq: 'daily' as const, interval: 1, atTime: '19:00' };
+    // Ticked Monday evening; Tuesday's turn went by; Wednesday's 7pm is still ahead.
+    const i = item({ cadence: daily, createdAt: '2026-07-01T12:00:00Z', lastCompletedAt: '2026-07-20T19:30:00Z' });
+    expect(missedTurns(i, NOW, 0)).toBe(1);
+  });
+
+  it('rhythms without a clock time walk the same grid', () => {
+    const weekly = { freq: 'weekly' as const, interval: 1, byWeekday: [2] };
+    // Captured Wednesday Jul 15, never ticked: Tuesday Jul 21 is the one turn behind.
+    const i = item({ cadence: weekly, createdAt: '2026-07-15T12:00:00Z' });
+    expect(missedTurns(i, NOW, 0)).toBe(1);
   });
 });
 

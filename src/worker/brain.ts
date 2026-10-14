@@ -1,5 +1,5 @@
 import type { Bubble, Cadence, CaptureResponse, ItemView, MapPayload, ParseResult } from '../shared/types';
-import { describeAtTime, describeCadence, neglectedByDays } from '../shared/cadence';
+import { describeAtTime, describeCadence } from '../shared/cadence';
 import { resolveSentence, stripSentence } from '../shared/cards';
 import type { Env } from './env';
 import { anthropicJson, anthropicText, describeDecline, llmAvailable, ModelDeclinedError } from './ai';
@@ -11,6 +11,7 @@ import {
   isBrainTier,
   isTodayRelevant,
   maxTier,
+  missedTurns,
   placeItems,
   tierProminences,
 } from './placement';
@@ -389,12 +390,19 @@ export async function rebuildMap(
     builtBubbles.push({ name: 'Also today', prominence: 0.8, items: missed.length });
   }
 
-  // Rehearsal-rotation bookkeeping (§9.2): record what got shown.
+  // Rehearsal-rotation bookkeeping (§9.2): record what got shown. The count is
+  // days on the map, not builds — a rebuild later the same day (a forced
+  // rebuild, a test run) refreshes seen= without adding to shown=, which had
+  // climbed past the item's age in days.
   const ts = nowIso();
+  const lastSurfacedAt = new Map(items.map((i) => [i.id, i.lastSurfacedAt]));
+  const today = sleepDayOf(now.getTime(), tz);
   for (const id of surfacedIds) {
+    const prev = lastSurfacedAt.get(id);
+    const firstToday = !prev || sleepDayOf(new Date(prev).getTime(), tz) !== today;
     await db
-      .prepare('UPDATE items SET last_surfaced_at = ?, surfaced_count = surfaced_count + 1 WHERE id = ?')
-      .bind(ts, id)
+      .prepare('UPDATE items SET last_surfaced_at = ?, surfaced_count = surfaced_count + ? WHERE id = ?')
+      .bind(ts, firstToday ? 1 : 0, id)
       .run();
   }
 
@@ -596,7 +604,7 @@ export type { BrainTier, CadenceStanding, Placement, PlacementResult } from './p
 
 // The item exactly as the Brain's prompt receives it — one compact line,
 // shared between the live call and the debug snapshot so the snapshot never
-// lies. Absence = default (no dates, no recurrence, not slipping, must-do,
+// lies. Absence = default (no dates, no recurrence, no missed turns, must-do,
 // medium effort, never recaptured); only deviations are written, so the token
 // cost is signal, not structure.
 export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): string {
@@ -665,21 +673,36 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
       // have to be told apart, or the Brain goes back to date-mathing the
       // weekday name (the failure next= was added to end). unmet= is that fact
       // and only that fact: the last turn went by N days ago unticked. The
-      // charge, when it is earned, arrives as slipping= and a placement rule.
+      // charge, when it is earned, arrives as missed= and a placement rule.
       if (standing.unmet) parts.push(`unmet=${standing.unmet.days}d`);
     }
   }
   if (i.cadence) parts.push(`every="${describeCadence(i.cadence)}"`);
-  if (i.neglected && i.cadence)
-    parts.push(`slipping=${neglectedByDays(i.cadence, i.lastCompletedAt, i.createdAt, now)}d`);
+  // Past the grace (the same line the overdue standing and the UI chip draw),
+  // a rhythm says how many of its turns in a row have gone unticked — a run
+  // ending now, in its own unit, never a count of days.
+  if (i.neglected && i.cadence) {
+    const missed = missedTurns(i, now, tzOffsetMinutes);
+    if (missed > 0) parts.push(`missed=${missed}`);
+  }
+  // Capture age and map airtime are a ONE-OFF's history: still active at 87
+  // days means 87 days undone, shown 33 times means asked 33 times. On a
+  // rhythm neither is true — age is how long the habit has existed, and being
+  // shown every day is the rhythm working — yet the prompt reads both as
+  // "sat unacted, matters more" and the Brain did exactly that ("the
+  // dishwasher has been asked 109 times, so the pile matters more"). A
+  // rhythm's history is its turns (happens=/next=/unmet=/missed= above), and
+  // code alone decides when it is on the map, so the curator never needs its
+  // airtime.
+  const oneOff = !i.cadence;
   // Days since first capture — without it, a task that's been sitting three
   // weeks reads identically to one from yesterday, and "piling up" is invisible.
   const ageDays = sleepDayDiff(now.getTime(), new Date(i.createdAt).getTime(), tzOffsetMinutes);
-  if (ageDays >= 1) parts.push(`age=${ageDays}d`);
+  if (oneOff && ageDays >= 1) parts.push(`age=${ageDays}d`);
   parts.push(`prio=${Math.round(i.effectivePriority * 100) / 100}`);
   if (i.optionality === 'nice') parts.push('optional');
   if (i.effort !== 'medium') parts.push(i.effort === 'large' ? 'big-effort' : 'quick');
-  if (i.lastSurfacedAt) {
+  if (oneOff && i.lastSurfacedAt) {
     const d = sleepDayDiff(now.getTime(), new Date(i.lastSurfacedAt).getTime(), tzOffsetMinutes);
     parts.push(`seen=${d === 0 ? 'today' : `${d}d-ago`}`);
     // Recency without a count can't tell "asked once" from "asked every
@@ -687,7 +710,7 @@ export function brainItemLine(i: ItemView, now: Date, tzOffsetMinutes = 0): stri
     // Once-shown is the unremarkable case and stays silent, like every other
     // signal here.
     if (i.surfacedCount >= 2) parts.push(`shown=${i.surfacedCount}x`);
-  } else {
+  } else if (oneOff) {
     parts.push('new');
   }
   const recaptures = Math.max(0, i.rawTexts.length - 1);
@@ -835,7 +858,7 @@ export function brainInput(
 
 // ---------- the two Brain prompts (workshop shootout, §9.2) ----------
 // Shared input legend — one source so the variants can never drift.
-const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, not slipping, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), with a clock time in parens only when the user named one — due=+2d(3pm, hard) has a time, due=+2d(hard) and happens=+2d name the day with no time attached; "overdue" is deadline/rhythm vocabulary only — a HAPPEN past its date reads happens=2d-ago (it already happened; nothing to chase), and happens=started-2d-ago..ends-today (or ..ends+2d) is a multi-day event UNDERWAY — the user is inside it right now, so a past start is never a miss and needs no urgency; deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; unmet=Nd means its last turn went by N days ago unticked, nothing to chase until next=; slipping=Nd means a rhythm has gone unmet; age=Nd is days since it was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when it last appeared on the map, "new" = never shown; shown=Nx is how many maps it has appeared on (absent = at most one) — read against completions it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
+const ITEM_FORMAT = `ITEM FORMAT: each item is one line — <id> <TYPE> "title" [themes] signals. Signals appear ONLY when they deviate from the default; absence means: no deadline, no event, no recurrence, no missed turns, must-do, medium effort, never recaptured. due/happens/next use relative days (+3d, today, 2d-overdue), with a clock time in parens only when the user named one — due=+2d(3pm, hard) has a time, due=+2d(hard) and happens=+2d name the day with no time attached; "overdue" is deadline/rhythm vocabulary only — a HAPPEN past its date reads happens=2d-ago (it already happened; nothing to chase), and happens=started-2d-ago..ends-today (or ..ends+2d) is a multi-day event UNDERWAY — the user is inside it right now, so a past start is never a miss and needs no urgency; deadline hardness in parens; every= is the recurrence rhythm; next= is when that rhythm comes round again, or how long its last turn has gone unmet; unmet=Nd means its last turn went by N days ago unticked, nothing to chase until next=; missed=N means a rhythm's last N turns in a row went by unticked; age=Nd is days since a one-off item was first captured (absent = captured today); prio is 0-1; "optional" = nice-to-do; "quick"/"big-effort" = effort; seen= is when a one-off item last appeared on the map, "new" = never shown; shown=Nx is how many days it has been on the map (absent = at most one) — it distinguishes "asked once" from "asked every morning and still not done", which is a reason to change the ASK (a different bubble, a plainer framing, a break-it-down invitation) and never on its own a reason to drop or quieten the item; recaptured=N(Xd-ago) means the user re-entered it N times, most recently X days ago (behavioural salience); felt= is the emotional colour the user's own phrasing carried at capture (xN = said across captures).`;
 
 const FULL_SYSTEM = `You are the Brain of "Memory", a memory-aid app for a user with ADHD. Each morning you build the day's bubble map — the curated "what matters right now" view — fresh from the user's items. Reply with ONLY a JSON object.
 
@@ -863,7 +886,7 @@ Do not force every item into the map — the browse view holds everything; you c
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance carrying the facts — what, when, who: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. The card's size on the map already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, slipping=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
+"sentence" IS the card — on the day view the user reads nothing else (names appear only in browse, search, and the gauge ledger). Write one continuous utterance carrying the facts — what, when, who: a short sentence for a quiet bubble, up to two or three woven sentences for the loudest, fullest one, earned by content, never padding. The card's size on the map already conveys importance — never state how much something matters, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, missed=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. Present tense, tokens front-loaded, no filler, never the bubble name, never meta-commentary ("this bubble groups…" is forbidden). When one thing should genuinely come first, say so plainly in the prose.
 
 THE CARD GRAMMAR (only these two marks):
 - **bold** the recognizable nouns — people, entities, dates. At distance the card crops to its marked tokens alone, so they must scan as a fragment.
@@ -890,11 +913,11 @@ THE GOAL: put items in one bubble when they genuinely go together — they'd be 
 
 ${ITEM_FORMAT}
 
-TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, slipping=, recaptured=) matters MORE for it, not less — old is how forgotten looks. And big-effort items need lead time: give them attention well before their moment, not once it's urgent. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
+TIER: each bubble gets "loud", "mid", "quiet", or "dot" — how much of today's attention it deserves. Order the bubbles array loudest-first; within a tier, your order is the ranking. Two corrections to the obvious reading of the signals: an item that has sat unacted (age=, missed=, recaptured=) matters MORE for it, not less — old is how forgotten looks. And big-effort items need lead time: give them attention well before their moment, not once it's urgent. A bubble holding a same-day item is never below "quiet"; same-day must-dos or hard deadlines sit at least "mid". A "rotation" bubble (the kind field) is an optional tiny keep-in-mind card: 2-4 facts worth rehearsing, tier "dot", no chips — omit it freely.
 
 OUTPUT: {"bubbles":[{"name":str,"kind":"situation"|"rotation","tier":"loud"|"mid"|"quiet"|"dot","sentence":str,"firstStep":str|null,"itemIds":[short ids like "i3" from the item lines]}]}
 
-"sentence" IS the card — the user reads nothing else on the day view. Carry the facts: what, when, who. The card's size on the map already conveys how much it matters — never state a card's importance, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, slipping=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. A quiet bubble gets a short sentence; a loud one gets more words only when it has more facts to carry, never padding. Never state the number of items in a batch — the card renders the true count itself. Two marks only: **bold** the recognizable nouns (people, dates, entities — at distance the card crops to its marked tokens alone), and [phrase](iN) renders as a tappable checkbox completing DO item iN — give every active DO on the card a chip that reads naturally in the prose; a phrase naming a DO is a chip, never bold.
+"sentence" IS the card — the user reads nothing else on the day view. Carry the facts: what, when, who. The card's size on the map already conveys how much it matters — never state a card's importance, its role in the day, or what it anchors or centres. Behavioural signals are facts too: when an item carries one — a felt= colour, recaptured=, missed=, long age, an unusual prio — say what that signal shows, plainly (that it's for someone, that they keep returning to it, that it keeps slipping). A date alone earns no colour: something merely happening today needs nothing beyond when. A quiet bubble gets a short sentence; a loud one gets more words only when it has more facts to carry, never padding. Never state the number of items in a batch — the card renders the true count itself. Two marks only: **bold** the recognizable nouns (people, dates, entities — at distance the card crops to its marked tokens alone), and [phrase](iN) renders as a tappable checkbox completing DO item iN — give every active DO on the card a chip that reads naturally in the prose; a phrase naming a DO is a chip, never bold.
 
 "firstStep": when one big or stalled thing needs a way in rather than volume, offer a short invitation asking the user for their own first move (their typed answer becomes a real item on the card). Never write the step's content yourself. Otherwise null.
 
