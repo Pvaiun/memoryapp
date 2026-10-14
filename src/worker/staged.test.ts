@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveBubbleKind, selectBrainSystem, validateCurationPlan } from './brain';
+import { defaultPromptText, deriveBubbleKind, selectBrainSystem, selectStagedSystems, validateCurationPlan } from './brain';
 import type { BrainTier } from './placement';
 
 // Staged pipeline, layer 2: validateCurationPlan turns the curator's raw JSON
@@ -188,16 +188,63 @@ describe("selectBrainSystem('staged') — the hinge rebuildMap dispatches the pi
     expect(r.addendum).toBe('extra guidance');
   });
 
-  it('an enabled, non-empty override outranks the staged pipeline entirely', () => {
+  it('the single-call override is inert under Staged — the curator and writer have their own', () => {
     const r = selectBrainSystem('staged', 'addendum too', true, 'THE WHOLE PROMPT');
-    expect(r.prompt).toBe('override');
-    expect(r.system).toBe('THE WHOLE PROMPT');
-    expect(r.addendum).toBeNull();
+    expect(r.prompt).toBe('staged');
+    expect(r.override).toBeNull();
+    expect(r.addendum).toBe('addendum too');
   });
 
   it('checked-but-empty override falls back to the staged choice', () => {
     const r = selectBrainSystem('staged', null, true, '   ');
     expect(r.prompt).toBe('staged');
+  });
+});
+
+describe('selectStagedSystems — each stage overridden on its own', () => {
+  const off = { enabled: false, text: null };
+  const defaults = selectStagedSystems(null, off, off);
+
+  it('with nothing armed, both stages run their defaults', () => {
+    expect(defaults.curatorOverride).toBeNull();
+    expect(defaults.writerOverride).toBeNull();
+    expect(defaults.curator).toContain('You are the curator');
+    expect(defaults.writer).toContain('You are the writer');
+  });
+
+  it('the addendum is appended to the default curator prompt, never the writer', () => {
+    const r = selectStagedSystems('  extra guidance  ', off, off);
+    expect(r.curator).toBe(`${defaults.curator}\n\nextra guidance`);
+    expect(r.writer).toBe(defaults.writer);
+    expect(r.addendum).toBe('extra guidance');
+  });
+
+  it('a writer override replaces the writer alone', () => {
+    const r = selectStagedSystems('extra guidance', off, { enabled: true, text: ' MY WRITER ' });
+    expect(r.writer).toBe('MY WRITER');
+    expect(r.writerOverride).toBe('MY WRITER');
+    expect(r.curator).toBe(`${defaults.curator}\n\nextra guidance`);
+  });
+
+  it('a curator override is the whole curator prompt — the addendum does not reach it', () => {
+    const r = selectStagedSystems('extra guidance', { enabled: true, text: 'MY CURATOR' }, off);
+    expect(r.curator).toBe('MY CURATOR');
+    expect(r.addendum).toBeNull();
+    expect(r.writer).toBe(defaults.writer);
+  });
+
+  it('unchecked or empty, a saved override is inert', () => {
+    const r = selectStagedSystems(null, { enabled: false, text: 'DRAFT' }, { enabled: true, text: '   ' });
+    expect(r.curator).toBe(defaults.curator);
+    expect(r.writer).toBe(defaults.writer);
+    expect(r.curatorOverride).toBeNull();
+    expect(r.writerOverride).toBeNull();
+  });
+
+  it('each override box prefills with the prompt it stands in for', () => {
+    expect(defaultPromptText('writer', 'staged', 'ignored by the writer')).toBe(defaults.writer);
+    expect(defaultPromptText('curator', 'staged', 'extra')).toBe(`${defaults.curator}\n\nextra`);
+    expect(defaultPromptText('single', 'minimal', null)).toBe(selectBrainSystem('minimal', null, false, null).system);
   });
 });
 

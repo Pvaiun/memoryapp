@@ -4,6 +4,9 @@ import { dayKey, EARLY_MORNING_CUTOFF_MINUTES } from '../shared/dates';
 // Mirrors the worker's BrainPromptVariant: the two legacy single-call prompts
 // plus the staged pipeline (placement → curation → render).
 export type BrainVariant = 'full' | 'minimal' | 'staged';
+// Mirrors the worker's PromptSlot: which prompt an override replaces — the
+// single-call prompt, or one stage of the staged pipeline.
+export type PromptSlot = 'single' | 'curator' | 'writer';
 
 // The app's "day" rolls over at the 5am sleep-cycle cutoff, not midnight —
 // opening at 12:30am is still last night, so the Brain doesn't rebuild the map
@@ -98,13 +101,14 @@ export const api = {
     }),
 
   // Only the fields passed are updated; the enabled flag alone gates usage.
-  setBrainOverride: (fields: { enabled?: boolean; text?: string }) =>
+  setBrainOverride: (slot: PromptSlot, fields: { enabled?: boolean; text?: string }) =>
     req<{ ok: boolean }>('/api/settings/brain-override', {
       method: 'POST',
-      body: JSON.stringify(fields),
+      body: JSON.stringify({ slot, ...fields }),
     }),
 
-  brainPromptText: () => req<{ variant: BrainVariant; text: string }>('/api/settings/brain-prompt-text'),
+  brainPromptText: (slot: PromptSlot) =>
+    req<{ variant: BrainVariant; slot: PromptSlot; text: string }>(`/api/settings/brain-prompt-text?slot=${slot}`),
 
   addFirstStep: (bubbleId: string, title: string) =>
     req<{ map: MapPayload; capture: CaptureResponse }>(`/api/bubbles/${bubbleId}/first-step`, {
