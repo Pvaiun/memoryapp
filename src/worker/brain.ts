@@ -260,16 +260,17 @@ export async function rebuildMap(
   const stored = await getState(db, 'brain_prompt_variant');
   const variant: BrainPromptVariant =
     promptVariant ?? (stored === 'full' ? 'full' : stored === 'staged' ? 'staged' : 'minimal');
-  const prompt = selectBrainSystem(
-    variant,
-    await getState(db, 'brain_prompt_addendum'),
-    (await getState(db, 'brain_prompt_override_enabled')) === '1',
-    await getState(db, 'brain_prompt_override'),
-  );
-  // The workshop override outranks the pipeline choice — while it's checked,
-  // the saved text IS the Brain, exactly as the settings sheet promises. The
-  // staged pipeline runs only when no override is in force.
+  const addendum = await getState(db, 'brain_prompt_addendum');
+  const readOverride = async (slot: PromptSlot): Promise<OverrideState> => ({
+    enabled: (await getState(db, OVERRIDE_KEYS[slot].enabled)) === '1',
+    text: await getState(db, OVERRIDE_KEYS[slot].text),
+  });
+  const single = await readOverride('single');
+  const prompt = selectBrainSystem(variant, addendum, single.enabled, single.text);
+  // The pipeline choice decides which prompts run; each override replaces
+  // only its own prompt, exactly as the settings sheet promises.
   const useStaged = prompt.prompt === 'staged';
+  const stagedSystems = selectStagedSystems(addendum, await readOverride('curator'), await readOverride('writer'));
 
   const input = brainInput(day, items, previous, nameVocabulary, profileForBuild, now, tz);
   // The staged pipeline records its own richer payload (skeleton → plan →
@@ -284,7 +285,7 @@ export async function rebuildMap(
   if (llmAvailable(env) && items.length) {
     try {
       if (useStaged) {
-        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileForBuild, now, tz, prompt.addendum);
+        const staged = await stagedBuildBubbles(env, items, day, nameVocabulary, profileForBuild, now, tz, stagedSystems);
         proposed = staged.proposed;
         snapshotPayload = staged.payload;
       } else {
@@ -424,9 +425,14 @@ export async function rebuildMap(
       noProfile,
       // What actually ran: 'override' + its text, or the variant + whatever
       // addendum was appended. Never both — selectBrainSystem mirrors the gate.
+      // Under Staged, the addendum is whatever reached the curator, and each
+      // stage's override text is recorded beside it.
       prompt: prompt.prompt,
-      addendum: prompt.addendum,
+      addendum: useStaged ? stagedSystems.addendum : prompt.addendum,
       override: prompt.override,
+      ...(useStaged
+        ? { curatorOverride: stagedSystems.curatorOverride, writerOverride: stagedSystems.writerOverride }
+        : {}),
       payload: snapshotPayload,
     }),
   );
@@ -765,6 +771,8 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
         prompt?: string;
         addendum?: string | null;
         override?: string | null;
+        curatorOverride?: string | null;
+        writerOverride?: string | null;
         payload: unknown;
       })
     : null;
@@ -798,6 +806,8 @@ export async function brainSnapshot(env: Env, day: string): Promise<unknown> {
           prompt: last.prompt ?? 'full',
           addendum: last.addendum ?? null,
           override: last.override ?? null,
+          curatorOverride: last.curatorOverride ?? null,
+          writerOverride: last.writerOverride ?? null,
         }
       : null,
     input: last?.payload ?? 'no stored input yet — rebuild the map once to populate',
@@ -941,13 +951,15 @@ export function composeBrainSystem(variant: BrainPromptVariant, addendum: string
   return addendum?.trim() ? `${base}\n\n${addendum.trim()}` : base;
 }
 
-// The override gate — the ONLY place the prompt-selection decision is made,
-// pure so it's unit-testable. Both conditions must hold to run the override:
-// the checkbox is enabled AND the saved text is non-empty. Unchecked, the
-// stored override text is inert no matter what it says; checked-but-empty
-// falls back to the normal flow rather than running on a blank prompt. The
-// returned record fields mirror the decision for the snapshot: never both an
-// addendum and an override.
+// The single-call override gate, pure so it's unit-testable. Both conditions
+// must hold to run the override: the checkbox is enabled AND the saved text is
+// non-empty. Unchecked, the stored override text is inert no matter what it
+// says; checked-but-empty falls back to the normal flow rather than running on
+// a blank prompt. It belongs to the single-call variants only: under 'staged'
+// it is inert, since the curator and writer each have their own override
+// (selectStagedSystems) — it used to outrank Staged and silently swap the
+// whole pipeline for one call. The returned record fields mirror the decision
+// for the snapshot: never both an addendum and an override.
 export function selectBrainSystem(
   variant: BrainPromptVariant,
   addendum: string | null,
@@ -956,7 +968,7 @@ export function selectBrainSystem(
 ): { system: string; prompt: BrainPromptVariant | 'override'; addendum: string | null; override: string | null } {
   const cleanAddendum = addendum?.trim() || null;
   const cleanOverride = overrideText?.trim() || null;
-  if (overrideEnabled && cleanOverride !== null) {
+  if (variant !== 'staged' && overrideEnabled && cleanOverride !== null) {
     return { system: cleanOverride, prompt: 'override', addendum: null, override: cleanOverride };
   }
   return { system: composeBrainSystem(variant, cleanAddendum), prompt: variant, addendum: cleanAddendum, override: null };
@@ -1079,6 +1091,55 @@ NAMING: if a card covers the same ground as a name in nameVocabulary, reuse that
 
 OUTPUT: {"cards":[{"ref":int,"name":str,"sentence":str,"firstStep":str|null}]} — exactly one entry per input card, same ref, every card present.`;
 
+// ---------- prompt overrides (the settings sheet's workshop layer) ----------
+//
+// One override per prompt that can run: the single-call prompt (Minimal/Full)
+// and, under Staged, the curator and the writer separately — so a writer
+// experiment never has to replace curation too, and the override box always
+// says which prompt it is. The enabled flag and the text are stored apart, so
+// unchecking leaves a draft intact but inert. 'single' keeps the keys the one
+// override box always used, so an existing draft survives.
+export type PromptSlot = 'single' | 'curator' | 'writer';
+export const PROMPT_SLOTS: readonly PromptSlot[] = ['single', 'curator', 'writer'];
+export const OVERRIDE_KEYS: Record<PromptSlot, { enabled: string; text: string }> = {
+  single: { enabled: 'brain_prompt_override_enabled', text: 'brain_prompt_override' },
+  curator: { enabled: 'brain_curator_override_enabled', text: 'brain_curator_override' },
+  writer: { enabled: 'brain_writer_override_enabled', text: 'brain_writer_override' },
+};
+export type OverrideState = { enabled: boolean; text: string | null };
+
+// The staged pipeline's two prompts, each replaceable on its own, under the
+// same gate as the single-call override: checked AND non-empty, or the
+// default runs. An overridden curator prompt is the whole prompt — the
+// addendum is not appended to it, exactly as with the single-call override,
+// so the record says which of the two reached the curator.
+export function selectStagedSystems(
+  addendum: string | null,
+  curator: OverrideState,
+  writer: OverrideState,
+): { curator: string; writer: string; addendum: string | null; curatorOverride: string | null; writerOverride: string | null } {
+  const armed = (o: OverrideState) => (o.enabled && o.text?.trim()) || null;
+  const curatorOverride = armed(curator);
+  const writerOverride = armed(writer);
+  const cleanAddendum = addendum?.trim() || null;
+  return {
+    curator: curatorOverride ?? (cleanAddendum ? `${CURATION_SYSTEM}\n\n${cleanAddendum}` : CURATION_SYSTEM),
+    writer: writerOverride ?? RENDER_SYSTEM,
+    addendum: curatorOverride ? null : cleanAddendum,
+    curatorOverride,
+    writerOverride,
+  };
+}
+
+// What each override box prefills and resets to: the prompt that would run
+// in its place right now (addendum included where it would be appended).
+export function defaultPromptText(slot: PromptSlot, variant: BrainPromptVariant, addendum: string | null): string {
+  const off: OverrideState = { enabled: false, text: null };
+  if (slot === 'single') return composeBrainSystem(variant, addendum?.trim() || null);
+  const staged = selectStagedSystems(addendum, off, off);
+  return slot === 'curator' ? staged.curator : staged.writer;
+}
+
 // All-KNOW membership is what makes a rehearsal card — the register is a
 // fact about content, derived here, never a category the model declares.
 // (The old pipeline asked the model to opt into a countable "rotation"
@@ -1182,7 +1243,7 @@ async function stagedBuildBubbles(
   profileText: string | null,
   now: Date,
   tz: number,
-  addendum: string | null = null,
+  systems: { curator: string; writer: string },
 ): Promise<{ proposed: ProposedBubble[]; payload: Record<string, unknown> }> {
   // Placement first: the day's working set is what layer 1 requires plus the
   // pile it leaves eligible. Withheld items (future-turn rhythms) exit HERE —
@@ -1227,14 +1288,13 @@ async function stagedBuildBubbles(
     userProfile: profileText,
   };
 
-  // The user's addendum lands on the curation call — curation is the
-  // judgment the tuning knob exists to tune. Same composition rule as the
-  // legacy prompts: appended verbatim, no framing (§ composeBrainSystem).
-  const curationSystem = addendum?.trim() ? `${CURATION_SYSTEM}\n\n${addendum.trim()}` : CURATION_SYSTEM;
+  // Both prompts arrive chosen (selectStagedSystems): the default or the
+  // user's override, with the addendum already on the curator's where it
+  // applies — curation is the judgment the tuning knob exists to tune.
   const rawPlan = await anthropicJson<{ bubbles?: unknown }>(
     env,
     env.BRAIN_MODEL,
-    curationSystem,
+    systems.curator,
     JSON.stringify(curationInput),
   );
   const plan = validateCurationPlan(rawPlan, floors, eligibleAliases);
@@ -1281,7 +1341,7 @@ async function stagedBuildBubbles(
     const out = await anthropicJson<{ cards?: typeof renderCards }>(
       env,
       env.BRAIN_MODEL,
-      RENDER_SYSTEM,
+      systems.writer,
       JSON.stringify(renderInput),
     );
     renderCards = Array.isArray(out.cards) ? out.cards : [];

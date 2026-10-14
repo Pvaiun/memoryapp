@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { api } from '../api';
+import { api, type PromptSlot } from '../api';
 import type { NowView } from '../views/MapView';
 
 // Collapsible settings group — the sheet groups its controls so the whole
@@ -29,6 +29,54 @@ function Section({
   );
 }
 
+// One prompt override box: checkbox to arm it, the full prompt text, Save,
+// and Reset to the default it stands in for. Presentational — its draft lives
+// in SettingsSheet state (see Section) so collapsing never drops an edit.
+type OverrideDraft = { on: boolean; text: string; saved: string };
+const NO_DRAFT: OverrideDraft = { on: false, text: '', saved: '' };
+
+function PromptOverrideField({
+  label,
+  placeholder,
+  hint,
+  draft,
+  onToggle,
+  onChange,
+  onSave,
+  onReset,
+}: {
+  label: string;
+  placeholder: string;
+  hint: string;
+  draft: OverrideDraft;
+  onToggle: (on: boolean) => void;
+  onChange: (text: string) => void;
+  onSave: () => void;
+  onReset: () => void;
+}) {
+  const unchanged = draft.text.trim() === draft.saved;
+  return (
+    <div className="field">
+      <label className="checkbox-label">
+        {label}
+        <input type="checkbox" checked={draft.on} onChange={(e) => onToggle(e.target.checked)} />
+      </label>
+      {draft.on && (
+        <>
+          <textarea rows={14} value={draft.text} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+          <div className="seg">
+            <button disabled={unchanged} onClick={onSave}>
+              {unchanged && draft.saved ? 'Saved' : 'Save'}
+            </button>
+            <button onClick={onReset}>Reset to default</button>
+          </div>
+          <small className="settings-hint">{hint}</small>
+        </>
+      )}
+    </div>
+  );
+}
+
 interface Status {
   items: number;
   activeItems: number;
@@ -43,8 +91,7 @@ interface Status {
   mapBuiltAt: string | null;
   brainPrompt: 'full' | 'minimal' | 'staged';
   brainAddendum: string;
-  brainOverrideEnabled: boolean;
-  brainOverride: string;
+  brainOverrides: Record<PromptSlot, { enabled: boolean; text: string }>;
 }
 
 export default function SettingsSheet({
@@ -79,9 +126,13 @@ export default function SettingsSheet({
 
   const [addendum, setAddendum] = useState('');
   const [savedAddendum, setSavedAddendum] = useState('');
-  const [overrideOn, setOverrideOn] = useState(false);
-  const [overrideText, setOverrideText] = useState('');
-  const [savedOverride, setSavedOverride] = useState('');
+  const [overrides, setOverrides] = useState<Record<PromptSlot, OverrideDraft>>({
+    single: NO_DRAFT,
+    curator: NO_DRAFT,
+    writer: NO_DRAFT,
+  });
+  const patchOverride = (slot: PromptSlot, patch: Partial<OverrideDraft>) =>
+    setOverrides((o) => ({ ...o, [slot]: { ...o[slot], ...patch } }));
 
   useEffect(() => {
     api.status().then((s) => {
@@ -90,9 +141,11 @@ export default function SettingsSheet({
       setBrainPrompt(st.brainPrompt ?? 'minimal');
       setAddendum(st.brainAddendum ?? '');
       setSavedAddendum(st.brainAddendum ?? '');
-      setOverrideOn(!!st.brainOverrideEnabled);
-      setOverrideText(st.brainOverride ?? '');
-      setSavedOverride(st.brainOverride ?? '');
+      const fromStatus = (slot: PromptSlot): OverrideDraft => {
+        const o = st.brainOverrides?.[slot];
+        return { on: !!o?.enabled, text: o?.text ?? '', saved: o?.text ?? '' };
+      };
+      setOverrides({ single: fromStatus('single'), curator: fromStatus('curator'), writer: fromStatus('writer') });
     }).catch(() => {});
   }, []);
 
@@ -110,34 +163,43 @@ export default function SettingsSheet({
     api.setBrainAddendum('').then(() => setSavedAddendum('')).catch(() => {});
   };
 
-  // Full prompt override. The checkbox is the ONLY thing that arms it — the
-  // server uses the saved text solely while enabled, so an unchecked box
-  // leaves any draft completely inert. Turning it on with nothing saved
-  // prefills the editor with the live default (variant + addendum); nothing
-  // runs off the override until Save.
-  const toggleOverride = (on: boolean) => {
-    const prev = overrideOn;
-    setOverrideOn(on);
-    api.setBrainOverride({ enabled: on }).catch(() => setOverrideOn(prev));
-    if (on && !savedOverride && !overrideText.trim()) {
-      api.brainPromptText().then(({ text }) => setOverrideText(text)).catch(() => {});
+  // Prompt overrides, one per prompt (single-call, curator, writer). The
+  // checkbox is the ONLY thing that arms one — the server uses the saved text
+  // solely while enabled, so an unchecked box leaves any draft completely
+  // inert. Turning one on with nothing saved prefills the editor with the
+  // live default for that prompt; nothing runs off an override until Save.
+  const toggleOverride = (slot: PromptSlot, on: boolean) => {
+    const prev = overrides[slot];
+    patchOverride(slot, { on });
+    api.setBrainOverride(slot, { enabled: on }).catch(() => patchOverride(slot, { on: prev.on }));
+    if (on && !prev.saved && !prev.text.trim()) {
+      api.brainPromptText(slot).then(({ text }) => patchOverride(slot, { text })).catch(() => {});
     }
   };
-  const saveOverride = () => {
-    const t = overrideText.trim();
-    api.setBrainOverride({ text: t }).then(() => {
-      setOverrideText(t);
-      setSavedOverride(t);
-    }).catch(() => {});
+  const saveOverride = (slot: PromptSlot) => {
+    const t = overrides[slot].text.trim();
+    api.setBrainOverride(slot, { text: t }).then(() => patchOverride(slot, { text: t, saved: t })).catch(() => {});
   };
   // Reset restores the editor to the live default AND saves it, so the stored
   // override can never silently lag what's on screen.
-  const resetOverride = () => {
-    api.brainPromptText().then(({ text }) => {
-      setOverrideText(text);
-      return api.setBrainOverride({ text }).then(() => setSavedOverride(text));
+  const resetOverride = (slot: PromptSlot) => {
+    api.brainPromptText(slot).then(({ text }) => {
+      patchOverride(slot, { text });
+      return api.setBrainOverride(slot, { text }).then(() => patchOverride(slot, { saved: text }));
     }).catch(() => {});
   };
+  const overrideField = (slot: PromptSlot, label: string, placeholder: string, hint: string) => (
+    <PromptOverrideField
+      label={label}
+      placeholder={placeholder}
+      hint={hint}
+      draft={overrides[slot]}
+      onToggle={(on) => toggleOverride(slot, on)}
+      onChange={(text) => patchOverride(slot, { text })}
+      onSave={() => saveOverride(slot)}
+      onReset={() => resetOverride(slot)}
+    />
+  );
 
   // The morning-prompt toggle (workshop shootout, longitudinal arm): which
   // Brain prompt or pipeline tomorrow's first-open rebuild uses. Optimistic;
@@ -210,8 +272,8 @@ export default function SettingsSheet({
             <small className="settings-hint">
               Which Brain builds tomorrow's map — comparing them over days. Minimal and Full are the single-call
               prompts; Staged is the split pipeline (code places the day's required items, a curator call picks
-              what else deserves airtime, a writer call names the cards). The prompt override below, while
-              checked, outranks all three.
+              what else deserves airtime, a writer call names the cards). The override boxes below follow this
+              choice: one for the single-call prompt, or one each for the curator and the writer.
             </small>
           </div>
 
@@ -233,38 +295,33 @@ export default function SettingsSheet({
             </div>
             <small className="settings-hint">
               Applies to every rebuild until cleared — appended to the single-call prompt, or to the curator
-              prompt under Staged. The Brain snapshot records what was active.
+              prompt under Staged, but never to an overridden prompt. The Brain snapshot records what was active.
             </small>
           </div>
 
-          <div className="field">
-            <label className="checkbox-label">
-              Override Brain prompt
-              <input type="checkbox" checked={overrideOn} onChange={(e) => toggleOverride(e.target.checked)} />
-            </label>
-            {overrideOn && (
-              <>
-                <textarea
-                  rows={14}
-                  value={overrideText}
-                  onChange={(e) => setOverrideText(e.target.value)}
-                  placeholder="The entire Brain prompt, verbatim"
-                />
-                <div className="seg">
-                  <button disabled={overrideText.trim() === savedOverride} onClick={saveOverride}>
-                    {overrideText.trim() === savedOverride && savedOverride ? 'Saved' : 'Save'}
-                  </button>
-                  <button onClick={resetOverride}>Reset to default</button>
-                </div>
-                <small className="settings-hint">
-                  While checked, the saved text above IS the whole Brain prompt, run as a single call — the
-                  prompt/pipeline choice (Staged included) and the addendum are ignored. Unsaved edits and an
-                  empty box don't run: the normal flow stays in charge.
-                  Unchecking returns to the normal flow; the text stays saved but inert.
-                </small>
-              </>
-            )}
-          </div>
+          {brainPrompt === 'staged' ? (
+            <>
+              {overrideField(
+                'curator',
+                'Override curator prompt',
+                'The entire curator prompt, verbatim',
+                "While checked, the saved text above IS the curator prompt — what else goes on the map and how it groups — and the addendum is ignored. Unsaved edits and an empty box don't run. Unchecking returns to the default; the text stays saved but inert.",
+              )}
+              {overrideField(
+                'writer',
+                'Override writer prompt',
+                'The entire writer prompt, verbatim',
+                "While checked, the saved text above IS the writer prompt — every card's name and sentence. Unsaved edits and an empty box don't run. Unchecking returns to the default; the text stays saved but inert.",
+              )}
+            </>
+          ) : (
+            overrideField(
+              'single',
+              'Override Brain prompt',
+              'The entire Brain prompt, verbatim',
+              "While checked, the saved text above IS the single-call Brain prompt, and the addendum is ignored. Unsaved edits and an empty box don't run. Unchecking returns to the default; the text stays saved but inert.",
+            )
+          )}
         </Section>
 
         <Section title="Map & data">

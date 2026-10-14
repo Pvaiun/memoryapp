@@ -1,7 +1,17 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { handleCapture, undoRecapture, type CaptureRequest } from './capture';
-import { addFirstStep, brainSnapshot, composeBrainSystem, getMap, morningRebuild, rebuildMap } from './brain';
+import {
+  addFirstStep,
+  brainSnapshot,
+  defaultPromptText,
+  getMap,
+  morningRebuild,
+  OVERRIDE_KEYS,
+  PROMPT_SLOTS,
+  rebuildMap,
+  type PromptSlot,
+} from './brain';
 import { browse, calendar, completeItem, dismissItem, editItem, missItem, rejectItem, reopenItem, search, snoozeItem, uncompleteItem, unsnoozeItem, type ItemEdits } from './items';
 import { runPushScan, saveSubscription } from './push';
 import { getItem, getState, getTzOffset, listItems, setState, toItemView } from './db';
@@ -111,32 +121,41 @@ app.post('/api/settings/brain-addendum', async (c) => {
   return c.json({ ok: true });
 });
 
-// Full prompt override: while enabled AND non-empty, the saved text IS the
-// whole Brain prompt (variant toggle and addendum ignored). The enabled flag
-// and the text are stored separately so unchecking leaves the draft intact
-// but completely inert. Fields are optional — only what's sent is updated.
+// Prompt overrides, one per prompt that can run (brain.ts PromptSlot):
+// 'single' replaces the single-call prompt (Minimal/Full); 'curator' and
+// 'writer' replace one stage of the staged pipeline each. While enabled AND
+// non-empty, the saved text IS that prompt (an overridden curator or single
+// prompt gets no addendum). The enabled flag and the text are stored
+// separately so unchecking leaves the draft intact but completely inert.
+// Fields are optional — only what's sent is updated; slot defaults to
+// 'single', the one box this endpoint used to serve.
+const isPromptSlot = (s: unknown): s is PromptSlot => PROMPT_SLOTS.includes(s as PromptSlot);
 app.post('/api/settings/brain-override', async (c) => {
-  const { enabled, text } = await c.req.json<{ enabled?: boolean; text?: string }>();
+  const { slot = 'single', enabled, text } = await c.req.json<{ slot?: string; enabled?: boolean; text?: string }>();
+  if (!isPromptSlot(slot)) return c.json({ error: 'slot must be "single", "curator", or "writer"' }, 400);
   if (enabled === undefined && text === undefined) return c.json({ error: 'enabled or text required' }, 400);
   if (enabled !== undefined) {
     if (typeof enabled !== 'boolean') return c.json({ error: 'enabled must be a boolean' }, 400);
-    await setState(c.env.DB, 'brain_prompt_override_enabled', enabled ? '1' : '');
+    await setState(c.env.DB, OVERRIDE_KEYS[slot].enabled, enabled ? '1' : '');
   }
   if (text !== undefined) {
     if (typeof text !== 'string') return c.json({ error: 'text must be a string' }, 400);
-    await setState(c.env.DB, 'brain_prompt_override', text.trim().slice(0, 20000));
+    await setState(c.env.DB, OVERRIDE_KEYS[slot].text, text.trim().slice(0, 40000));
   }
   return c.json({ ok: true });
 });
 
-// The composed default prompt (current variant + addendum), fetched fresh —
-// what the override editor prefills and what Reset restores.
+// The default prompt an override box stands in for (current variant +
+// addendum where it applies), fetched fresh — what the editor prefills and
+// what Reset restores.
 app.get('/api/settings/brain-prompt-text', async (c) => {
   const db = c.env.DB;
+  const slot = c.req.query('slot') ?? 'single';
+  if (!isPromptSlot(slot)) return c.json({ error: 'slot must be "single", "curator", or "writer"' }, 400);
   const stored = await getState(db, 'brain_prompt_variant');
   const variant = stored === 'full' ? 'full' : stored === 'staged' ? 'staged' : 'minimal';
-  const addendum = (await getState(db, 'brain_prompt_addendum'))?.trim() || null;
-  return c.json({ variant, text: composeBrainSystem(variant, addendum) });
+  const addendum = await getState(db, 'brain_prompt_addendum');
+  return c.json({ variant, slot, text: defaultPromptText(slot, variant, addendum) });
 });
 
 // The user answers a bubble's break-it-down invitation (§9.2): their typed
@@ -321,8 +340,17 @@ app.get('/api/status', async (c) => {
     mapBuiltAt: await getState(db, 'map_built_at'),
     brainPrompt: storedVariant === 'full' ? 'full' : storedVariant === 'staged' ? 'staged' : 'minimal',
     brainAddendum: (await getState(db, 'brain_prompt_addendum')) ?? '',
-    brainOverrideEnabled: (await getState(db, 'brain_prompt_override_enabled')) === '1',
-    brainOverride: (await getState(db, 'brain_prompt_override')) ?? '',
+    brainOverrides: Object.fromEntries(
+      await Promise.all(
+        PROMPT_SLOTS.map(async (slot) => [
+          slot,
+          {
+            enabled: (await getState(db, OVERRIDE_KEYS[slot].enabled)) === '1',
+            text: (await getState(db, OVERRIDE_KEYS[slot].text)) ?? '',
+          },
+        ]),
+      ),
+    ),
   });
 });
 
