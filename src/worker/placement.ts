@@ -1,11 +1,13 @@
 import type { Cadence, ItemView } from '../shared/types';
 import {
+  atTimeOccurrencesBetween,
   cadenceGridGapMs,
   completedForOccurrence,
   completedWithinSleepDay,
   isNeglected,
   nextAtTimeOccurrence,
   nextOccurrence,
+  occurrencesBetween,
 } from '../shared/cadence';
 import { EARLY_MORNING_CUTOFF_MINUTES, sleepDayDiff, sleepDayOf } from '../shared/dates';
 
@@ -79,9 +81,12 @@ function quieterTier(t: BrainTier): BrainTier {
 
 const DAY = 86_400_000;
 
+function sleepDayStartUtc(sleepDay: number, tzOffsetMinutes: number): number {
+  return sleepDay * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
+}
+
 function dayWindowUtc(now: Date, tzOffsetMinutes: number): { start: number; end: number } {
-  const start =
-    sleepDayOf(now.getTime(), tzOffsetMinutes) * DAY + (EARLY_MORNING_CUTOFF_MINUTES - tzOffsetMinutes) * 60_000;
+  const start = sleepDayStartUtc(sleepDayOf(now.getTime(), tzOffsetMinutes), tzOffsetMinutes);
   return { start, end: start + DAY };
 }
 
@@ -208,8 +213,8 @@ export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: numb
   // Sunday slot" on Tuesday, when nothing is being asked of the user until
   // Sunday. §7.2 already fixed where that line sits — neglect, half a period
   // of grace past the rhythm's own period ("a missed occurrence resurfaces the
-  // item; it does not fail it") — and it is the same line the slipping= token
-  // and the "slipped" chip draw. This path was the one place a missed turn
+  // item; it does not fail it") — and it is the same line the missed= token
+  // and the "slipping" chip draw. This path was the one place a missed turn
   // spoke before the grace did.
   //
   // So: past the grace it is a nudge and reads overdue; inside it the rhythm
@@ -226,6 +231,35 @@ export function cadenceStanding(i: CadenceItem, now: Date, tzOffsetMinutes: numb
     days: sleepDayDiff(next.getTime(), now.getTime(), tzOffsetMinutes),
     ...(unmet ? { unmet } : {}),
   };
+}
+
+// How many of a rhythm's turns in a row have gone by unticked: every turn
+// between the last tick and the start of today. A run, not a tally — a tick
+// resets it, so it always ends at the present and can never describe misses
+// from before the last time the thing was done. It is counted in the rhythm's
+// own turns because the days-based count it replaces (slipping=, days past
+// last tick + one period) measured against a due date on neither the grid nor
+// anything the user set: two unticked Tuesdays read "slipping=7d", and the
+// Brain wrote "the recycling has slipped a week".
+//
+// A turn is met by a tick on its sleep day or any later one
+// (completedForOccurrence), so the run starts the sleep day after the last
+// tick's. Never ticked: it starts at the anchor — a turn that predates the
+// item was never asked. Today's own turn is never counted; its day is still
+// running.
+export function missedTurns(i: CadenceItem, now: Date, tzOffsetMinutes: number): number {
+  if (!i.cadence) return 0;
+  const { start: dayStartUtc } = dayWindowUtc(now, tzOffsetMinutes);
+  const anchor = i.eventAt ?? i.createdAt ?? now.toISOString();
+  const afterTick = i.lastCompletedAt
+    ? sleepDayStartUtc(sleepDayOf(new Date(i.lastCompletedAt).getTime(), tzOffsetMinutes) + 1, tzOffsetMinutes)
+    : -Infinity;
+  const from = Math.max(afterTick, new Date(anchor).getTime());
+  if (from >= dayStartUtc) return 0;
+  const turns = i.cadence.atTime
+    ? atTimeOccurrencesBetween(i.cadence, anchor, new Date(from), new Date(dayStartUtc), tzOffsetMinutes)
+    : occurrencesBetween(i.cadence, anchor, new Date(from), new Date(dayStartUtc));
+  return turns.length;
 }
 
 // The occurrence of a recurring rhythm that falls within the user-local today,

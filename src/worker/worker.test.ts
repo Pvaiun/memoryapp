@@ -645,7 +645,7 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     expect(line).toContain('next=+3d');
     expect(line).toContain('unmet=4d');
     expect(line).not.toContain('overdue');
-    expect(line).not.toContain('slipping=');
+    expect(line).not.toContain('missed=');
   });
 
   it('past the grace, the same unmet turn reads next=Nd-overdue', () => {
@@ -754,6 +754,49 @@ describe('brainItemLine — compact Brain input (absence = default)', () => {
     // Never surfaced says 'new'; a count would be noise on top of it.
     expect(line(0, null)).toContain('new');
     expect(line(0, null)).not.toContain('shown=');
+  });
+
+  it('a rhythm carries its turns, never capture age or map airtime', () => {
+    // The 2026-10-14 snapshot's dishwasher: 83 days old and on 109 maps read
+    // as "asked 109 times, so the pile matters more". For a daily chore both
+    // are just the rhythm working; its turn is the whole story.
+    const line = brainItemLine(
+      {
+        ...baseView,
+        title: 'Start the dishwasher',
+        effort: 'quick',
+        cadence: { freq: 'daily', interval: 1, atTime: '00:00' } as Cadence,
+        createdAt: '2026-07-23T12:00:00Z',
+        lastCompletedAt: '2026-10-14T04:10:00Z', // 12:10am local — last night's turn
+        lastSurfacedAt: '2026-10-13T09:00:00Z',
+        surfacedCount: 109,
+      } as ItemView,
+      new Date('2026-10-14T09:00:27Z'),
+      -240,
+    );
+    expect(line).toBe('DO "Start the dishwasher" happens=today(12am) every="daily at 12am" prio=0.5 quick');
+  });
+
+  it('past the grace, a rhythm counts its missed turns, not days past a phantom due date', () => {
+    // The same snapshot's recycling: last ticked on Sep 29's turn, so Oct 6
+    // and Oct 13 went by. It used to read slipping=7d, which the Brain wrote
+    // up as "the recycling has slipped a week".
+    const line = brainItemLine(
+      {
+        ...baseView,
+        title: 'Take out recycling',
+        effort: 'quick',
+        cadence: { freq: 'weekly', interval: 1, byWeekday: [2], atTime: '21:30' } as Cadence,
+        createdAt: '2026-07-20T12:00:00Z',
+        lastCompletedAt: '2026-09-30T01:30:00Z',
+        lastSurfacedAt: '2026-10-13T09:00:00Z',
+        surfacedCount: 30,
+        neglected: true,
+      } as ItemView,
+      new Date('2026-10-14T09:00:27Z'),
+      -240,
+    );
+    expect(line).toBe('DO "Take out recycling" next=1d-overdue every="weekly on Tue at 9:30pm" missed=2 prio=0.5 quick');
   });
 
   it('affect history renders as felt= with counts spanning recaptures', () => {
